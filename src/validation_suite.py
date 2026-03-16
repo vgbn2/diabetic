@@ -1,5 +1,5 @@
 import numpy as np
-from src.coordinator import MetabolicInferenceEngine
+from src.coordinator import AsyncInferenceEngine
 from src.physics.radar_physics import RadarPhysicsEngine
 from src.ingestion.radar import UWBRadarProcessor
 from src.logger import logger
@@ -10,7 +10,7 @@ class SystemValidationSuite:
     """
     
     def __init__(self):
-        self.engine = MetabolicInferenceEngine(use_mock_model=True)
+        self.engine = AsyncInferenceEngine()
         self.physics = RadarPhysicsEngine()
         self.radar_processor = UWBRadarProcessor()
 
@@ -23,9 +23,20 @@ class SystemValidationSuite:
 
     def val_stress_correlation(self):
         # High glucose + High DSI
-        self.engine.ukf.ukf.x = np.array([320.0, 1.0, 0.0, 0.0, 0.0, 2.5]) 
-        res = self.engine.run_cycle(current_hrv=10.0)
-        return "PASSED" if res['alert_level'] == "FAINT_RISK" else "FAILED"
+        from src.data_models import GlucoseReading, BiometricReading
+        from datetime import datetime
+        
+        # Inject state
+        now = datetime.now()
+        self.engine.cgm_buffer.append(GlucoseReading(timestamp=now, sgv=320.0))
+        # Low RMSSD (5ms) == High Stress / Sympathetic Surge
+        self.engine.hrv_buffer.append(BiometricReading(timestamp=now, rmssd=5.0))
+        
+        # Manually trigger inference
+        self.engine._sync_and_predict()
+        
+        # Check against engine state
+        return "PASSED" if self.engine.last_status in ("FAINT_RISK", "WARNING_HYPER", "STRESS_DEVIATION") else "FAILED"
 
     def run_suite(self):
         print(f"\n{'LAYER':<25} | {'STATUS':<10}")

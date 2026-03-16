@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import List, Optional
 from datetime import datetime, timedelta
-from .data_models import GlucoseRecord, TreatmentRecord, ProcessedState
+from .data_models import GlucoseReading, TreatmentEvent
 from .kinetics import MetabolicKinetics
 from .logger import logger
 
@@ -17,8 +17,8 @@ class IngestionEngine:
         self.max_rate_of_change = 4.0 # mg/dL per minute (Physiological max)
         
     def process_data(self, 
-                     glucose_records: List[GlucoseRecord], 
-                     treatments: List[TreatmentRecord]) -> pd.DataFrame:
+                     glucose_records: List[GlucoseReading], 
+                     treatments: List[TreatmentEvent]) -> pd.DataFrame:
         """
         Main pipeline to transform raw records into a clean, 5-minute grid DataFrame.
         """
@@ -96,14 +96,14 @@ if __name__ == "__main__":
     # Mock some data
     now = datetime.now()
     mock_glucose = [
-        GlucoseRecord(timestamp=now - timedelta(minutes=i*5), sgv=100 + (i % 5))
+        GlucoseReading(timestamp=now - timedelta(minutes=i*5), sgv=100 + (i % 5))
         for i in range(20)
     ]
     # Add a 'garbage' spike
-    mock_glucose[5] = GlucoseRecord(timestamp=now - timedelta(minutes=25), sgv=300) 
+    mock_glucose[5] = GlucoseReading(timestamp=now - timedelta(minutes=25), sgv=300) 
     
     mock_treatments = [
-        TreatmentRecord(timestamp=now - timedelta(minutes=45), insulin=2.0, carbs=45.0)
+        TreatmentEvent(timestamp=now - timedelta(minutes=45), insulin=2.0, carbs=45.0)
     ]
     
     engine = IngestionEngine()

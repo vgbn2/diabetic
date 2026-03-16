@@ -2,11 +2,11 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import timedelta
-from src.simulation.digital_twin import BergmanDigitalTwin
-from src.filters.metabolic_ukf import MetabolicUKF
-from src.models.registry import ModelRegistry
-from src.nightscout_client import NightscoutClient
-from src.logger import logger
+from .simulation.digital_twin import BergmanDigitalTwin
+from .filters.metabolic_ukf import MetabolicUKF
+from .models.registry import ModelRegistry
+from .nightscout_client import NightscoutClient
+from .logger import logger
 
 def train_metabolic_model(days_to_simulate: int = 30):
     """

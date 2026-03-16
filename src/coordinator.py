@@ -6,6 +6,7 @@ import numpy as np
 from .nightscout_client import NightscoutClient
 from .filters.metabolic_ukf import MetabolicUKF
 from .features.stress import DynamicStressIndex, HRVRecord
+from .ingestion_engine import IngestionEngine
 from .alerts.controller import MetabolicAlertingService
 from .alerts.breaker import DataCircuitBreaker
 from .models.registry import ModelRegistry
@@ -24,6 +25,7 @@ class AsyncInferenceEngine:
         self.client = NightscoutClient()
         self.ukf = MetabolicUKF()
         self.stress_tracker = DynamicStressIndex()
+        self.ingestion_engine = IngestionEngine()
         self.alert_service = MetabolicAlertingService()
         self.breaker = DataCircuitBreaker(max_gap_minutes=20)
         
@@ -42,6 +44,7 @@ class AsyncInferenceEngine:
         # Data Buffers (Lag Compensation)
         self.cgm_buffer: List[GlucoseReading] = []
         self.hrv_buffer: List[BiometricReading] = []
+        self.treatment_buffer: List[TreatmentEvent] = []
         
         # API State
         self.last_status = "STABLE"
@@ -57,8 +60,12 @@ class AsyncInferenceEngine:
                 raw_readings = self.client.fetch_latest_readings(count=5)
                 for r in raw_readings:
                     # Convert raw dict to Pydantic GlucoseReading
-                    reading = GlucoseReading(timestamp=r.timestamp, sgv=r.sgv, direction=r.direction)
-                    await self.event_bus.put(reading)
+                    await self.event_bus.put(r)
+                
+                # Also fetch recent treatments
+                treatments = self.client.fetch_treatments(days=1)
+                for t in treatments:
+                    await self.event_bus.put(t)
             except Exception as e:
                 logger.error(f"CGM Worker Error: {e}")
             
@@ -105,6 +112,12 @@ class AsyncInferenceEngine:
                 self.hrv_buffer.append(event)
                 if len(self.hrv_buffer) > 50: self.hrv_buffer.pop(0)
 
+            elif isinstance(event, TreatmentEvent):
+                # Update treatment buffer (deduplicate by timestamp)
+                self.treatment_buffer.append(event)
+                self.treatment_buffer = sorted(list({t.timestamp: t for t in self.treatment_buffer}.values()), key=lambda x: x.timestamp)
+                if len(self.treatment_buffer) > 20: self.treatment_buffer.pop(0)
+
             # 2. Synchronize (Fixing Interstitial Lag Fallacy)
             # Find the HRV reading that corresponds to the CGM's physiological window (T-15m)
             self._sync_and_predict()
@@ -126,9 +139,25 @@ class AsyncInferenceEngine:
         dsi = self.stress_tracker.get_current_dsi(current_rmssd=closest_hrv.rmssd if closest_hrv else None)
         
         # 3. Filter (UKF) & Predict
-        filtered = self.ukf.update(z_glucose=latest_cgm.sgv, dsi=dsi)
+        # ROUTE THROUGH INGESTION ENGINE (GARBAGE IN PREVENTER)
+        cleaned_sgv = latest_cgm.sgv
+        iob, cob = 0.0, 0.0
         
-        logger.info(f"Inference: G={latest_cgm.sgv} | Filtered={filtered['glucose']:.1f} | DSI={dsi:.2f}")
+        if len(self.cgm_buffer) >= 3:
+            try:
+                processed_df = self.ingestion_engine.process_data(self.cgm_buffer, self.treatment_buffer)
+                if not processed_df.empty:
+                    # Take the latest cleaned value
+                    latest_clean = processed_df.iloc[-1]
+                    cleaned_sgv = latest_clean['sgv']
+                    iob = latest_clean.get('iob', 0.0)
+                    cob = latest_clean.get('cob', 0.0)
+            except Exception as e:
+                logger.error(f"Ingestion Engine Error: {e}")
+
+        filtered = self.ukf.update(z_glucose=cleaned_sgv, dsi=dsi)
+        
+        logger.info(f"Inference: G={cleaned_sgv:.1f} (Raw={latest_cgm.sgv}) | Filtered={filtered['glucose']:.1f} | DSI={dsi:.2f}")
 
         # Prediction and Alerting...
         if self.predictor:
@@ -136,8 +165,8 @@ class AsyncInferenceEngine:
                 "sgv": filtered["glucose"],
                 "velocity": filtered["velocity"],
                 "remote_insulin": filtered["remote_insulin"],
-                "iob": filtered["iob"],
-                "cob": filtered["cob"],
+                "iob": iob,
+                "cob": cob,
                 "dsi": dsi
             })
             
