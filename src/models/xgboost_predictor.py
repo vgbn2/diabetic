@@ -22,7 +22,7 @@ class XGBoostPredictor(BasePredictor):
             learning_rate=learning_rate,
             objective='reg:squarederror'
         )
-        self.features = ['sgv', 'velocity', 'acceleration', 'iob', 'cob', 'dsi']
+        self.features = ['sgv', 'velocity', 'remote_insulin', 'iob', 'cob', 'dsi']
         self.is_trained = False
 
     def train(self, df: pd.DataFrame, target_col: str = 'sgv_target_30m'):

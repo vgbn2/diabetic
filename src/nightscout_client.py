@@ -3,13 +3,13 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 import datetime
 from .config import Config
-from .data_models import GlucoseRecord
+from .data_models import GlucoseReading
 from .logger import logger
 
 class GlucoseDataSource(ABC):
     """Abstract Base Class for any glucose data source to future-proof the system."""
     @abstractmethod
-    def fetch_latest_readings(self, count: int = 10) -> List[GlucoseRecord]:
+    def fetch_latest_readings(self, count: int = 10) -> List[GlucoseReading]:
         pass
 
 class NightscoutClient(GlucoseDataSource):
@@ -31,9 +31,9 @@ class NightscoutClient(GlucoseDataSource):
         if self.secret:
             self.headers['API-SECRET'] = self.secret
 
-    def fetch_latest_readings(self, count: int = 10) -> List[GlucoseRecord]:
+    def fetch_latest_readings(self, count: int = 10) -> List[GlucoseReading]:
         """
-        Fetch recent Sensor Glucose Values (SGV) and return them as GlucoseRecord objects.
+        Fetch recent Sensor Glucose Values (SGV) and return them as GlucoseReading objects.
         """
         endpoint = f"{self.url}/api/v1/entries.json"
         params = {'count': count}
@@ -52,7 +52,7 @@ class NightscoutClient(GlucoseDataSource):
                     # Parse timestamp (Nightscout uses ms)
                     ts = datetime.datetime.fromtimestamp(entry.get("date", 0) / 1000.0)
                     
-                    records.append(GlucoseRecord(
+                    records.append(GlucoseReading(
                         timestamp=ts,
                         sgv=float(entry.get("sgv")),
                         direction=entry.get("direction", "NONE"),

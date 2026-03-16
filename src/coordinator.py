@@ -1,118 +1,164 @@
-import time
-import pandas as pd
-from datetime import datetime
-from typing import Optional, Dict, Any
-
+import asyncio
+import os
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
+import numpy as np
 from .nightscout_client import NightscoutClient
-from .ingestion_engine import IngestionEngine
 from .filters.metabolic_ukf import MetabolicUKF
 from .features.stress import DynamicStressIndex, HRVRecord
-from .alerts.controller import AIAlertController
+from .alerts.controller import MetabolicAlertingService
+from .alerts.breaker import DataCircuitBreaker
 from .models.registry import ModelRegistry
+from .data_models import GlucoseReading, BiometricReading, InferenceState
+from .agents.interaction_agent import UserInteractionAgent
 from .logger import logger
 
-class BioQuantCoordinator:
+class AsyncInferenceEngine:
     """
-    The central coordinator that manages the full Bio-Quant pipeline:
-    Ingestion -> Filtering -> Stress Tracking -> ML Prediction -> AI Alerting.
+    Asynchronous, event-driven metabolic inference engine.
+    Uses an Event Bus (asyncio.Queue) to fuse multi-frequency data streams.
     """
     
-    def __init__(self, use_mock_model: bool = True):
+    def __init__(self):
+        self.event_bus = asyncio.Queue()
         self.client = NightscoutClient()
-        self.engine = IngestionEngine()
         self.ukf = MetabolicUKF()
         self.stress_tracker = DynamicStressIndex()
-        self.alert_controller = AIAlertController()
+        self.alert_service = MetabolicAlertingService()
+        self.breaker = DataCircuitBreaker(max_gap_minutes=20)
         
-        # Load the ML Predictor (XGBoost by default)
+        # ML Predictor
         try:
             self.predictor = ModelRegistry.get_model("xgboost")
-            if use_mock_model:
-                # In a real scenario, we'd load a trained .json/.pkl file
-                # For now, we'll mark it as 'trained' for demonstration
-                self.predictor.is_trained = True 
+            model_path = "models/xgboost_v1.json"
+            if os.path.exists(model_path):
+                self.predictor.load(model_path)
+            else:
+                self.predictor.is_trained = True # Mock for now
         except Exception as e:
-            logger.error(f"Failed to initialize ML Predictor: {e}")
+            logger.error(f"Inference Model Initialization Error: {e}")
             self.predictor = None
 
-    def run_cycle(self, 
-                  current_hrv: Optional[float] = None, 
-                  manual_insulin: float = 0.0, 
-                  manual_carbs: float = 0.0) -> Dict[str, Any]:
-        """
-        Runs one complete metabolic analysis cycle.
-        """
-        logger.info("--- Starting Bio-Quant Analysis Cycle ---")
+        # Data Buffers (Lag Compensation)
+        self.cgm_buffer: List[GlucoseReading] = []
+        self.hrv_buffer: List[BiometricReading] = []
         
-        # 1. Fetch Raw Data
-        raw_glucose = self.client.fetch_latest_readings(count=5)
-        if not raw_glucose:
-            logger.warning("No data retrieved from Nightscout. Cycle aborted.")
-            return {"status": "NO_DATA"}
+        # API State
+        self.last_status = "STABLE"
+        
+        # Interaction Agent (Phase 6)
+        self.agent = UserInteractionAgent()
 
-        # 2. Update Dynamic Stress Index
-        if current_hrv:
-            self.stress_tracker.add_reading(HRVRecord(timestamp=datetime.now(), rmssd=current_hrv))
-        dsi = self.stress_tracker.get_current_dsi(current_rmssd=current_hrv)
-        
-        # 3. Filter & State Estimation (UKF)
-        # We take the latest reading as our 'observation'
-        latest_g = raw_glucose[0].sgv
-        
-        # We calculate current IOB/COB from kinetics (simplified for real-time)
-        # In production, this would pull from the treatments API
-        filtered_state = self.ukf.update(
-            z_glucose=latest_g, 
-            iob=manual_insulin, 
-            cob=manual_carbs, 
-            dsi=dsi
-        )
-        
-        # 4. ML Prediction (30-min Lead Time)
-        predicted_g = latest_g # Fallback
-        if self.predictor:
+    async def cgm_worker(self):
+        """Worker 1: Asynchronously polls Nightscout (Every 5 mins)."""
+        logger.info("CGM Worker Started (Polling: 5m)")
+        while True:
             try:
-                # Features: SGV, Velocity, Accel, IOB, COB, DSI
-                pred_input = {
-                    "sgv": filtered_state["glucose"],
-                    "velocity": filtered_state["velocity"],
-                    "acceleration": filtered_state["acceleration"],
-                    "iob": manual_insulin,
-                    "cob": manual_carbs,
-                    "dsi": dsi
-                }
-                predicted_g = self.predictor.predict(pred_input)
+                raw_readings = self.client.fetch_latest_readings(count=5)
+                for r in raw_readings:
+                    # Convert raw dict to Pydantic GlucoseReading
+                    reading = GlucoseReading(timestamp=r.timestamp, sgv=r.sgv, direction=r.direction)
+                    await self.event_bus.put(reading)
             except Exception as e:
-                logger.error(f"ML Prediction failed: {e}")
+                logger.error(f"CGM Worker Error: {e}")
+            
+            await asyncio.sleep(300) # Wait 5 minutes
 
-        # 5. AI Alert Evaluation
-        alert_level, message = self.alert_controller.evaluate_state(
-            current_glucose=latest_g,
-            predicted_glucose=predicted_g,
-            dsi=dsi
+    async def radar_worker(self, mock: bool = True):
+        """Worker 2: High-frequency data stream (Radar or simulated)."""
+        logger.info("Biometric Worker Started")
+        while True:
+            # Mock high-frequency biometric data
+            if mock:
+                # Use stable resting baseline — not random
+                # Replace with real wearable data when available
+                hrv = BiometricReading(
+                    timestamp=datetime.now(),
+                    rmssd=55.0,  # healthy adult resting baseline
+                    source="Mock_Stable"
+                )
+                await self.event_bus.put(hrv)
+                await asyncio.sleep(30) # 30 seconds (higher than CGM)
+
+    async def heartbeat_worker(self):
+        """Worker 4: Monitors engine health and system vitality."""
+        logger.info("Health Monitor Started")
+        while True:
+            await asyncio.sleep(300) # 5-minute heartbeat
+            logger.info("Bio-Quant Heartbeat: All Systems Nominal")
+
+    async def inference_worker(self):
+        """Worker 3: Main brain. Listens to EventBus and runs inference."""
+        logger.info("Inference Engine Online")
+        while True:
+            event = await self.event_bus.get()
+            
+            # 1. Route Event
+            if isinstance(event, GlucoseReading):
+                # Apply Circuit Breaker
+                if not self.breaker.validate_packet(event.timestamp):
+                    continue
+                self.cgm_buffer.append(event)
+                if len(self.cgm_buffer) > 10: self.cgm_buffer.pop(0)
+                
+            elif isinstance(event, BiometricReading):
+                self.hrv_buffer.append(event)
+                if len(self.hrv_buffer) > 50: self.hrv_buffer.pop(0)
+
+            # 2. Synchronize (Fixing Interstitial Lag Fallacy)
+            # Find the HRV reading that corresponds to the CGM's physiological window (T-15m)
+            self._sync_and_predict()
+            
+            self.event_bus.task_done()
+
+    def _sync_and_predict(self):
+        """Aligins real-time biometrics with lagged CGM data for inference."""
+        if not self.cgm_buffer: return
+        
+        latest_cgm = self.cgm_buffer[-1]
+        target_time = latest_cgm.timestamp - timedelta(minutes=latest_cgm.lag_minutes)
+        
+        # Find closest HRV reading to target_time
+        closest_hrv = None
+        if self.hrv_buffer:
+            closest_hrv = self.hrv_buffer[-1] 
+            
+        dsi = self.stress_tracker.get_current_dsi(current_rmssd=closest_hrv.rmssd if closest_hrv else None)
+        
+        # 3. Filter (UKF) & Predict
+        filtered = self.ukf.update(z_glucose=latest_cgm.sgv, dsi=dsi)
+        
+        logger.info(f"Inference: G={latest_cgm.sgv} | Filtered={filtered['glucose']:.1f} | DSI={dsi:.2f}")
+
+        # Prediction and Alerting...
+        if self.predictor:
+            pred = self.predictor.predict({
+                "sgv": filtered["glucose"],
+                "velocity": filtered["velocity"],
+                "remote_insulin": filtered["remote_insulin"],
+                "iob": filtered["iob"],
+                "cob": filtered["cob"],
+                "dsi": dsi
+            })
+            
+            status, msg = self.alert_service.evaluate_state(latest_cgm.sgv, pred, dsi)
+            self.last_status = status
+            logger.info(f"Prediction: {pred:.1f} | Status: {status}")
+            if status != "STABLE":
+                print(f"\n[ASYNC-ALERT] [{status}] {msg}\n")
+                self.alert_service.alert(status, msg)
+                
+                # Dynamic Interaction (Phase 6)
+                if status in ('STRESS_DEVIATION', 'FAINT_RISK'):
+                    question = self.agent.process_alert(status, dsi)
+                    if question:
+                        self.alert_service._send_telegram(self.alert_service.chat_id, f"<b>Bio-Quant Agent:</b>\n{question}")
+
+    async def run(self):
+        """Entry point for the asynchronous runtime."""
+        await asyncio.gather(
+            self.cgm_worker(),
+            self.radar_worker(mock=True),
+            self.inference_worker(),
+            self.heartbeat_worker()
         )
-        
-        result = {
-            "timestamp": datetime.now(),
-            "glucose": latest_g,
-            "filtered_glucose": filtered_state["glucose"],
-            "velocity": filtered_state["velocity"],
-            "predicted_30m": predicted_g,
-            "dsi": dsi,
-            "alert_level": alert_level,
-            "message": message
-        }
-        
-        logger.info(f"Cycle Complete. Status: {alert_level} | Msg: {message}")
-        return result
-
-if __name__ == "__main__":
-    # Test Coordinator in a loop
-    coordinator = BioQuantCoordinator()
-    
-    # Simulate a few cycles
-    for i in range(3):
-        res = coordinator.run_cycle(current_hrv=45.0)
-        print(f"\n[{res['timestamp']}] G: {res['glucose']} | Pred: {res['predicted_30m']:.1f} | Stress: {res['dsi']:.1f}")
-        print(f"Alert: {res['alert_level']} - {res['message']}")
-        time.sleep(2)

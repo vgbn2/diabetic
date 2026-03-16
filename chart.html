@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bio-Quant | Metabolic Dashboard</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { background: #0b0e11; color: #d1d4dc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .panel { background: #131722; border-radius: 8px; padding: 15px; border: 1px solid #2a2e39; }
+        .full { grid-column: span 2; }
+        h2 { margin-top: 0; color: #2962ff; font-weight: 500; }
+        #status-container { background: #1e222d; border-radius: 8px; padding: 15px; margin-bottom: 20px; text-align: center; border: 1px solid #2a2e39; }
+        #status { font-size: 28px; font-weight: bold; }
+        .STABLE { color: #00c853; }
+        .CRITICAL_HYPO, .FAINT_RISK { color: #f44336; }
+        .WARNING_HYPER, .CAUTION, .STRESS_DEVIATION { color: #ffab00; }
+        .metric-value { font-size: 48px; text-align: center; margin-top: 40px; color: #2962ff; font-weight: bold; }
+        .metric-label { text-align: center; color: #b2b5be; }
+    </style>
+</head>
+<body>
+    <div id="status-container">
+        <div id="status" class="STABLE">SYSTEM STATUS: LOADING...</div>
+    </div>
+    
+    <div class="grid">
+        <div class="panel full">
+            <h2>Glucose Trend (mg/dL)</h2>
+            <div id="glucose-chart" style="height: 350px;"></div>
+        </div>
+        <div class="panel">
+            <h2>Heart Rate Variability (ms)</h2>
+            <div id="hrv-chart" style="height: 350px;"></div>
+        </div>
+        <div class="panel">
+            <h2>Dynamic Stress Index (DSI)</h2>
+            <div id="dsi-value" class="metric-value">0.00</div>
+            <p class="metric-label">0.5 (Relaxed) | 1.8 (Nominal) | 3.0+ (Extreme Stress)</p>
+        </div>
+    </div>
+
+    <script>
+        const chartOptions = {
+            layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
+            grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+            timeScale: { timeVisible: true, secondsVisible: false },
+        };
+
+        const glucoseChart = LightweightCharts.createChart(document.getElementById('glucose-chart'), chartOptions);
+        const glucoseSeries = glucoseChart.addAreaSeries({ 
+            lineColor: '#2962ff', 
+            topColor: '#2962ff', 
+            bottomColor: 'rgba(41, 98, 255, 0.28)',
+            priceFormat: { type: 'price', precision: 1, minMove: 0.1 }
+        });
+
+        const hrvChart = LightweightCharts.createChart(document.getElementById('hrv-chart'), chartOptions);
+        const hrvSeries = hrvChart.addLineSeries({ 
+            color: '#ff5252',
+            priceFormat: { type: 'price', precision: 1, minMove: 0.1 }
+        });
+
+        async function update() {
+            try {
+                const res = await fetch('http://localhost:5000/api/state');
+                const data = await res.json();
+                
+                if (data.error) {
+                    document.getElementById('status').innerText = `ERROR: ${data.error}`;
+                    return;
+                }
+
+                document.getElementById('status').innerText = `SYSTEM STATUS: ${data.status.replace('_', ' ')}`;
+                document.getElementById('status').className = data.status;
+                document.getElementById('dsi-value').innerText = data.dsi.toFixed(2);
+
+                // Sort data by time to ensure lightweight-charts doesn't error
+                const sortedGlucose = data.glucose.sort((a, b) => a.time - b.time);
+                const sortedHrv = data.hrv.sort((a, b) => a.time - b.time);
+
+                if (sortedGlucose.length > 0) glucoseSeries.setData(sortedGlucose);
+                if (sortedHrv.length > 0) hrvSeries.setData(sortedHrv);
+            } catch (e) { 
+                console.error('API Error:', e);
+                document.getElementById('status').innerText = 'SYSTEM STATUS: DISCONNECTED';
+                document.getElementById('status').className = '';
+            }
+        }
+
+        setInterval(update, 5000);
+        update();
+    </script>
+</body>
+</html>

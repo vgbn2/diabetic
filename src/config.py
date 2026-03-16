@@ -21,3 +21,6 @@ class Config:
     # Telegram Bot
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+    
+    # External APIs
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")

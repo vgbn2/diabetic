@@ -1,75 +1,80 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from typing import Tuple, List
+from typing import Tuple, Dict, Optional
 from ..logger import logger
 
 class RadarPhysicsEngine:
     """
-    Simulation of UWB Radar for Heartbeat Detection using Delta Dirac Pulses.
-    This simulates the physics of electromagnetic waves reflecting off a moving chest wall.
+    Simulates UWB Radar Pulse propagation and vital sign reflection.
+    Refined: Includes Random Body Movement (RBM) and Multipath interference.
     """
     
-    def __init__(self, c: float = 3e8, fast_time_fs: float = 100e9, slow_time_fs: float = 20.0):
-        """
-        :param c: Speed of light (m/s).
-        :param fast_time_fs: Fast-time sampling rate (100 GHz for sub-mm range resolution).
-        :param slow_time_fs: Slow-time pulse repetition frequency (20 Hz).
-        """
+    def __init__(self, c: float = 3e8, fast_time_fs: float = 128e9, slow_time_fs: float = 20.0):
         self.c = c
         self.fast_fs = fast_time_fs
         self.slow_fs = slow_time_fs
-        self.sigma = 0.5e-10 # Pulse width (seconds) for Gaussian monocycle (Delta Dirac approx)
+        # Pulse width for Gaussian monocycle (T_p)
+        self.tau_p = 0.5e-9 
 
-    def generate_gaussian_monocycle(self, t: np.ndarray) -> np.ndarray:
-        """Idealized pulse shape representing a Delta Dirac pulse after filtering/transmission."""
-        return - (t / self.sigma**2) * np.exp(-t**2 / (2 * self.sigma**2))
+    def generate_monocycle(self, t: np.ndarray) -> np.ndarray:
+        """Physical UWB pulse (2nd derivative of Gaussian)."""
+        return (1 - 4 * np.pi * (t / self.tau_p)**2) * np.exp(-2 * np.pi * (t / self.tau_p)**2)
 
     def simulate_radar_return(self, 
                               distance_m: float = 1.0, 
-                              duration_s: float = 5.0, 
-                              hr_bpm: float = 70.0, 
-                              rr_bpm: float = 18.0) -> np.ndarray:
+                              duration_s: float = 10.0, 
+                              hr_bpm: float = 72.0, 
+                              rr_bpm: float = 16.0,
+                              snr_db: float = 15.0,
+                              movement_intensity: float = 0.0) -> np.ndarray:
         """
-        Simulates the 2D Radar Matrix [Slow-Time x Fast-Time].
+        Generates a 2D Radar Matrix [Slow-Time x Fast-Time] with artifacts.
         """
-        # Slow-time setup
         num_pulses = int(duration_s * self.slow_fs)
         slow_time = np.linspace(0, duration_s, num_pulses)
         
-        # Fast-time setup (Look at a 20 cm window around distance_m)
-        num_range_bins = 512
-        fast_time_offset = (2 * distance_m / self.c) - 1e-9
-        fast_time = np.linspace(0, 2e-9, num_range_bins) # 2ns window
+        num_range_bins = 1024
+        window_size_ns = 4.0
+        fast_time = np.linspace(0, window_size_ns * 1e-9, num_range_bins)
         
-        # 1. Simulate Chest Wall Displacement (Respiration + Heartbeat)
-        # Respiration: ~5mm, Heartbeat: ~0.5mm
+        # 1. Biological Displacement
         d_resp = 0.005 * np.sin(2 * np.pi * (rr_bpm / 60.0) * slow_time)
         d_heart = 0.0005 * np.sin(2 * np.pi * (hr_bpm / 60.0) * slow_time)
-        d_total = distance_m + d_resp + d_heart
         
-        # 2. Build the Radar Matrix
+        # 2. Random Body Movement (RBM)
+        # Large-scale low-frequency noise that masks small vital signs
+        rbm = movement_intensity * np.cumsum(np.random.normal(0, 0.0001, num_pulses))
+        
+        d_total = distance_m + d_resp + d_heart + rbm
+        
+        # 3. Fast-Time / Slow-Time Matrix Generation
         radar_matrix = np.zeros((num_pulses, num_range_bins))
         
-        logger.info(f"Simulating {num_pulses} radar pulses over {duration_s} seconds...")
+        # Add Multipath (Static reflections from walls)
+        clutter_bin_idx = int(0.6 * num_range_bins) # Static wall at 0.6 window
+        radar_matrix[:, clutter_bin_idx] = 1.0 
+        
+        logger.info(f"Simulating Radar: Pulse Width {self.tau_p*1e12:.1f}ps | Resolution {self.c/(2*self.fast_fs)*1000:.2f}mm")
         
         for i in range(num_pulses):
-            # Calculate time delay for this specific pulse
-            tau = 2 * d_total[i] / self.c
-            # The pulse arrives at tau relative to our fast_time window
-            # We center the pulse at tau in the fast-time window
-            shifted_fast_time = fast_time - (tau - fast_time_offset)
-            radar_matrix[i, :] = self.generate_gaussian_monocycle(shifted_fast_time)
+            tau_delay = 2 * d_total[i] / self.c
+            # Pulse Arrival Time shifted into our fast-time window
+            shifted_t = fast_time - tau_delay
+            radar_matrix[i, :] += self.generate_monocycle(shifted_t)
             
-        # Add white Gaussian noise
-        radar_matrix += np.random.normal(0, 0.05, radar_matrix.shape)
+        # 4. Add Noise (SNR control)
+        signal_power = np.mean(radar_matrix**2)
+        noise_power = signal_power / (10**(snr_db / 10))
+        noise = np.random.normal(0, np.sqrt(noise_power), radar_matrix.shape)
         
-        return radar_matrix
+        return radar_matrix + noise
 
 if __name__ == "__main__":
-    # Test the physics engine
     physics = RadarPhysicsEngine()
-    matrix = physics.simulate_radar_return(hr_bpm=72.0, rr_bpm=16.0)
     
-    print("\nPhysics Simulation Complete:")
-    print(f"Matrix Shape: {matrix.shape} (Pulses x Range Bins)")
-    print(f"Range Resolution: {physics.c / (2 * physics.fast_fs) * 1000:.3f} mm per bin")
+    # CASE: Dirty Signal (Low SNR + Movement)
+    matrix = physics.simulate_radar_return(snr_db=5.0, movement_intensity=0.1)
+    
+    print("\n--- Radar Physics Validation ---")
+    print(f"Matrix Generated: {matrix.shape}")
+    print(f"Noise Level: High (SNR 5dB)")
+    print(f"RBM Artifacts: Enabled")

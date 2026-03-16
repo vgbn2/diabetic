@@ -1,45 +1,80 @@
+import os
+import requests
 from typing import Dict, Any, Tuple
 from ..logger import logger
 
-class AIAlertController:
+class MetabolicAlertingService:
     """
-    The 'Brain' that decides whether to send an alert based on predicted glucose,
-    current glucose, and the Dynamic Stress Index (DSI).
+    Evaluates metabolic states to determine if safety thresholds have been breached.
+    Integrates glucose predictions with the Dynamic Stress Index (DSI).
     """
     
     def __init__(self, hypo_threshold: float = 70.0, hyper_threshold: float = 300.0, stress_threshold: float = 1.8):
         self.hypo_threshold = hypo_threshold
         self.hyper_threshold = hyper_threshold
         self.stress_threshold = stress_threshold
+        
+        # Telegram Credentials
+        self.token = os.getenv('TELEGRAM_BOT_TOKEN')
+        self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        self.caregiver_id = os.getenv('TELEGRAM_CAREGIVER_ID')
 
     def evaluate_state(self, current_glucose: float, predicted_glucose: float, dsi: float) -> Tuple[str, str]:
         """
-        Evaluates the current metabolic state and returns an alert level and a contextual message.
+        Inference logic for alert generation.
         """
         
-        # 1. CRITICAL HYPO PREDICTION
+        # 1. Hypoglycemic Prediction
         if predicted_glucose < self.hypo_threshold:
-            # If DSI is rapidly rising alongside a low, it could be a compression low (false) or panic
             if dsi > self.stress_threshold and current_glucose > self.hypo_threshold + 20:
-                logger.warning("Hypo predicted, but high stress detected. Possible sensor compression.")
-                return "WARNING", "Predicted low, but biometric stress is high. Check sensor for compression before treating."
+                logger.info("Hypoglycemia predicted; however, high DSI suggests potential sensor attenuation.")
+                return "CAUTION", "Predicted glucose below threshold. Biometric stress elevated; verify sensor placement."
             
-            logger.critical("Hypoglycemic crash predicted.")
-            return "CRITICAL_HYPO", f"CRASH ALERT: Glucose predicted to hit {predicted_glucose:.0f} mg/dL in 30 mins. Treat now."
+            return "CRITICAL_HYPO", f"Metabolic crash forecast: {predicted_glucose:.0f} mg/dL in T+30m."
 
-        # 2. HYPER / FAINT RISK
+        # 2. Hyperglycemia & Syncope Risk
         if current_glucose > self.hyper_threshold:
             if dsi > self.stress_threshold:
-                logger.critical("Faint Risk: High Glucose + High Stress (Sympathetic Surge).")
-                return "FAINT_RISK", f"DANGER: Glucose {current_glucose:.0f} + Extreme Stress (DSI: {dsi:.1f}). Risk of syncope/dehydration. Hydrate and check ketones."
+                return "FAINT_RISK", f"Critical Hyperglycemia ({current_glucose:.0f}) with sympathetic surge (DSI: {dsi:.1f}). High syncope risk."
             else:
-                logger.warning("Standard Hyperglycemia.")
-                return "WARNING_HYPER", f"High Glucose ({current_glucose:.0f} mg/dL). Consider correction if no active insulin."
+                return "WARNING_HYPER", f"Glucose above threshold: {current_glucose:.0f} mg/dL."
 
-        # 3. EMOTIONAL SPIKE (The "Cute Cat" / "Traffic" scenario)
-        # If glucose is rising fast but it's largely driven by a stress spike (DSI)
+        # 3. Physiological Deviation (Stress-Induced)
         if predicted_glucose > current_glucose + 30 and dsi > 1.5:
-             logger.info("Emotional glucose spike detected.")
-             return "INFO", f"Glucose rising, but Heart Rate Variability suggests an emotional/stress response (DSI: {dsi:.1f}). Wait 15 mins before taking insulin."
+             return "STRESS_DEVIATION", f"Positive glucose trend correlated with high DSI ({dsi:.1f}). Recommend observation."
 
-        return "OK", "Metabolic state is stable."
+        return "STABLE", "Metabolic parameters within nominal range."
+
+    def _send_telegram(self, chat_id: str, message: str):
+        """Helper to send POST request to Telegram API."""
+        if not self.token or not chat_id:
+            return
+        try:
+            response = requests.post(
+                f'https://api.telegram.org/bot{self.token}/sendMessage',
+                json={
+                    'chat_id': chat_id,
+                    'text': message,
+                    'parse_mode': 'HTML'
+                },
+                timeout=5
+            )
+            response.raise_for_status()
+        except Exception as e:
+            logger.error(f"Telegram Delivery error: {e}")
+
+    def alert(self, status: str, message: str):
+        """Dispatches alerts to Telegram based on state severity."""
+        if status == 'CRITICAL_HYPO':
+            msg = f'🚨 <b>CRITICAL HYPO</b>\n{message}\n\nEat fast-acting carbs NOW.'
+            self._send_telegram(self.chat_id, msg)
+            self._send_telegram(self.caregiver_id, msg)
+            
+        elif status == 'FAINT_RISK':
+            msg = f'⚠️ <b>FAINT RISK</b>\n{message}\n\nSit down. Hydrate. Check ketones.'
+            self._send_telegram(self.chat_id, msg)
+            self._send_telegram(self.caregiver_id, msg)
+            
+        elif status in ('WARNING_HYPER', 'STRESS_DEVIATION', 'CAUTION'):
+            msg = f'⚡ <b>{status}</b>\n{message}'
+            self._send_telegram(self.chat_id, msg)
