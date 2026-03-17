@@ -35,7 +35,7 @@ class IngestionEngine:
         df_g.set_index('timestamp', inplace=True)
 
         # 2. Resample to 5-minute grid
-        df_g = df_g.resample('5T').mean()
+        df_g = df_g.resample('5min').mean(numeric_only=True)
 
         # 3. Clean Noise (Physiological Filter + Rolling Median)
         df_g['sgv_raw'] = df_g['sgv']

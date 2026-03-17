@@ -10,7 +10,7 @@ from .ingestion_engine import IngestionEngine
 from .alerts.controller import MetabolicAlertingService
 from .alerts.breaker import DataCircuitBreaker
 from .models.registry import ModelRegistry
-from .data_models import GlucoseReading, BiometricReading, InferenceState
+from .data_models import GlucoseReading, BiometricReading, InferenceState, TreatmentEvent
 from .agents.interaction_agent import UserInteractionAgent
 from .logger import logger
 
@@ -134,9 +134,10 @@ class AsyncInferenceEngine:
         # Find closest HRV reading to target_time
         closest_hrv = None
         if self.hrv_buffer:
-            closest_hrv = self.hrv_buffer[-1] 
+            closest_hrv = min(self.hrv_buffer, key=lambda x: abs((x.timestamp - target_time).total_seconds())) 
             
         dsi = self.stress_tracker.get_current_dsi(current_rmssd=closest_hrv.rmssd if closest_hrv else None)
+        current_hr = closest_hrv.hr if closest_hrv else None
         
         # 3. Filter (UKF) & Predict
         # ROUTE THROUGH INGESTION ENGINE (GARBAGE IN PREVENTER)
@@ -157,7 +158,7 @@ class AsyncInferenceEngine:
 
         filtered = self.ukf.update(z_glucose=cleaned_sgv, dsi=dsi)
         
-        logger.info(f"Inference: G={cleaned_sgv:.1f} (Raw={latest_cgm.sgv}) | Filtered={filtered['glucose']:.1f} | DSI={dsi:.2f}")
+        logger.info(f"Inference: G={cleaned_sgv:.1f} | Pulse={current_hr if current_hr else 'N/A'} BPM | DSI={dsi:.2f}")
 
         # Prediction and Alerting...
         if self.predictor:
