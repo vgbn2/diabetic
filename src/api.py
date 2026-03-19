@@ -3,12 +3,18 @@ from flask_cors import CORS
 from datetime import datetime
 import time
 from .data_models import BiometricReading
+from .dashboard import DASHBOARD_HTML
 
 app = Flask(__name__)
 CORS(app)
 
 # These will be set by coordinator on startup
 shared_engine = None
+
+@app.route('/')
+def index():
+    """Serve the high-fidelity metabolic dashboard."""
+    return DASHBOARD_HTML
 
 @app.route('/api/ingest/pulse', methods=['POST'])
 def ingest_pulse():

@@ -23,7 +23,7 @@ async def run_simulation_stress_test(engine: AsyncInferenceEngine):
     logger.info("SIMULATION: Acute Emotional Event Detected (Immediate HRV Drop)")
     for i in range(5):
         stress_event = BiometricReading(
-            timestamp=now + timedelta(seconds=i*2), 
+            timestamp=now - timedelta(seconds=(5-i)*2), 
             rmssd=15.0, 
             source="Radar_UWB"
         )
@@ -35,7 +35,7 @@ async def run_simulation_stress_test(engine: AsyncInferenceEngine):
     logger.info("SIMULATION: Injecting Lagged CGM Data (15-minute physiological offset)")
     for i in range(3):
         lagged_glucose = GlucoseReading(
-            timestamp=now + timedelta(minutes=15 + i*5), 
+            timestamp=now - timedelta(minutes=(2-i)*5), 
             sgv=110 + (i * 20),
             direction="RapidRise",
             lag_minutes=15
@@ -54,7 +54,7 @@ async def run_simulation_crash_test(engine: AsyncInferenceEngine):
     # Step 1: Inject stress (HRV drops — reduces insulin sensitivity)
     for i in range(3):
         await engine.event_bus.put(BiometricReading(
-            timestamp=now + timedelta(seconds=i*2),
+            timestamp=now - timedelta(seconds=(3-i)*2),
             rmssd=12.0,  # critically low HRV
             source="Simulation"
         ))
@@ -63,7 +63,7 @@ async def run_simulation_crash_test(engine: AsyncInferenceEngine):
     # Step 2: Inject falling glucose (Aggressive crash)
     for i, sgv in enumerate([65, 52, 41, 34]):
         await engine.event_bus.put(GlucoseReading(
-            timestamp=now + timedelta(minutes=i*5),
+            timestamp=now - timedelta(minutes=(3-i)*5),
             sgv=sgv,
             direction="DoubleDown",
             lag_minutes=15
@@ -80,7 +80,7 @@ async def run_simulation_faint_test(engine: AsyncInferenceEngine):
     # High stress
     for i in range(5):
         await engine.event_bus.put(BiometricReading(
-            timestamp=now + timedelta(seconds=i*2),
+            timestamp=now - timedelta(seconds=(5-i)*2),
             rmssd=8.0,  # extreme stress
             source="Simulation"
         ))
@@ -88,7 +88,7 @@ async def run_simulation_faint_test(engine: AsyncInferenceEngine):
     # Critically high glucose
     for i, sgv in enumerate([280, 310, 340, 370]):
         await engine.event_bus.put(GlucoseReading(
-            timestamp=now + timedelta(minutes=i*5),
+            timestamp=now - timedelta(minutes=(3-i)*5),
             sgv=sgv,
             direction="SingleUp",
             lag_minutes=15

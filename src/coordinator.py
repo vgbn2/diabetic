@@ -10,7 +10,12 @@ from .ingestion_engine import IngestionEngine
 from .alerts.controller import MetabolicAlertingService
 from .alerts.breaker import DataCircuitBreaker
 from .models.registry import ModelRegistry
-from .data_models import GlucoseReading, BiometricReading, InferenceState, TreatmentEvent
+from .data_models import (
+    GlucoseReading, 
+    BiometricReading, 
+    InferenceState, 
+    TreatmentEvent
+)
 from .agents.interaction_agent import UserInteractionAgent
 from .logger import logger
 
@@ -111,6 +116,13 @@ class AsyncInferenceEngine:
             elif isinstance(event, BiometricReading):
                 self.hrv_buffer.append(event)
                 if len(self.hrv_buffer) > 50: self.hrv_buffer.pop(0)
+                # Ensure HRV baseline is updated
+                self.stress_tracker.add_reading(
+                    HRVRecord(
+                        timestamp=event.timestamp, 
+                        rmssd=event.rmssd
+                    )
+                )
 
             elif isinstance(event, TreatmentEvent):
                 # Update treatment buffer (deduplicate by timestamp)
