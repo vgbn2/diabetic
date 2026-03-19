@@ -117,12 +117,13 @@ class AsyncInferenceEngine:
                 self.hrv_buffer.append(event)
                 if len(self.hrv_buffer) > 50: self.hrv_buffer.pop(0)
                 # Ensure HRV baseline is updated
-                self.stress_tracker.add_reading(
-                    HRVRecord(
-                        timestamp=event.timestamp, 
-                        rmssd=event.rmssd
+                if event.rmssd: # Added rmssd check
+                    self.stress_tracker.add_reading(
+                        HRVRecord(
+                            timestamp=event.timestamp, 
+                            rmssd=event.rmssd
+                        )
                     )
-                )
 
             elif isinstance(event, TreatmentEvent):
                 # Update treatment buffer (deduplicate by timestamp)
