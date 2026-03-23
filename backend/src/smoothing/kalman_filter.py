@@ -28,9 +28,10 @@ class GlucoseFilter:
         # Measurement Noise (Estimated sensor error ~0.5 mmol/L)
         self.kf.R = np.array([[0.25]])
         
-        # Process Noise (Physiological variability)
-        self.kf.Q = np.array([[0.01, 0.01],
-                              [0.01, 0.01]])
+        # Process Noise (Physiological variability - Tuned for responsiveness)
+        q_var = 0.05
+        self.kf.Q = np.array([[q_var, q_var/10.0],
+                              [q_var/10.0, q_var/100.0]])
         
     def update(self, reading: GlucoseReading) -> MetabolicSnapshot:
         """Processes a new reading and returns a smoothed snapshot."""
@@ -39,7 +40,9 @@ class GlucoseFilter:
         self.kf.predict()
         self.kf.update(z)
         
-        x, v = self.kf.x
+        # Ensure scalar extraction from state vector (Fixes float(x) crash)
+        states = self.kf.x.flatten()
+        x, v = states[0], states[1]
         
         return MetabolicSnapshot(
             glucose=reading,
