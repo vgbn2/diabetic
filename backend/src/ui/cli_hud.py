@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from typing import Optional
 from rich.live import Live
 from rich.table import Table
 from rich.panel import Panel
