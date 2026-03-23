@@ -34,17 +34,14 @@ class NightscoutClient:
                 # Nightscout usually returns 'sgv' for sensor glucose value
                 # DateString is the ISO timestamp
                 if 'sgv' in entry:
-                    val = float(entry['sgv'])
-                    unit = "mg/dL" # Nightscout default
-                    
-                    # Convert to mmol/L if preferred
-                    if config.PREFER_MMOL:
-                        val /= 18.018
-                        unit = "mmol/L"
+                    raw = float(entry['sgv'])
+                    # Task 7.2: Convert raw value first, then create object
+                    value = raw / 18.018 if config.PREFER_MMOL else raw
+                    unit = "mmol/L" if config.PREFER_MMOL else "mg/dL"
                         
                     readings.append(GlucoseReading(
                         timestamp=datetime.fromisoformat(entry['dateString'].replace('Z', '+00:00')),
-                        value=val,
+                        value=value,
                         trend=entry.get('direction', 'Flat'),
                         source="nightscout",
                         unit=unit
