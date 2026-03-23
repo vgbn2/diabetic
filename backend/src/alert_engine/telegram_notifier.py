@@ -60,8 +60,9 @@ class TelegramNotifier:
 
 class TelegramApp:
     """The bot application wrapper for handling callbacks/commands."""
-    def __init__(self):
+    def __init__(self, audit_logger=None):
         self.app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
+        self.audit_logger = audit_logger
         self._setup_handlers()
 
     def _setup_handlers(self):
@@ -76,6 +77,11 @@ class TelegramApp:
         await query.answer()
         
         action, alert_type = query.data.split("_", 1)
+        
+        # Log feedback to AuditLogger (Task 7.1.4)
+        if self.audit_logger:
+            asyncio.create_task(self.audit_logger.log_feedback(alert_type, action))
+            
         if action == "confirm":
             await query.edit_message_text(text=f"✅ Alert {alert_type} acknowledged. Stay safe.")
         else:
