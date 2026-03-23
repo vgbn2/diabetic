@@ -90,6 +90,10 @@ class Coordinator:
         """Polls Nightscout every N minutes and runs HUD."""
         self.is_running = True
         self.logger.info(f"🚀 Coordinator started in LIVE mode (Interval: {config.DATA_POLLING_INTERVAL}s)")
+        self.logger.info(f"🧬 Patient Baseline: {config.PATIENT_GB_MMOL} mmol/L")
+        
+        if config.PATIENT_HRV_BASELINE is None:
+            self.logger.warning("🚨 MEDICAL CAUTION: PATIENT_HRV_BASELINE is None. Faint risk triggers will be glucose-only.")
         
         # Run HUD and Heartbeat in parallel
         asyncio.create_task(self.hud.run_live(self))

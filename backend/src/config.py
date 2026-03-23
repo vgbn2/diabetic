@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Medical Units
     PREFER_MMOL: bool = True  # We saw mmol/L in Ottai reports
     
+    # Patient Baselines (Medical Logic 1.1)
+    PATIENT_GB_MMOL: float = 8.4
+    PATIENT_HRV_BASELINE: Optional[float] = None  # None triggers warning on boot
+    
     # Communication (Backend -> Frontend)
     FRONTEND_PUSH_URL: str = "http://localhost:10000/api/push"
     
