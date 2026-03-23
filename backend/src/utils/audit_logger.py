@@ -51,6 +51,18 @@ class AuditLogger:
             except Exception as e:
                 self.logger.error(f"Failed to persist log to MongoDB: {e}")
 
+    async def log_reading(self, reading: GlucoseReading):
+        """Persists a raw glucose reading for long-term audit (Task 7.1.7)."""
+        await self.log_event("RAW_READING", reading.dict())
+
+    async def log_feedback(self, alert_type: str, action: str):
+        """Logs user feedback on alerts (Task 7.1.4)."""
+        await self.log_event("USER_FEEDBACK", {
+            "alert_type": alert_type,
+            "action": action,
+            "is_false_alarm": action != "confirm"
+        })
+
 if __name__ == "__main__":
     # Test standalone
     import asyncio

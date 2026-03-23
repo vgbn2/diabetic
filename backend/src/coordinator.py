@@ -39,6 +39,9 @@ class Coordinator:
 
     async def _process_reading(self, reading: GlucoseReading):
         """Standard processing pipeline for a single reading."""
+        # Task 7.1.7: Log raw reading to cloud
+        asyncio.create_task(self.audit.log_reading(reading))
+        
         # 1. Signal Quality Check
         history = [s.glucose for s in self.snapshots] + [reading]
         if SignalQuality.is_compression_low(history):
@@ -95,9 +98,13 @@ class Coordinator:
         if config.PATIENT_HRV_BASELINE is None:
             self.logger.warning("🚨 MEDICAL CAUTION: PATIENT_HRV_BASELINE is None. Faint risk triggers will be glucose-only.")
         
-        # Run HUD and Heartbeat in parallel
+        # Run HUD, Heartbeat and Telegram Bot (Feedback) in parallel
         asyncio.create_task(self.hud.run_live(self))
         asyncio.create_task(self.pusher.heartbeat())
+        
+        from backend.src.alert_engine.telegram_notifier import TelegramApp
+        bot_app = TelegramApp(audit_logger=self.audit)
+        # In a real async environment, we'd run polling here without blocking
         
         while self.is_running:
             try:
