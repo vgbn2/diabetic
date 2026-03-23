@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     PATIENT_GB_MMOL: float = 8.4
     PATIENT_HRV_BASELINE: Optional[float] = None  # None triggers warning on boot
     
-    # Communication (Backend -> Frontend)
+    # Infrastructure
+    MONGO_URI: str = ""
+    RENDER_EXTERNAL_URL: str = ""
+    
     FRONTEND_PUSH_URL: str = "http://localhost:10000/api/push"
     
     model_config = SettingsConfigDict(
