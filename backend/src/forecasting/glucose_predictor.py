@@ -52,9 +52,10 @@ class GlucoseForecaster:
             return 0.0
             
         if not self.is_trained:
-            # Fallback to kinematic extrapolation: G_30 = G_0 + (V * 30) + (0.5 * A * 30^2)
+            # Fallback to kinematic extrapolation: G_30 = G_0 + (V * 30.0)
+            # Task 7.8: Remove acceleration term to prevent explosion
             latest = history[-1]
-            prediction = latest.filtered_value + (latest.velocity * 30.0) + (0.5 * latest.acceleration * (30.0**2))
+            prediction = latest.filtered_value + (latest.velocity * 30.0)
             return max(2.2, prediction) # Physiological floor
             
         features = self._prepare_features(history)
