@@ -1,36 +1,29 @@
 ## Current Position
-- **Phase**: Milestone 7 (Nuclear Audit & Hardening)
-- **Task**: Final Verification & Cleanup
-- **Status**: Paused at 2026-03-23 18:51
+- **Phase**: Phase 8: Digital Twin & Predictive Meal Modeling
+- **Task**: Phase 8 Completion & Cloud Planning
+- **Status**: Paused at 2026-03-25 20:06
 
 ## Last Session Summary
-Completed a comprehensive 10-point nuclear audit to stabilize the Bio-Quant system. Key accomplishments include Kalman filter hardening, Nightscout unit conversion fixes, persistent audit logging for readings and feedback, and a unified backend architecture.
+Finalized Phase 7 (Hardening) and completed Phase 8 (Digital Twin). The system now has a physics-based simulation engine for meals, adaptive parameter tuning (auto-adjusting sensitivity and absorption speed), and a "Regime Detector" for hormonal/circadian shifts.
 
 ## In-Progress Work
-- Files modified: `main.py`, `backend/src/coordinator.py`, `backend/src/utils/audit_logger.py`, `backend/src/alert_engine/telegram_notifier.py`, `backend/src/forecasting/glucose_predictor.py`, `backend/src/smoothing/kalman_filter.py`, `backend/src/ingestion/nightscout_client.py`, `backend/src/config.py`.
-- Tests status: All nuclear blockers resolved; manual verification of startup and logging successful.
+- Files modified: `diabetic/ml_engine/twin.py`, `diabetic/coordinator.py`, `diabetic/telegram_bot/handlers.py`, `diabetic/medical_constants.py`, `diabetic/registry.py`.
+- Tests status: `twin.py` and `visualizer.py` standalone tests passed. Core integration verified.
+- **Note**: Visualization (Plan 8.2) is deferred and moved to `charts_visualize/`.
 
 ## Blockers
-None. The system is currently in a "Live-Ready" state.
+None. The system is stable and passing all metabolic verification suites.
 
 ## Context Dump
 ### Decisions Made
-- **Refactoring Unified Backend**: Moved all logic to `backend.src` to satisfy audit item #4.
-- **Kinematic Fallback**: Removed the acceleration term from the prediction fallback (G + V*t) to prevent exponential explosion (Audit item #8).
-- **Package Initialization**: Added `__init__.py` to all backend subdirectories to ensure proper Python module discovery (Audit item #10).
+- **Adaptive Seeds**: Used 15m/60m as population baselines, then implemented an `auto_tune` method to personalize `tau` and `CSF` based on real CGM peaks.
+- **Regime Detector**: Implemented a multi-day moving average comparison (>15% shift) to detect high-resistance metabolic regimes (Hormonal/Luteal).
+- **Visualization Deferral**: Decoupled `visualizer.py` into `charts_visualize/` to keep the local core lean until server deployment.
 
 ### Approaches Tried
-- **Incremental Hardening**: Fixed blockers sequentially (HUD -> Kalman -> Nightscout) to maintain a bootable system at each step.
+- **Interactive Loops**: Successfully integrated the Telegram bot polling directly into the `Coordinator` via `asyncio` background tasks.
 
-### Current Hypothesis
-The system is now stable for long-term clinical monitoring.
-
-### Files of Interest
-- `backend/src/coordinator.py`: The orchestrator for the entire pipeline.
-- `backend/src/utils/audit_logger.py`: Centralized persistence for all metabolic events.
-- `main.py`: Entry point (recently reverted by user to restore simulation modes).
-
-## Next Steps
-1. Re-refactor `main.py` to support both Simulation and Live modes *using* the new `backend.src` imports (per user preference).
-2. Final end-to-end integration test with a live Nightscout instance.
-3. Review audit logs in MongoDB to confirm feedback capture.
+### Next Steps
+1. **Phase 9: Lean 24/7 Deployment**: Deploy the engine to a VPS (e.g., DigitalOcean/AWS) using `pm2` for process persistence.
+2. **Hormonal Manual Triggers**: Add Telegram commands (e.g., `/period_start`) to manually force regime shifts in the Digital Twin.
+3. **Re-Integration of UI**: Re-enable `visualizer.py` once a persistent server is established.
