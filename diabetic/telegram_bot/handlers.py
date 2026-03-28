@@ -139,9 +139,10 @@ if __name__ == "__main__":
     # Test alert interface (requires token)
     logging.basicConfig(level=logging.INFO)
     async def test():
+        from datetime import timezone
         notifier = TelegramNotifier()
         alert = Alert(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             type="TEST_ALERT",
             severity="HIGH",
             message="This is a test notification from Bio-Quant.",

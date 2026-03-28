@@ -218,11 +218,11 @@ class Coordinator:
         # snapshot.last_meal (set in _process_reading) is Nightscout-sourced.
         # _active_meal() arbitrates between them in prediction context.
         self.last_meal = MealEvent(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             carbs=grams,
             gi_type=gi_type
         )
-        self.meal_window_start = datetime.now()
+        self.meal_window_start = datetime.now(timezone.utc)
         # FIX T3: arm the flag so auto_tune fires once after 230 min
         self.meal_tune_pending = True
 

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from diabetic.config import config
 from diabetic.coordinator import Coordinator
 from diabetic.registry import GlucoseReading
@@ -20,7 +20,7 @@ async def run_simulation(scenario: str):
 
     # Simulation data generation
     readings = []
-    start_time = datetime.now()
+    start_time = datetime.now(timezone.utc)
     
     if scenario == "crash":
         # Rapid drop from normal to hypoglycemia

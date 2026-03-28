@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorClient
 from diabetic.config import config
@@ -28,7 +28,7 @@ class AuditLogger:
 
     async def log_event(self, event_type: str, data: dict, level: str = "INFO"):
         """Stores an event in the database and local logger."""
-        timestamp = datetime.now()
+        timestamp = datetime.now(timezone.utc)
         log_entry = {
             "timestamp": timestamp,
             "event_type": event_type,

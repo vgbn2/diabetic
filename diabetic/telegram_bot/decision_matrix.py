@@ -1,5 +1,5 @@
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pydantic import BaseModel
 from diabetic.registry import MetabolicSnapshot, GlucoseReading
@@ -38,7 +38,7 @@ class DecisionMatrix:
         # 1. CRITICAL HYPO (Current)
         if g < medical_constants.HYPO_CRITICAL:
             return Alert(
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 type="CRITICAL_HYPO",
                 severity=AlertSeverity.EMERGENCY,
                 message=f"{self.config.UI_SETTINGS['EMERGENCY']}: Glucose is {g:.1f} mmol/L. Immediate action required!",
@@ -48,7 +48,7 @@ class DecisionMatrix:
         # 2. WARNING HYPO (Predicted)
         if prediction_30m < medical_constants.HYPO_WARNING and v < 0:
             return Alert(
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 type="WARNING_HYPO",
                 severity=AlertSeverity.HIGH,
                 message=f"{self.config.UI_SETTINGS['HIGH']}: Predicted to hit {prediction_30m:.1f} mmol/L in 30 mins. (Vel: {v:.1f})",
@@ -59,7 +59,7 @@ class DecisionMatrix:
         # 3. CRITICAL HYPER (Current)
         if g > medical_constants.HYPER_CRITICAL:
             return Alert(
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 type="CRITICAL_HYPER",
                 severity=AlertSeverity.HIGH,
                 message=f"{self.config.UI_SETTINGS['CRITICAL_HYPER']}: Glucose is {g:.1f} mmol/L. Check ketones.",
@@ -78,12 +78,12 @@ class DecisionMatrix:
             cardiac_stress = hr > 100 or hrv < 20
             
             # Dawn Phenomenon damping (4 AM - 8 AM)
-            now_hour = datetime.now().hour
+            now_hour = datetime.now(timezone.utc).hour
             is_dawn = 4 <= now_hour <= 8
             
             if is_faint_risk and (not is_dawn or cardiac_stress):
                 return Alert(
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     type="FAINT_RISK",
                     severity=AlertSeverity.MEDIUM,
                     message=f"{self.config.UI_SETTINGS['FAINT_RISK']}: Rapid climb ({v:+1f} mmol/L/min) | Glucose: {g:.1f} | HR: {hr:.0f}bpm.",
@@ -104,7 +104,7 @@ class CircuitBreaker:
         if severity == AlertSeverity.EMERGENCY:
             return True # Never throttle emergency alerts
             
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         if alert_type not in self.last_alerts:
             self.last_alerts[alert_type] = now
             return True
