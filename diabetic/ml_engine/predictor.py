@@ -61,6 +61,29 @@ class GlucoseForecaster:
         
         return features
 
+    def _calculate_dynamic_damping(self, glucose: float, velocity: float) -> float:
+        """
+        Calculates physiological braking based on Renal Threshold (10.0 mmol/L).
+        Damping increases as glucose rises, mimicking renal clearance (Sink effect).
+        """
+        # Base damping (Fixed component for high velocity noise rejection)
+        # 0.5 per 5m = 0.1 per minute
+        v_threshold = medical_constants.FAINT_VELOCITY_PER_5MIN / 5.0
+        base_damping = 0.95 if abs(velocity) > v_threshold else 1.0
+        
+        # Hyperglycemic Damping (Renal sink)
+        rt = medical_constants.RENAL_THRESHOLD
+        if glucose <= rt:
+            return base_damping
+            
+        # Linear slope above 10.0 mmol/L
+        delta = glucose - rt
+        renal_damping = 1.0 - (medical_constants.RENAL_CLEARANCE_SLOPE * delta)
+        
+        # Combined damping with floor
+        combined = base_damping * renal_damping
+        return max(medical_constants.METABOLIC_BRAKE_FLOOR, combined)
+
     def predict(self, history: List[MetabolicSnapshot], horizon_mins: float = 30.0) -> tuple[float, float]:
         """
         Predicts glucose value N minutes from now.
@@ -77,10 +100,11 @@ class GlucoseForecaster:
         
         if not self.is_trained:
             # Weighted Kinematic Algorithm: P = G + (V * t) + (0.5 * A * t^2)
-            # Damping applied to velocity to reflect metabolic inertia
-            damping = 0.85 if abs(latest.velocity) > 0.1 else 1.0
+            # Dynamic damping based on metabolic saturation and renal clearance
+            damping = self._calculate_dynamic_damping(latest.filtered_value, latest.velocity)
             
             # Use kinematic equation
+            # Velocity is in mmol/L per min, horizon_mins is in mins
             v_term = latest.velocity * horizon_mins * damping
             a_term = 0.5 * latest.acceleration * (horizon_mins ** 2) * 0.5 # Extra damping on acceleration
             

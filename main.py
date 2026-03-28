@@ -1,38 +1,24 @@
 import asyncio
 import sys
-import logging
-from backend.src.config import config
-from backend.src.coordinator import Coordinator
+import os
 
-async def main():
-    """
-    Main entry point for Bio-Quant Hyperglycemia-Faint Predictor.
-    Unified Architecture v2.0
-    """
-    print("="*60)
-    print("  BIO-QUANT: METABOLIC INFERENCE ENGINE (v2.0)  ")
-    print("="*60)
-    
-    # Initialize Coordinator (Orchestrates Filter, Analysis, Alerts, Persistence)
-    system = Coordinator()
-    
-    try:
-        # Start the live processing loop
-        # This handles Nightscout polling, Kalman filtering, and Telegram notifications
-        await system.start_live_mode()
-    except Exception as e:
-        logging.error(f"System Failure: {e}")
-    finally:
-        system.stop()
+# Add current directory to sys.path to allow 'from diabetic...' imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from diabetic.main import main as diabetic_main
 
 if __name__ == "__main__":
-    # Windows Selector Loop for high-concurrency async
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     try:
-        asyncio.run(main())
+        loop.run_until_complete(diabetic_main())
     except KeyboardInterrupt:
-        print("\n[!] Bio-Quant Shutdown Initiated by User.")
+        print("\nSystem shutdown complete.")
     except Exception as e:
-        print(f"\n[CRITICAL] System Unhandled Exception: {e}")
+        print(f"\nFATAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    finally:
+        loop.close()

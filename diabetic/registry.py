@@ -23,6 +23,7 @@ class MealEvent(BaseModel):
     is_breakfast: bool = False
     is_lunch: bool = False
     is_dinner: bool = False
+    gi_type: str = "STARCH"  # "LIQUID" or "STARCH"
 
 class CardiacReading(BaseModel):
     """Represents heart rate and variability data."""
