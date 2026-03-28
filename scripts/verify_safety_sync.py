@@ -49,7 +49,11 @@ class SyncTester:
         
         status = f"G:{snapshot.filtered_value:.1f} V:{snapshot.velocity:+.2f} P30:{prediction:.1f}"
         alert_str = f"ALERT: [{alert.type}] {alert.message[:40]}..." if alert else "NORMAL"
-        print(f"[{reading.timestamp.strftime('%H:%M')}] {status} | {alert_str} ({can_trigger})")
+        try:
+            print(f"[{reading.timestamp.strftime('%H:%M')}] {status} | {alert_str} ({can_trigger})")
+        except UnicodeEncodeError:
+            safe_alert = alert_str.encode('ascii', 'ignore').decode('ascii')
+            print(f"[{reading.timestamp.strftime('%H:%M')}] {status} | {safe_alert} ({can_trigger})")
 
 def run_tests():
     tester = SyncTester()

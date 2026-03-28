@@ -18,7 +18,7 @@ class GlucoseForecaster:
             objective='reg:squarederror'
         )
         self.is_trained = False
-        
+
         if model_path:
             self.load_model(model_path)
 
@@ -29,23 +29,22 @@ class GlucoseForecaster:
         """
         if not history:
             return np.array([])
-            
+
         latest = history[-1]
         lbgi, hbgi = MetabolicMath.calculate_risk_indices(latest.filtered_value)
-        
+
         # Circadian Features
         now = latest.glucose.timestamp
         t_sin = np.sin(2 * np.pi * now.hour / 24.0)
         t_cos = np.cos(2 * np.pi * now.hour / 24.0)
-        
+
         # Momentum & Oscillation
         momentum = latest.velocity * latest.filtered_value
         oscillation = 0.0
         if len(history) >= 5:
             mean_vals = np.mean([h.filtered_value for h in history[-5:]])
             oscillation = abs(latest.filtered_value - mean_vals)
-            
-        # Feature vector (1x10)
+
         features = np.array([[
             latest.filtered_value,
             latest.velocity,
@@ -58,29 +57,39 @@ class GlucoseForecaster:
             latest.atr_14,
             oscillation
         ]])
-        
+
         return features
 
-    def _calculate_dynamic_damping(self, glucose: float, velocity: float) -> float:
+    def _calculate_dynamic_damping(self, glucose: float, velocity: float, horizon_mins: float) -> float:
         """
-        Calculates physiological braking based on Renal Threshold (10.0 mmol/L).
-        Damping increases as glucose rises, mimicking renal clearance (Sink effect).
+        Calculates physiological braking for kinematic projection.
+
+        Two components:
+        1. Base damping (velocity noise rejection) — applied at all horizons.
+           Reduces contribution of high-frequency velocity spikes.
+
+        2. Renal damping (glucosuria sink) — applied ONLY when horizon >= 60 min.
+           FIX T1: glucosuria operates on a 1-4 hour timescale. Applying this
+           brake to short-horizon (5-30 min) predictions compounds per-reading
+           and has no physiological basis at that scale. Gated to long-horizon
+           projections only.
+           Disabled above HYPER_CRITICAL (19.4 mmol/L): under-predicting a
+           hyperglycemic rise in the critical zone is more dangerous than
+           over-predicting it.
         """
-        # Base damping (Fixed component for high velocity noise rejection)
-        # 0.5 per 5m = 0.1 per minute
+        # Base damping — artifact/noise rejection for high velocity readings
+        # FAINT_VELOCITY_PER_5MIN = 0.5 mmol/L per 5 min = 0.1 mmol/L per min
         v_threshold = medical_constants.FAINT_VELOCITY_PER_5MIN / 5.0
         base_damping = 0.95 if abs(velocity) > v_threshold else 1.0
-        
-        # Hyperglycemic Damping (Renal sink)
-        rt = medical_constants.RENAL_THRESHOLD
-        if glucose <= rt:
-            return base_damping
-            
-        # Linear slope above 10.0 mmol/L
-        delta = glucose - rt
-        renal_damping = 1.0 - (medical_constants.RENAL_CLEARANCE_SLOPE * delta)
-        
-        # Combined damping with floor
+
+        # Renal damping — long-horizon only, and not in the critical zone
+        renal_damping = 1.0
+        if horizon_mins >= 60.0 and glucose <= medical_constants.HYPER_CRITICAL:
+            rt = medical_constants.RENAL_THRESHOLD
+            if glucose > rt:
+                delta = glucose - rt
+                renal_damping = 1.0 - (medical_constants.RENAL_CLEARANCE_SLOPE * delta)
+
         combined = base_damping * renal_damping
         return max(medical_constants.METABOLIC_BRAKE_FLOOR, combined)
 
@@ -91,29 +100,31 @@ class GlucoseForecaster:
         """
         if not history:
             return 0.0, 0.0
-            
+
         latest = history[-1]
-        
+
         # Confidence decays as horizon increases
-        # Baseline confidence is 0.95 for 5 mins, decaying to ~0.4 for 2 hours
         confidence = max(0.1, 1.0 - (horizon_mins / 120.0))
-        
+
         if not self.is_trained:
-            # Weighted Kinematic Algorithm: P = G + (V * t) + (0.5 * A * t^2)
-            # Dynamic damping based on metabolic saturation and renal clearance
-            damping = self._calculate_dynamic_damping(latest.filtered_value, latest.velocity)
-            
-            # Use kinematic equation
+            # Kinematic Algorithm: P = G + (V * t * damping) + (0.25 * A * t^2)
+            # FIX Bug5: documented the 0.25 factor explicitly. The standard
+            # kinematic formula is 0.5 * a * t^2. The extra * 0.5 is intentional
+            # acceleration damping (reduces long-horizon overshoot from noisy
+            # Kalman acceleration estimates). It is not a physics error.
+            # FIX T1: horizon_mins passed to damping so renal brake is gated.
+            damping = self._calculate_dynamic_damping(latest.filtered_value, latest.velocity, horizon_mins)
+
             # Velocity is in mmol/L per min, horizon_mins is in mins
             v_term = latest.velocity * horizon_mins * damping
-            a_term = 0.5 * latest.acceleration * (horizon_mins ** 2) * 0.5 # Extra damping on acceleration
-            
+            # Acceleration damping factor 0.5 reduces to 0.25 * a * t^2.
+            # Intentional: Kalman acceleration is noisier than velocity.
+            a_term = 0.5 * latest.acceleration * (horizon_mins ** 2) * 0.5
+
             prediction = latest.filtered_value + v_term + a_term
-            
-            # Apply physiological floor
             final_pred = max(medical_constants.PHYSIO_FLOOR, prediction)
             return float(final_pred), float(confidence)
-            
+
         features = self._prepare_features(history)
         prediction = self.model.predict(features)[0]
         return float(prediction), float(confidence)
@@ -131,7 +142,7 @@ class GlucoseForecaster:
 if __name__ == "__main__":
     from datetime import datetime
     from diabetic.registry import GlucoseReading
-    
+
     forecaster = GlucoseForecaster()
     snap = MetabolicSnapshot(
         glucose=GlucoseReading(timestamp=datetime.now(), value=8.3, trend="Flat"),
@@ -142,5 +153,3 @@ if __name__ == "__main__":
     )
     pred = forecaster.predict_30m([snap])
     print(f"Current: 8.3 mmol/L | Predicted 30m: {pred:.2f} mmol/L")
-
-   
