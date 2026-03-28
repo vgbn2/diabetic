@@ -98,6 +98,13 @@ RENAL_THRESHOLD       = 10.0   # mmol/L — tubular reabsorption saturation (per
 RENAL_CLEARANCE_SLOPE = 0.025  # empirical — 2.5% brake per mmol/L over threshold
 METABOLIC_BRAKE_FLOOR = 0.70   # maximum 30% reduction; floor engages at ~22 mmol/L
 
+# ── Counter-regulatory Braking (low-side diminishing returns) ────────────────
+# Mechanism: at the onset of hypoglycemia, the body initiates a defense
+# (glucagon/epinephrine) which slows the rate of glucose decline.
+# Apply ONLY when velocity is negative (falling).
+LOW_SIDE_THRESHOLD   = 3.9    # mmol/L — point where counter-regulation typically begins (seed)
+LOW_SIDE_BRAKE_SLOPE = 0.25   # 25% brake per mmol/L below threshold (more aggressive damping)
+
 # ── Regime Detection & Hormonal Cycles ────────────────────────────────────────
 REGIME_SENSITIVITY_MULT  = 1.25  # +25% resistance during Luteal Phase / Dawn Phenomenon
 CARB_SENSITIVITY_DEFAULT = 0.16  # approx 1g = 0.16 mmol/L rise (~2.9 mg/dL)

@@ -84,13 +84,22 @@ class GlucoseForecaster:
 
         # Renal damping — long-horizon only, and not in the critical zone
         renal_damping = 1.0
-        if horizon_mins >= 60.0 and glucose <= medical_constants.HYPER_CRITICAL:
+        if horizon_mins >= 30.0 and glucose <= medical_constants.HYPER_CRITICAL:
             rt = medical_constants.RENAL_THRESHOLD
             if glucose > rt:
                 delta = glucose - rt
                 renal_damping = 1.0 - (medical_constants.RENAL_CLEARANCE_SLOPE * delta)
 
-        combined = base_damping * renal_damping
+        # Counter-regulatory damping — long-horizon and falling only
+        # Reduces predicted drop as glucose approaches physiological floor.
+        low_side_damping = 1.0
+        if horizon_mins >= 30.0 and velocity < 0:
+            lt = medical_constants.LOW_SIDE_THRESHOLD
+            if glucose < lt:
+                delta = lt - glucose
+                low_side_damping = 1.0 - (medical_constants.LOW_SIDE_BRAKE_SLOPE * delta)
+
+        combined = base_damping * renal_damping * low_side_damping
         return max(medical_constants.METABOLIC_BRAKE_FLOOR, combined)
 
     def predict(self, history: List[MetabolicSnapshot], horizon_mins: float = 30.0) -> tuple[float, float]:
