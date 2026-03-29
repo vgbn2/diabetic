@@ -69,10 +69,8 @@ class DecisionMatrix:
         # 4. FAINT RISK (Hyper + Rapid climb + Cardiac stress)
         # Integrate HRV and BPM for a more accurate faint risk
         if g > medical_constants.FAINT_GLUCOSE:
-            # Base risk: fast rise
-            # Note: v is mmol/L per minute, so we compare v*5 against the per-5min threshold
-            v_per_5min = v * 5.0
-            is_faint_risk = v_per_5min > medical_constants.FAINT_VELOCITY_PER_5MIN
+            # Base risk: fast rise (Wave 6: Normalized to per-minute)
+            is_faint_risk = v > medical_constants.FAINT_VELOCITY_LIMIT_PER_MIN
             
             # Cardiac stress multipliers (BPM > 100 or HRV < 20ms)
             cardiac_stress = hr > 100 or hrv < 20

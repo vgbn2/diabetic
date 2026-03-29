@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     
     # System Config
     LOG_LEVEL: str = "INFO"
-    DATA_POLLING_INTERVAL: int = 300  # 5 minutes
+    DATA_POLLING_INTERVAL: int = 150  # 2,5 minutes
     # Medical Units
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     # Infrastructure
     MONGO_URI: str = ""
     RENDER_EXTERNAL_URL: str = ""
+    HEART_RATE_SENSOR_ADDRESS: str = "MOCK" # Set to XX:XX... for BLE
+    
+    # Local High-Availability (Task 8.1.1)
+    LOCAL_DB_PATH: str = "audit.db"
+    BACKFILL_MAX_HOURS: int = 24
+    LOCAL_GUI_ENABLED: bool = True
+    
+    # --- WAVE 5: UI & Network parameters ---
+    LIVE_HISTORY_HOURS: float = 8.0
+    BLE_RECONNECT_SECS: int = 30
+    PUSH_TIMEOUT_SECS: float = 5.0
+    POLLING_INTERVAL_SECS: int = 300
     
     FRONTEND_PUSH_URL: str = "http://localhost:10000/api/push"
     

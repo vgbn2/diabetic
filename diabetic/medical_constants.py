@@ -10,6 +10,15 @@ Sources:
 [5] Mhaskar et al. (2017) - Circadian features in T1 prediction
 """
 
+# ── Kovatchev Risk Space Constants ───────────────────────────────────────────
+# Source [1] — tuned for mg/dL input
+KOVATCHEV_OFFSET    = 5.381
+KOVATCHEV_PRE_MULT  = 1.509
+KOVATCHEV_EXP       = 1.084
+KOVATCHEV_RISK_MULT = 10.0
+KOVATCHEV_FLOOR_MGDL = 20.0   # Required for log stability
+KOVATCHEV_CEIL_MGDL  = 600.0  # Sensor saturation limit
+
 # ── Unit conversion ───────────────────────────────────────────────────────────
 MMOL_TO_MGDL = 18.018                      # exact SI factor
 MGDL_TO_MMOL = 1 / 18.018
@@ -22,24 +31,27 @@ HYPER_CRITICAL   = 19.4   # >350 mg/dL — CRITICAL, ketoacidosis risk
 FAINT_GLUCOSE    = 16.7   # >300 mg/dL — faint risk threshold
 PHYSIO_FLOOR     = 2.2    # ~40 mg/dL  — absolute survivable minimum
 
-# ── Rate of change (mmol/L per 5-min CGM interval) ───────────────────────────
-# FIXED: unit base is per 5-min interval throughout this section — not /min.
-# All names carry _PER_5MIN suffix to prevent ambiguity at call sites.
-# Source [4] — Sparacino 2007, physiological glucose dynamics.
+# ── Rate of change (Normalized to mmol/L per Minute) ─────────────────────────
+# FIXED Wave 6: Unit base is now strictly per minute throughout the engine.
+# This enables sampling-agnostic logic (Works for 2.5m, 3m, or 5m intervals).
+# Source [4] — Sparacino 2007, normalized.
 
-# NOTE: 0.5 mmol/L per 5-min is supra-physiological (~0.1/min max in literature).
-# These thresholds function as artifact discriminators, not physiological
-# event detectors. Downstream checks should be named accordingly.
-FAINT_VELOCITY_PER_5MIN         = 0.5    # mmol/L per 5-min — artifact-level upward spike
-COMPRESSION_DROP_LIMIT_PER_5MIN = 2.0    # mmol/L per 5-min — artifact-level downward spike
-PHYSIO_MAX_DROP_PER_5MIN        = 1.5    # mmol/L per 5-min — max biological drop (insulin overdose ceiling)
-                                          # Basis: clinical observation; formal citation pending.
+FAINT_VELOCITY_LIMIT_PER_MIN    = 0.1    # mmol/L per min (~0.5 per 5m)
+COMPRESSION_DROP_LIMIT_PER_MIN  = 0.4    # mmol/L per min (~2.0 per 5m)
+PHYSIO_MAX_DROP_PER_MIN         = 0.3    # mmol/L per min (~1.5 per 5m)
 
-# Deprecated aliases — kept for backward compatibility.
-# Remove after dsp.py, decision_matrix.py, ml_engine.py are updated.
-FAINT_VELOCITY         = FAINT_VELOCITY_PER_5MIN
-COMPRESSION_DROP_LIMIT = COMPRESSION_DROP_LIMIT_PER_5MIN
-PHYSIO_MAX_DROP        = PHYSIO_MAX_DROP_PER_5MIN
+FAINT_VELOCITY         = FAINT_VELOCITY_LIMIT_PER_MIN
+COMPRESSION_DROP_LIMIT = COMPRESSION_DROP_LIMIT_PER_MIN
+PHYSIO_MAX_DROP        = PHYSIO_MAX_DROP_PER_MIN
+
+# ── Biometric & Cardiac (Wave 4/5) ───────────────────────────────────────────
+# Source: Literature review on RMSSD stability windows
+CARDIAC_WINDOW_SAMPLES = 180   # ~120 seconds at 1Hz
+CARDIAC_QUALITY_DIVISOR = 50.0 # volatility scale factor for signal quality
+BPM_MOCK_CEILING       = 180
+BPM_MOCK_FLOOR         = 45
+HRV_MOCK_CEILING       = 120
+HRV_MOCK_FLOOR         = 5
 
 # ── Kalman filter ─────────────────────────────────────────────────────────────
 # Source [3] — Ottai M8 absolute accuracy ±0.5–0.8 mmol/L.
@@ -49,21 +61,23 @@ PHYSIO_MAX_DROP        = PHYSIO_MAX_DROP_PER_5MIN
 KALMAN_MEASUREMENT_NOISE = 0.25
 
 # ── DSP and timing ────────────────────────────────────────────────────────────
-SAMPLING_INTERVAL_MINS   = 5.0
+SAMPLING_INTERVAL_MINS   = 2.5
 STALE_DATA_TIMEOUT_SECS  = 900    # 15 minutes — beyond this, data is unreliable
 
-# ── Signal quality (per 5-min CGM interval) ──────────────────────────────────
-# Derived from mizhtam Jun 2025 data — per-5min absolute changes avg 0.08-0.30.
-# 0.5 fires only on genuinely chaotic movement, not normal physiological variance.
-HIGH_VOLATILITY_PER_5MIN = 0.5    # mmol/L per 5-min interval
-HIGH_VOLATILITY_MMOL     = HIGH_VOLATILITY_PER_5MIN  # deprecated alias
+# ── Signal quality (Normalized to Per Minute) ────────────────────────────────
+# High volatility threshold normalized to per-minute rate.
+HIGH_VOLATILITY_LIMIT_PER_MIN = 0.1    # mmol/L per minute (~0.5 per 5m)
+HIGH_VOLATILITY_MMOL          = HIGH_VOLATILITY_LIMIT_PER_MIN # deprecated alias
 EMA_RESIDUAL_SPAN        = 6      # 6 readings × 5min = 30min EMA window
+COMPRESSION_RECOVERY_MIN = 1.0    # mmol/L — minimum bounce-back to confirm artifact
+MIN_DT_FLOOR             = 0.5    # minutes — prevents division by zero / filter explosion
 
 # ── Pharmacokinetics (Starting Seeds for Personalization) ────────────────────
 # The Digital Twin auto-tunes these during the feedback loop.
 INSULIN_HALFLIFE_MINS = 45.0    # rapid-acting analogue baseline
 CARB_ABS_LIQUID_TAU   = 15.0   # Fast-GI absorption peak (mins)
 CARB_ABS_STARCH_TAU   = 60.0   # Slow-GI absorption peak (mins)
+MEAL_WINDOW_MINS   =240.0  # to prevent reading gli spike after meals
 
 # ── Kinematic projection ──────────────────────────────────────────────────────
 # Assumed timescale over which current glucose velocity linearly decays to zero
@@ -117,3 +131,4 @@ CARB_SENSITIVITY_DEFAULT = 0.16  # approx 1g = 0.16 mmol/L rise (~2.9 mg/dL)
 # 300 readings = ~25 hours (cap — allows full prior-day comparison).
 REGIME_MIN_SNAPSHOTS = 200      # minimum history for regime detection
 SNAPSHOT_CAP         = 300      # ring buffer hard cap — must be > REGIME_MIN_SNAPSHOTS
+

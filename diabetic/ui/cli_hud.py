@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from rich.live import Live
 from rich.table import Table
@@ -53,6 +53,13 @@ class RealTimeHUD:
             table.add_row("Glucose", f"{snapshot.filtered_value:.1f}", unit)
             table.add_row("Velocity", f"{snapshot.velocity:+.2f}", f"{unit}/min")
             table.add_row("Acceleration", f"{snapshot.acceleration:+.3f}", f"{unit}/min²")
+            
+            # Cardiac Metrics
+            bpm = snapshot.bpm if snapshot.bpm else "MOCK"
+            hrv = f"{snapshot.hrv:.1f}" if snapshot.hrv else "---"
+            table.add_row("Heart Rate", f"{bpm}", "bpm")
+            table.add_row("HRV (RMSSD)", hrv, "ms")
+            
             table.add_row("30m Forecast", f"{prediction:.1f}", style="bold yellow")
         else:
             table.add_row("Glucose", "WAITING...", "")

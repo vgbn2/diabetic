@@ -14,7 +14,7 @@ import sys
 import time
 import random
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from dataclasses import dataclass
 
@@ -112,7 +112,7 @@ class MockGlucoseSource:
             self.glucose = max(30, min(450, self.glucose + delta))
             self.tick   += 1
 
-            ts = datetime.now() - timedelta(minutes=(count - i) * 5)
+            ts = datetime.now(timezone.utc) - timedelta(minutes=(count - i) * 5)
             readings.append(GlucoseReading(
                 timestamp=ts,
                 sgv=round(self.glucose, 1),

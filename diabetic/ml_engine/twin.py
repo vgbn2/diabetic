@@ -2,25 +2,27 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Tuple, Optional
 from diabetic.registry import MealEvent, MetabolicSnapshot
-from diabetic import medical_constants
+from diabetic import medical_constants as mc
 
 class DigitalTwin:
     """
     Simulation engine for 4-hour forward projections of carb metabolic impact.
     Uses adaptive physiological baselines that auto-tune based on user CGM data.
     """
-    def __init__(self, csf: float = medical_constants.CARB_SENSITIVITY_DEFAULT):
+    def __init__(self, csf: float = mc.CARB_SENSITIVITY_DEFAULT):
         self.csf = csf
-        self.liquid_tau = medical_constants.CARB_ABS_LIQUID_TAU
-        self.starch_tau = medical_constants.CARB_ABS_STARCH_TAU
+        self.liquid_tau = mc.CARB_ABS_LIQUID_TAU
+        self.starch_tau = mc.CARB_ABS_STARCH_TAU
         self.regime_multiplier = 1.0
 
-    def simulate_carb_impact(self, carbs_g: float, gi_type: str = "STARCH", resolution_mins: float = 5.0) -> np.ndarray:
+    def simulate_carb_impact(self, carbs_g: float, gi_type: str = "STARCH", resolution_mins: Optional[float] = None) -> np.ndarray:
         """
         Generates a 4-hour absorption curve.
         Equation: f(t) = (t / tau) * exp(1 - t / tau)
         Peak value is 1.0 at t = tau, scaled by (carbs_g * csf).
         """
+        if resolution_mins is None:
+            resolution_mins = mc.SAMPLING_INTERVAL_MINS
         tau = self.liquid_tau if gi_type.upper() == "LIQUID" else self.starch_tau
 
         t = np.arange(0, 240 + resolution_mins, resolution_mins)
@@ -39,22 +41,22 @@ class DigitalTwin:
         Returns 49 data points (4h @ 5min intervals, t=0 to t=240).
 
         Kinematic decay: current velocity tapers linearly to zero over
-        KINEMATIC_DECAY_MINS (medical_constants, default 90 min).
-        FIX T2: the 90-minute figure is now a named constant in medical_constants
+        KINEMATIC_DECAY_MINS (mc, default 90 min).
+        FIX T2: the 90-minute figure is now a named constant in mc
         rather than a magic number. Past KINEMATIC_DECAY_MINS, the kinematic
         contribution is zero and only meal absorption drives the curve. For
         fasting scenarios this means the trajectory is flat after t=90 — which
         is the intended behaviour (no nutrient input = momentum exhausted).
         """
         if not history:
-            return np.zeros(49)
-
+            points=int(240/mc.SAMPLING_INTERVAL_MINS)+1
+            return np.zeros(points)
         latest = history[-1]
-        dt = medical_constants.SAMPLING_INTERVAL_MINS
+        dt = mc.SAMPLING_INTERVAL_MINS
         t = np.arange(0, 240 + dt, dt)
 
         # Kinematic base: velocity decays linearly over KINEMATIC_DECAY_MINS
-        decay_mins = medical_constants.KINEMATIC_DECAY_MINS
+        decay_mins = mc.KINEMATIC_DECAY_MINS
         velocity_decay = np.maximum(0, 1.0 - (t / decay_mins))
         kinematic_delta = (latest.velocity * t) * velocity_decay
 
@@ -74,7 +76,7 @@ class DigitalTwin:
 
             base_curve += meal_projection
 
-        return np.maximum(medical_constants.PHYSIO_FLOOR, base_curve)
+        return np.maximum(mc.PHYSIO_FLOOR, base_curve)
 
     def auto_tune(self, actual_glucose: float, predicted_glucose: float):
         """
@@ -105,15 +107,16 @@ class DigitalTwin:
         of the previous 100, so this threshold can actually be reached.
         If called with fewer snapshots, returns NORMAL conservatively.
         """
-        if len(multi_day_history) < medical_constants.REGIME_MIN_SNAPSHOTS:
+        if len(multi_day_history) < mc.REGIME_MIN_SNAPSHOTS:
             return "NORMAL"
 
-        # Compare last 6 hours (~72 readings) against full available history
-        recent_avg = np.mean([s.filtered_value for s in multi_day_history[-72:]])
+        # Compare last 6 hours (~360 mins) against full available history
+        recent_samples = int(360 / mc.SAMPLING_INTERVAL_MINS)
+        recent_avg = np.mean([s.filtered_value for s in multi_day_history[-recent_samples:]])
         long_avg = np.mean([s.filtered_value for s in multi_day_history])
 
         if recent_avg > long_avg * 1.15:
-            self.regime_multiplier = medical_constants.REGIME_SENSITIVITY_MULT
+            self.regime_multiplier = mc.REGIME_SENSITIVITY_MULT
             return "HIGH_RESISTANCE"
 
         self.regime_multiplier = 1.0
@@ -121,5 +124,6 @@ class DigitalTwin:
 
 if __name__ == "__main__":
     twin = DigitalTwin()
+    interval = mc.SAMPLING_INTERVAL_MINS
     curve = twin.simulate_carb_impact(60, "STARCH")
-    print(f"Peak Glucose Rise: {np.max(curve):.2f} mmol/L at {np.argmax(curve)*5} mins")
+    print(f"Peak Glucose Rise: {np.max(curve):.2f} mmol/L at {np.argmax(curve)*interval} mins")

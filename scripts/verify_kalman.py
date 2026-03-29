@@ -1,6 +1,6 @@
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import numpy as np
 
 # Add project root to path
@@ -43,7 +43,9 @@ def run_verification():
         if i > 80:
             velocity = -0.5 # Sudden crash
         
+        from diabetic import medical_constants
         true_glucose += velocity * 5.0 # True glucose change
+        true_glucose = max(true_glucose, medical_constants.PHYSIO_FLOOR) # Apply floor
         
         # 3. Add sensor noise
         measurement = true_glucose + np.random.normal(0, 0.1)

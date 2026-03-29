@@ -1,7 +1,8 @@
 import sys
 import os
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
 
 # Add project root to path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -28,7 +29,7 @@ async def trigger_live_test():
     
     # Create a simulated high-risk alert
     alert = Alert(
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
         type="FAINT_RISK",
         severity=AlertSeverity.HIGH,
         message="Simulated rapid glucose climb detected (+1.2 mmol/L/5min). Please confirm state.",

@@ -6,6 +6,7 @@ from diabetic.config import config
 from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent  # FIX V4/Bug1: MealEvent added
 from diabetic import medical_constants
 from diabetic.ingestion.nightscout import NightscoutClient
+from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.dsp.kalman import GlucoseFilter
 from diabetic.dsp.signal_quality import SignalQuality
 from diabetic.dsp.metabolic_math import MetabolicMath
@@ -14,7 +15,7 @@ from diabetic.ml_engine.twin import DigitalTwin
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert
 from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
 from diabetic.ui.cli_hud import RealTimeHUD
-# from diabetic.ui.visualizer import MetabolicVisualizer [DEFERRED]
+from diabetic.ui.visualizer import MetabolicVisualizer
 from diabetic.utils.audit_logger import AuditLogger
 from diabetic.utils.stateless_push import StatelessPush
 
@@ -32,6 +33,7 @@ class Coordinator:
         self.audit = audit_logger or AuditLogger()
 
         self.client = NightscoutClient()
+        self.hr_client = HeartRateIngestor()
         self.filter = GlucoseFilter()
         self.forecaster = GlucoseForecaster()
         self.alert_guard = DecisionMatrix()
@@ -40,7 +42,7 @@ class Coordinator:
         self.bot_app = TelegramApp(coordinator=self, audit_logger=self.audit) if config.TELEGRAM_TOKEN else None
         self.hud = RealTimeHUD()
         self.twin = DigitalTwin()
-        # self.visualizer = MetabolicVisualizer() [DEFERRED]
+        self.visualizer = MetabolicVisualizer(output_dir="charts") 
         self.pusher = StatelessPush()
 
         # FIX T4: raised from 100 to medical_constants.SNAPSHOT_CAP (300)
@@ -59,16 +61,9 @@ class Coordinator:
         self.is_running = False
 
     def _active_meal(self) -> Optional[MealEvent]:
-        """
-        FIX V4: Returns the authoritative active meal for prediction context.
-        Prefers the Telegram-logged meal (self.last_meal) over the Nightscout
-        treatment entry (snapshot.last_meal) when both are present, to avoid
-        double-counting the same meal event from two sources.
-        Returns None if no Telegram meal is active.
-        """
         return self.last_meal if self.last_meal else None
 
-    async def _process_reading(self, reading: GlucoseReading):
+    async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
         """Standard processing pipeline for a single reading."""
         # Task 7.1.7: Log raw reading to cloud
         task = asyncio.create_task(self.audit.log_reading(reading))
@@ -102,13 +97,38 @@ class Coordinator:
         # 2. Smoothing (Kalman)
         snapshot = self.filter.update(reading)
 
-        # 3. Treatment Ingestion (Insulin/Carbs from Nightscout)
-        # NOTE: snapshot.last_meal is sourced from Nightscout treatments API.
-        # For prediction context, use _active_meal() to prefer the
-        # Telegram-logged meal when both are present (FIX V4).
-        insulin, meal = await self.client.fetch_recent_treatments(count=10)
-        snapshot.last_insulin = insulin
-        snapshot.last_meal = meal
+        # 3. Treatment & Cardiac Ingestion
+        # Polling both streams in parallel for speed (C3 resilient)
+        try:
+            # Polling both streams in parallel for speed (C3 resilient)
+            tr_task = self.client.fetch_recent_treatments(count=10)
+            hr_task = self.hr_client.fetch_latest()
+            
+            # results will be [(insulin, meal), cardiac]
+            results = await asyncio.gather(tr_task, hr_task, return_exceptions=True)
+            
+            # 1. Unpack treatments
+            tr_res = results[0]
+            if not isinstance(tr_res, Exception) and isinstance(tr_res, tuple):
+                ns_insulin, ns_meal = tr_res
+                snapshot.last_insulin = ns_insulin
+                snapshot.last_meal = self._active_meal(ns_meal)
+            else:
+                self.logger.warning(f"Nightscout treatment fetch failed: {tr_res}")
+                snapshot.last_meal = self.last_meal # Manual fallback
+                
+            # 2. Unpack cardiac
+            hr_res = results[1]
+            if not isinstance(hr_res, Exception):
+                snapshot.cardiac = hr_res
+            else:
+                self.logger.warning(f"Cardiac ingestion failed: {hr_res}")
+                snapshot.cardiac = None
+            
+        except Exception as e:
+            self.logger.warning(f"In-depth ingestion failed: {e}. Falling back to defaults.")
+            snapshot.last_meal = self.last_meal # fallback to manual
+            snapshot.cardiac = None
 
         # 4. Feature Extraction (Kinematics & Volatility)
         # Note: extract_kinematics returns (velocity, acceleration). Velocity
@@ -125,12 +145,13 @@ class Coordinator:
         snapshot.predict_30m = prediction_30m
 
         # 6. Alert Decision
-        alert = self.alert_guard.evaluate(snapshot, prediction_30m)
-        if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
-            await self._dispatch_alert(alert)
-            task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))
-            self.background_tasks.add(task)
-            task.add_done_callback(self.background_tasks.discard)
+        if not is_backfill:
+            alert = self.alert_guard.evaluate(snapshot, prediction_30m)
+            if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
+                await self._dispatch_alert(alert)
+                task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
 
         self.snapshots.append(snapshot)
 
@@ -139,10 +160,14 @@ class Coordinator:
         if len(self.snapshots) > medical_constants.SNAPSHOT_CAP:
             self.snapshots.pop(0)
 
-        self.logger.info(f"DONE: {reading.value} -> Pred: {prediction_30m:.1f} | Snapshots: {len(self.snapshots)}")
+        hr_val = snapshot.bpm if snapshot.bpm else "N/A"
+        hr_max = snapshot.max_bpm if snapshot.max_bpm else hr_val
+        hrv_val = f"{snapshot.hrv:.1f}" if snapshot.hrv else "N/A"
+        self.logger.info(f"DONE: {reading.value} -> Pred: {prediction_30m:.1f} | HR: {hr_val} (Pk: {hr_max}) | HRV: {hrv_val} | Snapshots: {len(self.snapshots)}")
 
         # 7. Digital Twin Regime Detection (every 6 hours)
-        if len(self.snapshots) % 72 == 0:
+        regime_trigger = int(360 / medical_constants.SAMPLING_INTERVAL_MINS)
+        if len(self.snapshots) % regime_trigger == 0:
             regime = self.twin.detect_regime(self.snapshots)
             self.logger.info(f"Metabolic Regime Detected: {regime}")
 
@@ -161,12 +186,34 @@ class Coordinator:
                 self.meal_tune_pending = False  # consume the flag
 
         # 9. Push to Frontend
-        task = asyncio.create_task(self.pusher.push_update({
-            "snapshot": snapshot.model_dump(),
-            "prediction": prediction_30m
-        }))
-        self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+        if not is_backfill:
+            task = asyncio.create_task(self.pusher.push_update({
+                "snapshot": snapshot.model_dump(),
+                "prediction": prediction_30m
+            }))
+            self.background_tasks.add(task)
+            task.add_done_callback(self.background_tasks.discard)
+
+        # 10. Update Continuous Chart (Task 8.3.3)
+        self.visualizer.update_continuous(self.snapshots)
+
+    def _active_meal(self, ns_meal: Optional[MealEvent]) -> Optional[MealEvent]:
+        """
+        Arbitrate between Telegram-logged meal and Nightscout-logged meal.
+        Rule: Prefer Telegram if it's within the 4-hour metabolic window.
+        """
+        if not self.last_meal and not ns_meal:
+            return None
+        now = datetime.now(timezone.utc)
+        
+        # Check if Telegram meal is still active (4h window)
+        if self.last_meal:
+            dt = (now - self.last_meal.timestamp).total_seconds() / 60.0
+            if dt <= medical_constants.MEAL_WINDOW_MINS:
+                return self.last_meal
+                
+        # Otherwise fallback to Nightscout
+        return ns_meal
 
     async def _dispatch_alert(self, alert: Alert):
         """Sends alert to Telegram and logger."""
@@ -186,6 +233,10 @@ class Coordinator:
         self.background_tasks.add(task_pusher)
         task_pusher.add_done_callback(self.background_tasks.discard)
 
+        task_hr = asyncio.create_task(self.hr_client.start_ble_client())
+        self.background_tasks.add(task_hr)
+        task_hr.add_done_callback(self.background_tasks.discard)
+
         if self.bot_app:
             self.logger.info("Initializing Telegram Bot callback loop...")
             task_bot = asyncio.create_task(self.bot_app.app.initialize())
@@ -194,6 +245,20 @@ class Coordinator:
             await task_bot
             task_bot = asyncio.create_task(self.bot_app.app.updater.start_polling())
             self.background_tasks.add(task_bot)
+
+        # 0. Stateful Backfill (Task 8.2.2)
+        last_ts = await self.audit.get_last_reading_timestamp()
+        if last_ts:
+            now = datetime.now(timezone.utc)
+            gap_mins = (now - last_ts.replace(tzinfo=timezone.utc)).total_seconds() / 60
+            if medical_constants.SAMPLING_INTERVAL_MINS < gap_mins < config.BACKFILL_MAX_HOURS * 60:
+                self.logger.info(f"Detected {gap_mins:.1f} min gap. Starting backfill...")
+                backfill_readings = await self.client.fetch_since(last_ts)
+                if backfill_readings:
+                    self.logger.info(f"Filling {len(backfill_readings)} missing readings...")
+                    for r in backfill_readings:
+                        await self._process_reading(r, is_backfill=True)
+                    self.logger.info("Backfill complete. Kalman state stabilized.")
 
         while self.is_running:
             try:
@@ -226,12 +291,13 @@ class Coordinator:
         # FIX T3: arm the flag so auto_tune fires once after 230 min
         self.meal_tune_pending = True
 
-        history = self.snapshots[-12:]  # Last hour
+        history_count = int(60 / config.SAMPLING_INTERVAL_MINS)
+        history = self.snapshots[-history_count:]
         if history:
             prediction_4h = self.twin.predict_4h_trajectory(history, self.last_meal)
 
             # FIX C2/V1: push the 4-hour curve to the frontend so it is not
-            # silently discarded. Visualizer rendering remains deferred.
+            # silently discarded.
             task = asyncio.create_task(self.pusher.push_update({
                 "type": "meal_forecast",
                 "description": desc,
@@ -242,10 +308,18 @@ class Coordinator:
             self.background_tasks.add(task)
             task.add_done_callback(self.background_tasks.discard)
 
+            # 11. Generate and Send Forecast Chart (Task 8.3.4)
+            chart_path = self.visualizer.plot_forecast(
+                history=[s.glucose.value for s in history],
+                prediction=prediction_4h,
+                meal_name=desc
+            )
+            await self.notifier.send_chart(chart_path, caption=f"Digital Twin Forecast: {desc} ({grams}g)")
+
             self.logger.info(
                 f"4h trajectory computed ({len(prediction_4h)} points). "
-                f"Peak: {prediction_4h.max():.1f} mmol/L at t={int(prediction_4h.argmax()*5)} min. "
-                f"Pushed to frontend. Visualizer rendering DEFERRED."
+                f"Peak: {prediction_4h.max():.1f} mmol/L at t={int(prediction_4h.argmax()*config.SAMPLING_INTERVAL_MINS)} min. "
+                "Forecast chart pushed to Telegram."
             )
 
         if self.background_tasks:

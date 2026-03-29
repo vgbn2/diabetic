@@ -38,39 +38,73 @@ class NightscoutClient:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     response = await client.get(endpoint, params=params, headers=headers)
                     response.raise_for_status()
-                    
-                    entries = response.json()
-                    readings = []
-                    for entry in entries:
-                        if 'sgv' in entry:
-                            raw = float(entry['sgv'])
-                            
-                            # Smart Unit Detection:
-                            # 1. Use 'units' field if provided in Nightscout metadata.
-                            # 2. Heuristic: if raw < 30, it is physiologically likely to be mmol/L.
-                            units_in_entry = entry.get('units', '').lower()
-                            is_already_mmol = (units_in_entry == 'mmol' or 
-                                              (not units_in_entry and raw < 30))
-                            
-                            if config.PREFER_MMOL:
-                                value = raw if is_already_mmol else raw / medical_constants.MMOL_TO_MGDL
-                                unit = "mmol/L"
-                            else:
-                                value = raw * medical_constants.MMOL_TO_MGDL if is_already_mmol else raw
-                                unit = "mg/dL"
-                                
-                            readings.append(GlucoseReading(
-                                timestamp=datetime.fromisoformat(entry['dateString'].replace('Z', '+00:00')),
-                                value=round(value, 2),
-                                trend=entry.get('direction', 'Flat'),
-                                source="nightscout",
-                                unit=unit
-                            ))
-                    return readings
+                    return self._parse_entries(response.json())
             except Exception as e:
                 if attempt == 2:
                     raise
                 await asyncio.sleep(2 ** attempt)
+
+    async def fetch_since(self, since_dt: datetime) -> List[GlucoseReading]:
+        """
+        Fetches all glucose entries since since_dt.
+        Uses Nightscout find query syntax.
+        """
+        endpoint = f"{self.url}/api/v1/entries.json"
+        # Format: find[dateString][$gt]=2026-03-29T00:00:00.000Z
+        iso_str = since_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        params = {"find[dateString][$gt]": iso_str, "count": 1000} # High count to capture the gap
+        headers = self._get_headers()
+        
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(endpoint, params=params, headers=headers)
+                response.raise_for_status()
+                # Nightscout returns most recent first, we reverse to process chronologically
+                readings = self._parse_entries(response.json())
+                readings.reverse() 
+                return readings
+        except Exception as e:
+            # Task 8.2.1: Non-fatal, live polling will take over.
+            print(f"Backfill fetch failed: {e}")
+            return []
+
+    def _parse_entries(self, entries: List[dict]) -> List[GlucoseReading]:
+        """Shared logic for parsing Nightscout entry JSON."""
+        readings = []
+        for entry in entries:
+            if 'sgv' in entry:
+                raw = float(entry['sgv'])
+                units_in_entry = entry.get('units', '').lower()
+                is_already_mmol = (units_in_entry == 'mmol' or 
+                                  (not units_in_entry and raw < 30))
+                
+                if config.PREFER_MMOL:
+                    value = raw if is_already_mmol else raw / medical_constants.MMOL_TO_MGDL
+                    unit = "mmol/L"
+                else:
+                    value = raw * medical_constants.MMOL_TO_MGDL if is_already_mmol else raw
+                    unit = "mg/dL"
+                
+                # Robust timestamp parsing
+                ts_str = entry['dateString'].replace('Z', '+00:00')
+                try:
+                    # Try isoformat first (standard)
+                    ts = datetime.fromisoformat(ts_str)
+                except ValueError:
+                    # Fallback for non-standard precision or older Python
+                    try:
+                        ts = datetime.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                    except Exception:
+                        continue # Skip unparseable reading
+                    
+                readings.append(GlucoseReading(
+                    timestamp=ts,
+                    value=round(value, 2),
+                    trend=entry.get('direction', 'Flat'),
+                    source="nightscout",
+                    unit=unit
+                ))
+        return readings
 
     async def fetch_recent_treatments(self, count: int = 10) -> Tuple[Optional[InsulinDose], Optional[MealEvent]]:
         """Fetches the latest insulin and carb events from Nightscout."""
@@ -84,15 +118,25 @@ class NightscoutClient:
                 response.raise_for_status()
                 
                 treatments = response.json()
-                latest_insulin = None
-                latest_meal = None
+                now = datetime.now(timezone.utc)
+                
+                latest_insulin: Optional[InsulinDose] = None
+                latest_meal: Optional[MealEvent] = None
                 
                 for t in treatments:
                     # Parse timestamp (created_at is standard for treatments)
                     if 'created_at' not in t:
                         continue
-                    ts = datetime.fromisoformat(t['created_at'].replace('Z', '+00:00'))
                     
+                    try:
+                        ts = datetime.fromisoformat(t['created_at'].replace('Z', '+00:00'))
+                    except ValueError:
+                        continue
+                    
+                    # C3 Fix: Verify treatment is within 4-hour metabolic window
+                    if (now - ts).total_seconds() > medical_constants.MEAL_WINDOW_MINS * 60:
+                        continue
+
                     # Parse Insulin
                     if 'insulin' in t and not latest_insulin:
                         latest_insulin = InsulinDose(

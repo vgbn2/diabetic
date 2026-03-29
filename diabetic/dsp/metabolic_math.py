@@ -1,77 +1,82 @@
 import numpy as np
 from typing import List, Tuple
 from diabetic.registry import GlucoseReading, MetabolicSnapshot
-from diabetic import medical_constants
+from diabetic import medical_constants as mc
 
 class MetabolicMath:
     """
     Core mathematical engine for risk assessment.
-    Calculates LBGI (Low Blood Glucose Index) and HBGI (High Blood Glucose Index).
     """
     
     @staticmethod
     def calculate_risk_indices(glucose_val: float) -> Tuple[float, float]:
         """
         Transforms glucose (mmol/L) into risk space.
-        Based on Kovatchev et al. (University of Virginia).
         """
-        # Formula uses mg/dL internally for index calculation
-        mgdl_raw = glucose_val * medical_constants.MMOL_TO_MGDL
+        # 1. Convert and Clamp
+        mgdl_raw = glucose_val * mc.MMOL_TO_MGDL
+        mgdl = np.clip(mgdl_raw, mc.KOVATCHEV_FLOOR_MGDL, mc.KOVATCHEV_CEIL_MGDL)
         
-        # Safety floor to prevent log domain errors or -inf results.
-        # Sensors and biology rarely go below 20 mg/dL (~1.1 mmol/L).
-        mgdl = np.maximum(mgdl_raw, 20.0)
+        # 2. Symmetrization transformation
+        symmetrized_val = mc.KOVATCHEV_PRE_MULT * (np.log(mgdl)**mc.KOVATCHEV_EXP - mc.KOVATCHEV_OFFSET)
         
-        # Symmetrization transformation
-        f = 1.509 * (np.log(mgdl)**1.084 - 5.381)
-        risk = 10 * (f**2)
+        # 3. Calculate quadratic risk
+        risk = mc.KOVATCHEV_RISK_MULT * (symmetrized_val**2)
         
-        lbgi = risk if f < 0 else 0
-        hbgi = risk if f > 0 else 0
+        lbgi = risk if symmetrized_val < 0 else 0.0
+        hbgi = risk if symmetrized_val > 0 else 0.0
         
         return lbgi, hbgi
 
     @staticmethod
+    def get_dt(time_curr, time_prev) -> float:
+        """
+        Calculates time delta in minutes with a numerical safety floor.
+        """
+        dt = (time_curr - time_prev).total_seconds() / 60.0
+        return max(dt, mc.MIN_DT_FLOOR)
+
+    @staticmethod
     def extract_kinematics(snapshots: List[MetabolicSnapshot], dt: float = None) -> Tuple[float, float]:
         """
-        Calculates higher-order derivatives (Velocity, Acceleration).
-        Uses current and previous smoothed values.
+        Extracts Velocity and Acceleration from the 3D Kalman state vector.
         """
-        if len(snapshots) < 2:
+        if not snapshots:
             return 0.0, 0.0
             
         curr = snapshots[-1]
-        prev = snapshots[-2]
-        
-        # Determine dt (minutes)
-        if dt is None:
-            dt = (curr.glucose.timestamp - prev.glucose.timestamp).total_seconds() / 60.0
-            
-        # Ensure dt is sane to prevent division by zero or errors on jitter
-        dt = np.maximum(dt, 0.5)
-        
-        # Velocity is already provided by the Kalman filter in snapshot.velocity
+        if len(snapshots) < 2:
+            return curr.velocity, curr.acceleration
+
         velocity = curr.velocity
+        acceleration = curr.acceleration
         
-        # Acceleration = Change in velocity over time
-        # Since velocity is in units/min, acceleration is in units/min^2
-        acceleration = (curr.velocity - prev.velocity) / dt
-        
+        # Fallback for initial state or missing acceleration
+        if acceleration == 0.0:
+            prev = snapshots[-2]
+            if dt is None:
+                dt = MetabolicMath.get_dt(curr.glucose.timestamp, prev.glucose.timestamp)
+            acceleration = (curr.velocity - prev.velocity) / dt
+            
         return velocity, acceleration
 
     @staticmethod
     def calculate_atr(snapshots: List[MetabolicSnapshot], period: int = 14) -> float:
         """
-        Calculates the Average True Range of glucose variations.
-        Useful for measuring metabolic volatility.
+        Calculates the Time-Normalized Average True Range of glucose variations.
         """
         if len(snapshots) < 2:
             return 0.0
         
-        true_ranges = [
-            abs(snapshots[i].filtered_value - snapshots[i-1].filtered_value)
-            for i in range(1, len(snapshots))
-        ]
+        lookback = snapshots[-(period + 1):]
+        normalized_ranges = []
         
-        recent = true_ranges[-period:]
-        return sum(recent) / len(recent)
+        for i in range(1, len(lookback)):
+            curr = lookback[i]
+            prev = lookback[i-1]
+            
+            delta = abs(curr.filtered_value - prev.filtered_value)
+            dt = MetabolicMath.get_dt(curr.glucose.timestamp, prev.glucose.timestamp)
+            normalized_ranges.append(delta * (mc.SAMPLING_INTERVAL_MINS / dt))
+            
+        return sum(normalized_ranges) / len(normalized_ranges)

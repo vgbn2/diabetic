@@ -20,7 +20,7 @@ import math
 import random
 import asyncio
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from dataclasses import dataclass, field
 
@@ -123,7 +123,7 @@ class MockHRSource:
         self.noise      = cfg["noise"]
 
     def read(self) -> HRReading:
-        hr    = self.hr_base + random.gauss(0, self.noise)
+        hr    = max(30.0, self.hr_base + random.gauss(0, self.noise))
         rmssd = max(5.0, self.rmssd_base + random.gauss(0, self.noise * 0.5))
 
         # Simulate RR intervals consistent with this RMSSD
@@ -131,7 +131,7 @@ class MockHRSource:
         rr = [base_rr + random.gauss(0, rmssd * 0.1) for _ in range(10)]
 
         return HRReading(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             hr=round(hr, 1),
             rmssd=round(rmssd, 1),
             rr_intervals=rr,
@@ -219,7 +219,7 @@ async def read_ble_sensor(address: str, duration: int = 60):
             baseline = baseline * 0.95 + rmssd * 0.05
 
         reading = HRReading(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             hr=float(hr),
             rmssd=rmssd,
             rr_intervals=list(rr_buffer),

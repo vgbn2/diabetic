@@ -78,8 +78,8 @@ class GlucoseForecaster:
            over-predicting it.
         """
         # Base damping — artifact/noise rejection for high velocity readings
-        # FAINT_VELOCITY_PER_5MIN = 0.5 mmol/L per 5 min = 0.1 mmol/L per min
-        v_threshold = medical_constants.FAINT_VELOCITY_PER_5MIN / 5.0
+        # FAINT_VELOCITY_LIMIT_PER_MIN = 0.1 mmol/L per min
+        v_threshold = medical_constants.FAINT_VELOCITY_LIMIT_PER_MIN
         base_damping = 0.95 if abs(velocity) > v_threshold else 1.0
 
         # Renal damping — long-horizon only, and not in the critical zone
@@ -149,12 +149,12 @@ class GlucoseForecaster:
         self.is_trained = True
 
 if __name__ == "__main__":
-    from datetime import datetime
+    from datetime import datetime, timezone
     from diabetic.registry import GlucoseReading
 
     forecaster = GlucoseForecaster()
     snap = MetabolicSnapshot(
-        glucose=GlucoseReading(timestamp=datetime.now(), value=8.3, trend="Flat"),
+        glucose=GlucoseReading(timestamp=datetime.now(timezone.utc), value=8.3, trend="Flat"),
         filtered_value=8.3,
         velocity=-0.1,
         acceleration=0.0,

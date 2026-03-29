@@ -51,12 +51,12 @@ class StatelessPush:
             try:
                 # Ping the base URL (Render root) to prevent sleeping
                 base_url = "/".join(self.push_url.split("/")[:3])
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=config.PUSH_TIMEOUT_SECS) as client:
                     await client.get(base_url)
             except Exception:
                 pass
-            # Ping every 5 minutes
-            await asyncio.sleep(300)
+            # Ping on metabolic interval (Wave 5)
+            await asyncio.sleep(config.POLLING_INTERVAL_SECS)
 
 if __name__ == "__main__":
     # Test standalone

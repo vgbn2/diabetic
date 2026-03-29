@@ -1,6 +1,6 @@
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 # Add project root to sys.path
@@ -21,7 +21,7 @@ def test_diminishing_returns():
     # Base Case: Normal range (no brakes)
     # v = -0.1 mmol/L per min. Over 30 mins, expect -3.0 mmol/L drop.
     snap_normal = MetabolicSnapshot(
-        glucose=GlucoseReading(timestamp=datetime.now(), value=8.0, trend="Flat"),
+        glucose=GlucoseReading(timestamp=datetime.now(timezone.utc), value=8.0, trend="Flat"),
         filtered_value=8.0,
         velocity=-0.1,
         acceleration=0.0,
@@ -34,7 +34,7 @@ def test_diminishing_returns():
     # High Side: Above Renal Threshold (>10.0)
     # Predicted rise should be damped.
     snap_high = MetabolicSnapshot(
-        glucose=GlucoseReading(timestamp=datetime.now(), value=15.0, trend="Flat"),
+        glucose=GlucoseReading(timestamp=datetime.now(timezone.utc), value=15.0, trend="Flat"),
         filtered_value=15.0,
         velocity=0.1,  # Rising at 0.1/min
         acceleration=0.0,
@@ -47,7 +47,7 @@ def test_diminishing_returns():
     # Low Side: Below Hypo Warning (<3.9)
     # Decline should be damped.
     snap_low = MetabolicSnapshot(
-        glucose=GlucoseReading(timestamp=datetime.now(), value=3.5, trend="Flat"),
+        glucose=GlucoseReading(timestamp=datetime.now(timezone.utc), value=3.5, trend="Flat"),
         filtered_value=3.5,
         velocity=-0.04,  # Falling slower to avoid absolute floor
         acceleration=0.0,

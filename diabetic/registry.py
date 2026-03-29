@@ -30,6 +30,9 @@ class CardiacReading(BaseModel):
     timestamp: datetime
     bpm: int
     hrv: float  # Heart Rate Variability index
+    mean_bpm: Optional[int] = None
+    max_bpm: Optional[int] = None
+    signal_quality: float = 1.0
 
 class MetabolicSnapshot(BaseModel):
     """A unified state representing a person's metabolic condition at a point in time."""
@@ -48,6 +51,14 @@ class MetabolicSnapshot(BaseModel):
     @property
     def bpm(self) -> Optional[int]:
         return self.cardiac.bpm if self.cardiac else None
+        
+    @property
+    def mean_bpm(self) -> Optional[int]:
+        return self.cardiac.mean_bpm if self.cardiac else None
+        
+    @property
+    def max_bpm(self) -> Optional[int]:
+        return self.cardiac.max_bpm if self.cardiac else None
         
     @property
     def hrv(self) -> Optional[float]:

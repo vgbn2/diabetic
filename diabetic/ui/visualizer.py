@@ -1,0 +1,170 @@
+import matplotlib
+matplotlib.use('Agg') # Headless support (Task 8.3.1)
+import matplotlib.pyplot as plt
+import numpy as np
+from datetime import datetime, timezone
+from typing import List, Optional
+import os
+import io
+from diabetic.config import config
+from diabetic.medical_constants import (
+    SAMPLING_INTERVAL_MINS, 
+    FAINT_GLUCOSE, 
+    HYPO_WARNING,
+    RENAL_THRESHOLD,
+    LOW_SIDE_THRESHOLD
+)
+from diabetic.registry import MetabolicSnapshot
+
+class MetabolicVisualizer:
+    """
+    Renders 4-hour metabolic forecasts and live session dashboards.
+    Enhanced with 3D Kinematics and Cyberpunk-Dark aesthetics.
+    """
+    def __init__(self, output_dir: str = "charts"):
+        self.output_dir = output_dir
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+        
+        # Apply Cyberpunk-Dark styling
+        plt.style.use('dark_background')
+        self.colors = {
+            'glucose': '#00f2ff',      # Neon Cyan
+            'prediction': '#ff0055',   # Neon Pink
+            'velocity': '#00ff41',     # Matrix Green
+            'acceleration': '#ffaa00', # Neon Orange
+            'heart_rate': '#ff4d4d',   # Soft Red
+            'grid': '#1a1a1a',
+            'zone_safe': '#00ff411a',  # Translucent Green
+            'zone_warn': '#ffaa001a',  # Translucent Orange
+        }
+
+    def update_continuous(self, snapshots: List[MetabolicSnapshot]):
+        """
+        Updates the 'live_dashboard.png' with the current session state.
+        Shows 8 hours of history and current kinematics.
+        """
+        if not snapshots:
+            return
+            
+        # 1. Prepare Data
+        # Dynamic Window calculation (Wave 5)
+        window_size = int(config.LIVE_HISTORY_HOURS * (60 / SAMPLING_INTERVAL_MINS))
+        window = snapshots[-window_size:]
+        times = [(s.glucose.timestamp - snapshots[-1].glucose.timestamp).total_seconds() / 60 for s in window]
+        glucose = [s.glucose.value for s in window]
+        velocity = [s.velocity if s.velocity else 0.0 for s in window]
+        bpm = [s.bpm if s.bpm else 0.0 for s in window]
+        
+        # 2. Setup Figure
+        fig, (ax_g, ax_k) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [2, 1]})
+        fig.patch.set_facecolor('#0a0a0a')
+        
+        # --- SUBPLOT 1: GLUCOSE ---
+        ax_g.set_facecolor('#0f0f0f')
+        ax_g.plot(times, glucose, color=self.colors['glucose'], linewidth=2.5, label='Glucose (mmol/L)')
+        ax_g.scatter(times[-1], glucose[-1], color=self.colors['glucose'], s=100, zorder=5)
+        
+        # Thresholds
+        ax_g.axhline(y=FAINT_GLUCOSE, color='#ff0000', linestyle='--', alpha=0.5, label='Faint Risk')
+        ax_g.axhline(y=HYPO_WARNING, color='#ffaa00', linestyle=':', alpha=0.5, label='Hypo Warning')
+        
+        # Shaded Time-in-Range (Central Link)
+        ax_g.fill_between(times, LOW_SIDE_THRESHOLD, RENAL_THRESHOLD, color=self.colors['zone_safe'], alpha=0.1)
+        
+        ax_g.set_title(" LIVE METABOLIC DASHBOARD ", fontsize=16, fontweight='bold', color='white', pad=20)
+        ax_g.set_ylabel("Glucose", fontsize=12, color='white')
+        ax_g.grid(True, which='both', color=self.colors['grid'], alpha=0.3)
+        ax_g.legend(loc='upper left', frameon=False)
+        
+        # --- SUBPLOT 2: KINEMATICS & CARDIAC ---
+        ax_k.set_facecolor('#0f0f0f')
+        ax_k.plot(times, velocity, color=self.colors['velocity'], linewidth=1.5, label='Velocity (ΔG/5m)')
+        
+        # Secondary axis for Heart Rate
+        if any(bpm):
+            ax_hr = ax_k.twinx()
+            ax_hr.plot(times, bpm, color=self.colors['heart_rate'], linewidth=1.0, linestyle='--', alpha=0.7, label='BPM')
+            ax_hr.set_ylabel("Heart Rate", color=self.colors['heart_rate'])
+            ax_hr.tick_params(axis='y', labelcolor=self.colors['heart_rate'])
+            
+        ax_k.set_xlabel("Minutes from Present", fontsize=10, color='white')
+        ax_k.set_ylabel("Metabolic Force", fontsize=10, color='white')
+        ax_k.grid(True, color=self.colors['grid'], alpha=0.3)
+        ax_k.legend(loc='upper left', frameon=False)
+        
+        plt.tight_layout()
+        
+        # 3. Save
+        save_path = os.path.join(self.output_dir, "live_dashboard.png")
+        plt.savefig(save_path, facecolor=fig.get_facecolor(), dpi=120)
+        plt.close()
+        
+        # Optional: LOCAL_GUI (Task 8.3.2)
+        if config.LOCAL_GUI_ENABLED:
+            # Note: This is non-blocking but requires a backend that supports it.
+            # Usually handled by a separate process or thread in a real app.
+            pass
+
+    def plot_forecast(self, history: List[float], prediction: np.ndarray, meal_name: str = "Meal") -> str:
+        """
+        Generates a 4-hour forecast chart as a PNG file.
+        Returns the absolute path.
+        """
+        buf = self.render_forecast_buffer(history, prediction, meal_name)
+        filename = f"forecast_{datetime.now().strftime('%H%M%S')}.png"
+        path = os.path.join(self.output_dir, filename)
+        
+        with open(path, 'wb') as f:
+            f.write(buf.getbuffer())
+            
+        return os.path.abspath(path)
+
+    def render_forecast_buffer(self, history: List[float], prediction: np.ndarray, meal_name: str = "Meal") -> io.BytesIO:
+        """
+        Renders the forecast and returns it as a BytesIO buffer (Task 8.4.1).
+        Used for Web/Telegram transmission without hitting disk if needed.
+        """
+        plt.figure(figsize=(10, 6))
+        plt.gca().set_facecolor('#0f0f0f')
+        
+        history_t = np.arange(-5 * len(history), 0, 5)
+        predict_t = np.arange(0, 5 * len(prediction), 5)
+        
+        # Plot History
+        plt.plot(history_t, history, color=self.colors['glucose'], linewidth=2.5, label='Actual (Historical)')
+        plt.scatter(history_t[-1], history[-1], color=self.colors['glucose'], s=50)
+        
+        # Plot Prediction
+        plt.plot(predict_t, prediction, color=self.colors['prediction'], linestyle='--', linewidth=2, label=f'Digital Twin ({meal_name})')
+        plt.fill_between(predict_t, prediction - 0.5, prediction + 0.5, color=self.colors['prediction'], alpha=0.1)
+        
+        # Annotate Peak
+        peak_idx = np.argmax(prediction)
+        peak_val = prediction[peak_idx]
+        peak_time = predict_t[peak_idx]
+        plt.annotate(f"Peak: {peak_val:.1f}", xy=(peak_time, peak_val), xytext=(peak_time+10, peak_val+1),
+                     arrowprops=dict(facecolor='white', shrink=0.05, width=1, headwidth=5),
+                     color='white', fontweight='bold')
+        
+        plt.axhline(y=FAINT_GLUCOSE, color='red', linestyle='--', alpha=0.3)
+        
+        plt.title(f"DIGITAL TWIN FORECAST: {meal_name.upper()}", fontsize=14, fontweight='bold', color='white')
+        plt.xlabel("Minutes from Now", color='silver')
+        plt.ylabel("Glucose (mmol/L)", color='silver')
+        plt.legend(frameon=False)
+        plt.grid(True, color=self.colors['grid'], alpha=0.3)
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=120)
+        plt.close()
+        buf.seek(0)
+        return buf
+
+if __name__ == "__main__":
+    # Test Visualizer
+    viz = MetabolicVisualizer("test_charts")
+    hist = [8.0, 8.2, 8.5, 8.7, 9.0, 9.2, 9.5, 9.7, 10.0, 10.2, 10.5, 10.7]
+    pred = np.linspace(10.7, 15.0, 49) 
+    viz.plot_forecast(hist, pred, "Test Meal")
+    print("Test chart generated.")
