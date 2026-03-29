@@ -1,3 +1,4 @@
+import asyncio 
 import matplotlib
 matplotlib.use('Agg') # Headless support (Task 8.3.1)
 import matplotlib.pyplot as plt
@@ -39,27 +40,26 @@ class MetabolicVisualizer:
             'zone_warn': '#ffaa001a',  # Translucent Orange
         }
 
-    def update_continuous(self, snapshots: List[MetabolicSnapshot]):
+    def _save_continuous_sync(self, snapshots: List[MetabolicSnapshot]):
         """
-        Updates the 'live_dashboard.png' with the current session state.
-        Shows 8 hours of history and current kinematics.
+        Synchronous render — called via run_in_executor to avoid blocking the event loop.
         """
         if not snapshots:
             return
-            
-        # 1. Prepare Data
-        # Dynamic Window calculation (Wave 5)
+
+        # Prepare Data (Wave 5/6: Dynamic Windowing)
         window_size = int(config.LIVE_HISTORY_HOURS * (60 / SAMPLING_INTERVAL_MINS))
         window = snapshots[-window_size:]
+        
+        # Relative time in minutes from present
         times = [(s.glucose.timestamp - snapshots[-1].glucose.timestamp).total_seconds() / 60 for s in window]
         glucose = [s.glucose.value for s in window]
         velocity = [s.velocity if s.velocity else 0.0 for s in window]
         bpm = [s.bpm if s.bpm else 0.0 for s in window]
-        
-        # 2. Setup Figure
+
         fig, (ax_g, ax_k) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [2, 1]})
         fig.patch.set_facecolor('#0a0a0a')
-        
+
         # --- SUBPLOT 1: GLUCOSE ---
         ax_g.set_facecolor('#0f0f0f')
         ax_g.plot(times, glucose, color=self.colors['glucose'], linewidth=2.5, label='Glucose (mmol/L)')
@@ -69,42 +69,52 @@ class MetabolicVisualizer:
         ax_g.axhline(y=FAINT_GLUCOSE, color='#ff0000', linestyle='--', alpha=0.5, label='Faint Risk')
         ax_g.axhline(y=HYPO_WARNING, color='#ffaa00', linestyle=':', alpha=0.5, label='Hypo Warning')
         
-        # Shaded Time-in-Range (Central Link)
+        # Shaded Time-in-Range
         ax_g.fill_between(times, LOW_SIDE_THRESHOLD, RENAL_THRESHOLD, color=self.colors['zone_safe'], alpha=0.1)
         
         ax_g.set_title(" LIVE METABOLIC DASHBOARD ", fontsize=16, fontweight='bold', color='white', pad=20)
         ax_g.set_ylabel("Glucose", fontsize=12, color='white')
         ax_g.grid(True, which='both', color=self.colors['grid'], alpha=0.3)
         ax_g.legend(loc='upper left', frameon=False)
-        
-        # --- SUBPLOT 2: KINEMATICS & CARDIAC ---
+
+        # --- SUBPLOT 2: KINEMATICS ---
         ax_k.set_facecolor('#0f0f0f')
-        ax_k.plot(times, velocity, color=self.colors['velocity'], linewidth=1.5, label='Velocity (ΔG/5m)')
-        
-        # Secondary axis for Heart Rate
+        # Hardening: Standardized label to mmol/L/min (Wave 6)
+        ax_k.plot(times, velocity, color=self.colors['velocity'], linewidth=1.5, label='Velocity (mmol/L/min)')
+
         if any(bpm):
             ax_hr = ax_k.twinx()
             ax_hr.plot(times, bpm, color=self.colors['heart_rate'], linewidth=1.0, linestyle='--', alpha=0.7, label='BPM')
             ax_hr.set_ylabel("Heart Rate", color=self.colors['heart_rate'])
             ax_hr.tick_params(axis='y', labelcolor=self.colors['heart_rate'])
-            
+
         ax_k.set_xlabel("Minutes from Present", fontsize=10, color='white')
         ax_k.set_ylabel("Metabolic Force", fontsize=10, color='white')
         ax_k.grid(True, color=self.colors['grid'], alpha=0.3)
         ax_k.legend(loc='upper left', frameon=False)
-        
+
         plt.tight_layout()
-        
-        # 3. Save
         save_path = os.path.join(self.output_dir, "live_dashboard.png")
         plt.savefig(save_path, facecolor=fig.get_facecolor(), dpi=120)
         plt.close()
+
+    def update_continuous(self, snapshots: List[MetabolicSnapshot]):
+        """Non-blocking dashboard update — dispatches savefig to a thread."""
+        if not snapshots:
+            return
         
-        # Optional: LOCAL_GUI (Task 8.3.2)
-        if config.LOCAL_GUI_ENABLED:
-            # Note: This is non-blocking but requires a backend that supports it.
-            # Usually handled by a separate process or thread in a real app.
-            pass
+        # Deep copy list to avoid mutation during thread rendering
+        snap_copy = list(snapshots)
+        
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Task 8.3.1: Run in executor to prevent blocking the async polling loop
+                loop.run_in_executor(None, self._save_continuous_sync, snap_copy)
+            else:
+                self._save_continuous_sync(snap_copy)
+        except RuntimeError:
+            self._save_continuous_sync(snap_copy)
 
     def plot_forecast(self, history: List[float], prediction: np.ndarray, meal_name: str = "Meal") -> str:
         """
@@ -123,13 +133,14 @@ class MetabolicVisualizer:
     def render_forecast_buffer(self, history: List[float], prediction: np.ndarray, meal_name: str = "Meal") -> io.BytesIO:
         """
         Renders the forecast and returns it as a BytesIO buffer (Task 8.4.1).
-        Used for Web/Telegram transmission without hitting disk if needed.
+        Uses Sampling-Agnostic temporal scaling (Wave 6).
         """
         plt.figure(figsize=(10, 6))
         plt.gca().set_facecolor('#0f0f0f')
         
-        history_t = np.arange(-5 * len(history), 0, 5)
-        predict_t = np.arange(0, 5 * len(prediction), 5)
+        # Hardening: Use SAMPLING_INTERVAL_MINS instead of hardcoded 5
+        history_t = np.arange(-SAMPLING_INTERVAL_MINS * len(history), 0, SAMPLING_INTERVAL_MINS)
+        predict_t = np.arange(0, SAMPLING_INTERVAL_MINS * len(prediction), SAMPLING_INTERVAL_MINS)
         
         # Plot History
         plt.plot(history_t, history, color=self.colors['glucose'], linewidth=2.5, label='Actual (Historical)')
