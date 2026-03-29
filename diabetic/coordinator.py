@@ -1,9 +1,10 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import List, Optional
 from diabetic.config import config
-from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent  # FIX V4/Bug1: MealEvent added
+from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent
 from diabetic import medical_constants
 from diabetic.ingestion.nightscout import NightscoutClient
 from diabetic.ingestion.cardiac import HeartRateIngestor
@@ -27,52 +28,46 @@ class Coordinator:
         logging.basicConfig(level=config.LOG_LEVEL)
         self.logger = logging.getLogger("Bio-Quant.Coordinator")
 
-        # Concurrency management
         self.background_tasks = set()
-
         self.audit = audit_logger or AuditLogger()
-
         self.client = NightscoutClient()
         self.hr_client = HeartRateIngestor()
         self.filter = GlucoseFilter()
-        self.forecaster = GlucoseForecaster()
+
+        # FIX: load XGBoost model if the file exists — previously always passed
+        # no model_path so is_trained was always False and the model was dead code.
+        model_path = "models/xgboost_v1.json"
+        self.forecaster = GlucoseForecaster(model_path=model_path if os.path.exists(model_path) else None)
+
         self.alert_guard = DecisionMatrix()
         self.circuit_breaker = CircuitBreaker()
         self.notifier = TelegramNotifier()
         self.bot_app = TelegramApp(coordinator=self, audit_logger=self.audit) if config.TELEGRAM_TOKEN else None
         self.hud = RealTimeHUD()
         self.twin = DigitalTwin()
-        self.visualizer = MetabolicVisualizer(output_dir="charts") 
+        self.visualizer = MetabolicVisualizer(output_dir="charts")
         self.pusher = StatelessPush()
 
-        # FIX T4: raised from 100 to medical_constants.SNAPSHOT_CAP (300)
-        # so detect_regime() can satisfy its REGIME_MIN_SNAPSHOTS=200 threshold.
         self.snapshots: List[MetabolicSnapshot] = []
 
-        # FIX V4: single source of truth for active Telegram-logged meal.
-        # Nightscout-sourced meal lives in snapshot.last_meal only.
         self.last_meal: Optional[MealEvent] = None
         self.meal_window_start: Optional[datetime] = None
-
-        # FIX T3: flag prevents auto_tune from firing multiple times per meal
-        # window and survives polling gaps (replaces narrow 20-min window check).
         self.meal_tune_pending: bool = False
+
+        # FIX L1: store the twin's predicted peak at meal-log time so auto_tune
+        # compares actual glucose against the real 4h meal prediction, not
+        # snapshot.predict_30m which is a short-horizon kinematic value.
+        self.pending_meal_forecast_peak: Optional[float] = None
 
         self.is_running = False
 
-    def _active_meal(self) -> Optional[MealEvent]:
-        return self.last_meal if self.last_meal else None
-
     async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
         """Standard processing pipeline for a single reading."""
-        # Task 7.1.7: Log raw reading to cloud
         task = asyncio.create_task(self.audit.log_reading(reading))
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
 
         # 1. Signal Quality Check
-        # FIX C3: Log warning during startup when compression check is not yet
-        # fully operational (requires >= 3 readings for recovery confirmation).
         history = [snapshot.glucose for snapshot in self.snapshots] + [reading]
         if len(history) < 3:
             self.logger.debug(
@@ -83,13 +78,19 @@ class Coordinator:
             return
 
         # 1b. Freshness Check
-        now = datetime.now(timezone.utc) if reading.timestamp.tzinfo else datetime.now()
-        if (now - reading.timestamp).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
+        # FIX C1: always use UTC-aware now; normalise incoming timestamp if naive.
+        now = datetime.now(timezone.utc)
+        reading_ts = reading.timestamp
+        if reading_ts.tzinfo is None:
+            reading_ts = reading_ts.replace(tzinfo=timezone.utc)
+        if (now - reading_ts).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
             self.logger.warning(f"Stale data ignored: {reading.timestamp} is too old.")
             return
 
         if self.snapshots:
             last_reading_time = self.snapshots[-1].glucose.timestamp
+            if last_reading_time.tzinfo is None:
+                last_reading_time = last_reading_time.replace(tzinfo=timezone.utc)
             dt = (now - last_reading_time).total_seconds()
             if dt > medical_constants.STALE_DATA_TIMEOUT_SECS:
                 self.logger.warning(f"Metabolic data is STALE ({dt/60:.1f} mins old). Prediction accuracy reduced.")
@@ -98,16 +99,11 @@ class Coordinator:
         snapshot = self.filter.update(reading)
 
         # 3. Treatment & Cardiac Ingestion
-        # Polling both streams in parallel for speed (C3 resilient)
         try:
-            # Polling both streams in parallel for speed (C3 resilient)
             tr_task = self.client.fetch_recent_treatments(count=10)
             hr_task = self.hr_client.fetch_latest()
-            
-            # results will be [(insulin, meal), cardiac]
             results = await asyncio.gather(tr_task, hr_task, return_exceptions=True)
-            
-            # 1. Unpack treatments
+
             tr_res = results[0]
             if not isinstance(tr_res, Exception) and isinstance(tr_res, tuple):
                 ns_insulin, ns_meal = tr_res
@@ -115,33 +111,27 @@ class Coordinator:
                 snapshot.last_meal = self._active_meal(ns_meal)
             else:
                 self.logger.warning(f"Nightscout treatment fetch failed: {tr_res}")
-                snapshot.last_meal = self.last_meal # Manual fallback
-                
-            # 2. Unpack cardiac
+                snapshot.last_meal = self.last_meal
+
             hr_res = results[1]
             if not isinstance(hr_res, Exception):
                 snapshot.cardiac = hr_res
             else:
                 self.logger.warning(f"Cardiac ingestion failed: {hr_res}")
                 snapshot.cardiac = None
-            
+
         except Exception as e:
             self.logger.warning(f"In-depth ingestion failed: {e}. Falling back to defaults.")
-            snapshot.last_meal = self.last_meal # fallback to manual
+            snapshot.last_meal = self.last_meal
             snapshot.cardiac = None
 
-        # 4. Feature Extraction (Kinematics & Volatility)
-        # Note: extract_kinematics returns (velocity, acceleration). Velocity
-        # is discarded here because snapshot.velocity is already set correctly
-        # by the Kalman filter. Only acceleration is needed at this call site.
+        # 4. Feature Extraction
         _, acceleration = MetabolicMath.extract_kinematics(self.snapshots + [snapshot])
         snapshot.acceleration = acceleration
         snapshot.atr_14 = MetabolicMath.calculate_atr(self.snapshots + [snapshot], period=14)
 
         # 5. Forecasting
         prediction_30m = self.forecaster.predict_30m(self.snapshots + [snapshot])
-        # FIX V2: write prediction back to snapshot so auto_tune and downstream
-        # consumers receive the actual forecast, not the default 0.0.
         snapshot.predict_30m = prediction_30m
 
         # 6. Alert Decision
@@ -155,8 +145,6 @@ class Coordinator:
 
         self.snapshots.append(snapshot)
 
-        # FIX T4: cap raised to SNAPSHOT_CAP (300) so detect_regime() can
-        # accumulate REGIME_MIN_SNAPSHOTS (200) readings before returning NORMAL.
         if len(self.snapshots) > medical_constants.SNAPSHOT_CAP:
             self.snapshots.pop(0)
 
@@ -172,18 +160,20 @@ class Coordinator:
             self.logger.info(f"Metabolic Regime Detected: {regime}")
 
         # 8. Meal Window Auto-Tune
-        # FIX T3: replaced narrow 230-250 min window with a flag-based trigger.
-        # Original window was only 4 readings wide — one polling failure would
-        # miss it permanently. Now fires once as soon as dt_meal >= 230 min,
-        # regardless of how many readings occurred in that window.
+        # FIX L1: use pending_meal_forecast_peak (stored at meal-log time) not
+        # snapshot.predict_30m (short-horizon kinematic — wrong comparison target).
         if self.last_meal and self.meal_window_start and self.meal_tune_pending:
             dt_meal = (reading.timestamp - self.meal_window_start).total_seconds() / 60.0
             if dt_meal >= 230:
-                self.logger.info("Meal window closed. Triggering Twin Auto-Tune...")
-                self.twin.auto_tune(reading.value, snapshot.predict_30m)
+                self.logger.info("Meal window closed. Triggering Twin Auto-Tune via meal residual...")
+                if self.pending_meal_forecast_peak and self.pending_meal_forecast_peak > 0.1:
+                    self.twin.auto_tune(reading.value, self.pending_meal_forecast_peak)
+                else:
+                    self.logger.warning("No stored meal forecast peak — auto_tune skipped.")
                 self.last_meal = None
                 self.meal_window_start = None
-                self.meal_tune_pending = False  # consume the flag
+                self.meal_tune_pending = False
+                self.pending_meal_forecast_peak = None
 
         # 9. Push to Frontend
         if not is_backfill:
@@ -194,7 +184,7 @@ class Coordinator:
             self.background_tasks.add(task)
             task.add_done_callback(self.background_tasks.discard)
 
-        # 10. Update Continuous Chart (Task 8.3.3)
+        # 10. Update Continuous Chart
         self.visualizer.update_continuous(self.snapshots)
 
     def _active_meal(self, ns_meal: Optional[MealEvent]) -> Optional[MealEvent]:
@@ -205,14 +195,12 @@ class Coordinator:
         if not self.last_meal and not ns_meal:
             return None
         now = datetime.now(timezone.utc)
-        
-        # Check if Telegram meal is still active (4h window)
+
         if self.last_meal:
             dt = (now - self.last_meal.timestamp).total_seconds() / 60.0
             if dt <= medical_constants.MEAL_WINDOW_MINS:
                 return self.last_meal
-                
-        # Otherwise fallback to Nightscout
+
         return ns_meal
 
     async def _dispatch_alert(self, alert: Alert):
@@ -246,11 +234,14 @@ class Coordinator:
             task_bot = asyncio.create_task(self.bot_app.app.updater.start_polling())
             self.background_tasks.add(task_bot)
 
-        # 0. Stateful Backfill (Task 8.2.2)
+        # 0. Stateful Backfill
         last_ts = await self.audit.get_last_reading_timestamp()
         if last_ts:
+            # FIX: normalise to UTC-aware before comparisons AND before passing to fetch_since
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
             now = datetime.now(timezone.utc)
-            gap_mins = (now - last_ts.replace(tzinfo=timezone.utc)).total_seconds() / 60
+            gap_mins = (now - last_ts).total_seconds() / 60
             if medical_constants.SAMPLING_INTERVAL_MINS < gap_mins < config.BACKFILL_MAX_HOURS * 60:
                 self.logger.info(f"Detected {gap_mins:.1f} min gap. Starting backfill...")
                 backfill_readings = await self.client.fetch_since(last_ts)
@@ -279,16 +270,12 @@ class Coordinator:
     async def handle_meal_input(self, desc: str, grams: float, gi_type: str = "STARCH"):
         """Entry point for Telegram /meal command."""
         self.logger.info(f"Processing Meal: {desc} ({grams}g)")
-        # FIX V4: self.last_meal is the Telegram-sourced meal (user-logged).
-        # snapshot.last_meal (set in _process_reading) is Nightscout-sourced.
-        # _active_meal() arbitrates between them in prediction context.
         self.last_meal = MealEvent(
             timestamp=datetime.now(timezone.utc),
             carbs=grams,
             gi_type=gi_type
         )
         self.meal_window_start = datetime.now(timezone.utc)
-        # FIX T3: arm the flag so auto_tune fires once after 230 min
         self.meal_tune_pending = True
 
         history_count = int(60 / config.SAMPLING_INTERVAL_MINS)
@@ -296,8 +283,9 @@ class Coordinator:
         if history:
             prediction_4h = self.twin.predict_4h_trajectory(history, self.last_meal)
 
-            # FIX C2/V1: push the 4-hour curve to the frontend so it is not
-            # silently discarded.
+            # FIX L1: store peak now for use by auto_tune at t+230 min
+            self.pending_meal_forecast_peak = float(prediction_4h.max())
+
             task = asyncio.create_task(self.pusher.push_update({
                 "type": "meal_forecast",
                 "description": desc,
@@ -308,7 +296,6 @@ class Coordinator:
             self.background_tasks.add(task)
             task.add_done_callback(self.background_tasks.discard)
 
-            # 11. Generate and Send Forecast Chart (Task 8.3.4)
             chart_path = self.visualizer.plot_forecast(
                 history=[s.glucose.value for s in history],
                 prediction=prediction_4h,
@@ -321,10 +308,8 @@ class Coordinator:
                 f"Peak: {prediction_4h.max():.1f} mmol/L at t={int(prediction_4h.argmax()*config.SAMPLING_INTERVAL_MINS)} min. "
                 "Forecast chart pushed to Telegram."
             )
-
-        if self.background_tasks:
-            self.logger.info(f"Awaiting {len(self.background_tasks)} background tasks before shutdown...")
-            await asyncio.wait(self.background_tasks, timeout=5.0)
+        # FIX: removed asyncio.wait() from here — it belongs only in stop(), not
+        # in an interactive command handler (was blocking up to 5s on every /meal).
 
     async def stop(self):
         """Graceful shutdown of all services."""

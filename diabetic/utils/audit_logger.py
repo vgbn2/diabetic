@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import json
 import logging
@@ -20,18 +21,25 @@ class AuditLogger:
         self.collection = None
         self.logger = logging.getLogger("Bio-Quant.Audit")
 
-        # 1. Initialize SQLite (Task 8.1.2)
+        # Initialize MongoDB (connect if URI provided)
+        if self.uri:
+            try:
+                self.client = AsyncIOMotorClient(self.uri, serverSelectionTimeoutMS=5000)
+                self.db = self.client["bio_quant"]
+                self.collection = self.db["audit_logs"]
+                self.logger.info("MongoDB client initialised.")
+            except Exception as e:
+                self.logger.warning(f"MongoDB connection failed (cloud logging disabled): {e}")
+
+        # Initialize SQLite (Task 8.1.2)
         try:
-            # Added timeout and check_same_thread=False for async safety
             self.local_conn = sqlite3.connect(
-                self.local_db_path, 
+                self.local_db_path,
                 check_same_thread=False,
-                timeout=30.0 
+                timeout=30.0
             )
-            # Enable WAL mode for high-concurrency (Wave 6 Fix)
             self.local_conn.execute("PRAGMA journal_mode=WAL")
             self.local_conn.execute("PRAGMA synchronous=NORMAL")
-            
             self._init_sqlite()
             self.logger.info(f"Local SQLite initialized at {self.local_db_path} (WAL Mode enabled)")
         except Exception as e:
@@ -54,8 +62,7 @@ class AuditLogger:
     async def log_event(self, event_type: str, data: dict, level: str = "INFO"):
         """Stores an event in the database and local logger."""
         timestamp = datetime.now(timezone.utc)
-        
-        # Helper for JSON serialization
+
         def _default(o):
             if isinstance(o, datetime):
                 return o.isoformat()
@@ -64,7 +71,7 @@ class AuditLogger:
             if hasattr(o, "dict"):
                 return o.dict()
             return str(o)
-            
+
         log_entry = {
             "timestamp": timestamp,
             "event_type": event_type,
@@ -72,7 +79,6 @@ class AuditLogger:
             "data": data
         }
 
-        # Local logging (standard Python logging is generally fast enough)
         log_msg = f"[{event_type}] {data}"
         if level == "ERROR":
             self.logger.error(log_msg)
@@ -81,14 +87,12 @@ class AuditLogger:
         else:
             self.logger.info(log_msg)
 
-        # 1. Cloud persistence (Already async)
         if self.collection is not None:
             try:
                 await self.collection.insert_one(log_entry)
             except Exception as e:
                 self.logger.error(f"Failed to persist log to MongoDB: {e}")
 
-        # 2. Local SQLite persistence (FIX: Use to_thread to avoid blocking loop)
         if hasattr(self, 'local_conn'):
             try:
                 def _write_db():
@@ -98,7 +102,7 @@ class AuditLogger:
                         (timestamp.isoformat(), event_type, level, json.dumps(data, default=_default))
                     )
                     self.local_conn.commit()
-                
+
                 await asyncio.to_thread(_write_db)
             except Exception as e:
                 self.logger.error(f"Failed to persist log to SQLite: {e}")
@@ -114,7 +118,7 @@ class AuditLogger:
         """
         if not hasattr(self, 'local_conn'):
             return None
-            
+
         try:
             def _query_db():
                 cursor = self.local_conn.cursor()
@@ -123,7 +127,7 @@ class AuditLogger:
                     ("RAW_READING",)
                 )
                 return cursor.fetchone()
-            
+
             row = await asyncio.to_thread(_query_db)
             if row:
                 return datetime.fromisoformat(row[0])
@@ -140,10 +144,8 @@ class AuditLogger:
         })
 
 if __name__ == "__main__":
-    # Test standalone
     import asyncio
     async def test():
         logger = AuditLogger()
         await logger.log_event("TEST_BOOT", {"version": "2.0", "status": "success"})
-    
     # asyncio.run(test())

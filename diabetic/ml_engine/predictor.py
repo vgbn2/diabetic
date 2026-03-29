@@ -24,7 +24,7 @@ class GlucoseForecaster:
 
     def _prepare_features(self, history: List[MetabolicSnapshot]) -> np.ndarray:
         """
-        Extracts 10 metabolic features for synchronization with verification scripts.
+        Extracts 10 metabolic features.
         Vector: [val_mmol, v, a, momentum, lbgi, hbgi, t_sin, t_cos, atr, oscillation]
         """
         if not history:
@@ -33,12 +33,10 @@ class GlucoseForecaster:
         latest = history[-1]
         lbgi, hbgi = MetabolicMath.calculate_risk_indices(latest.filtered_value)
 
-        # Circadian Features
         now = latest.glucose.timestamp
         t_sin = np.sin(2 * np.pi * now.hour / 24.0)
         t_cos = np.cos(2 * np.pi * now.hour / 24.0)
 
-        # Momentum & Oscillation
         momentum = latest.velocity * latest.filtered_value
         oscillation = 0.0
         if len(history) >= 5:
@@ -63,37 +61,23 @@ class GlucoseForecaster:
     def _calculate_dynamic_damping(self, glucose: float, velocity: float, horizon_mins: float) -> float:
         """
         Calculates physiological braking for kinematic projection.
-
-        Two components:
-        1. Base damping (velocity noise rejection) — applied at all horizons.
-           Reduces contribution of high-frequency velocity spikes.
-
-        2. Renal damping (glucosuria sink) — applied ONLY when horizon >= 60 min.
-           FIX T1: glucosuria operates on a 1-4 hour timescale. Applying this
-           brake to short-horizon (5-30 min) predictions compounds per-reading
-           and has no physiological basis at that scale. Gated to long-horizon
-           projections only.
-           Disabled above HYPER_CRITICAL (19.4 mmol/L): under-predicting a
-           hyperglycemic rise in the critical zone is more dangerous than
-           over-predicting it.
         """
-        # Base damping — artifact/noise rejection for high velocity readings
-        # FAINT_VELOCITY_LIMIT_PER_MIN = 0.1 mmol/L per min
         v_threshold = medical_constants.FAINT_VELOCITY_LIMIT_PER_MIN
         base_damping = 0.95 if abs(velocity) > v_threshold else 1.0
 
-        # Renal damping — long-horizon only, and not in the critical zone
+        # FIX: renal brake gated at >= 60 min (was 30 min).
+        # Glucosuria operates on a 1-4 hour timescale — applying it at 30 min
+        # has no physiological basis and causes systematic under-prediction.
         renal_damping = 1.0
-        if horizon_mins >= 30.0 and glucose <= medical_constants.HYPER_CRITICAL:
+        if horizon_mins >= 60.0 and glucose <= medical_constants.HYPER_CRITICAL:
             rt = medical_constants.RENAL_THRESHOLD
             if glucose > rt:
                 delta = glucose - rt
                 renal_damping = 1.0 - (medical_constants.RENAL_CLEARANCE_SLOPE * delta)
 
-        # Counter-regulatory damping — long-horizon and falling only
-        # Reduces predicted drop as glucose approaches physiological floor.
+        # Counter-regulatory damping — also gated at >= 60 min for the same reason
         low_side_damping = 1.0
-        if horizon_mins >= 30.0 and velocity < 0:
+        if horizon_mins >= 60.0 and velocity < 0:
             lt = medical_constants.LOW_SIDE_THRESHOLD
             if glucose < lt:
                 delta = lt - glucose
@@ -111,25 +95,14 @@ class GlucoseForecaster:
             return 0.0, 0.0
 
         latest = history[-1]
-
-        # Confidence decays as horizon increases
         confidence = max(0.1, 1.0 - (horizon_mins / 120.0))
 
         if not self.is_trained:
-            # Kinematic Algorithm: P = G + (V * t * damping) + (0.25 * A * t^2)
-            # FIX Bug5: documented the 0.25 factor explicitly. The standard
-            # kinematic formula is 0.5 * a * t^2. The extra * 0.5 is intentional
-            # acceleration damping (reduces long-horizon overshoot from noisy
-            # Kalman acceleration estimates). It is not a physics error.
-            # FIX T1: horizon_mins passed to damping so renal brake is gated.
             damping = self._calculate_dynamic_damping(latest.filtered_value, latest.velocity, horizon_mins)
-
-            # Velocity is in mmol/L per min, horizon_mins is in mins
             v_term = latest.velocity * horizon_mins * damping
-            # Acceleration damping factor 0.5 reduces to 0.25 * a * t^2.
-            # Intentional: Kalman acceleration is noisier than velocity.
+            # 0.25 = 0.5 * 0.5: standard kinematic term × intentional acceleration damping.
+            # Kalman acceleration is noisier than velocity; extra damping reduces long-horizon overshoot.
             a_term = 0.5 * latest.acceleration * (horizon_mins ** 2) * 0.5
-
             prediction = latest.filtered_value + v_term + a_term
             final_pred = max(medical_constants.PHYSIO_FLOOR, prediction)
             return float(final_pred), float(confidence)

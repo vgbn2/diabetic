@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -28,7 +29,6 @@ class TelegramNotifier:
             self.logger.error("Telegram token or Chat ID missing. Cannot send alert.")
             return
 
-        # Build keyboard for confirmation
         keyboard = [
             [
                 InlineKeyboardButton("✅ Confirmed", callback_data=f"confirm_{alert.type}"),
@@ -37,7 +37,6 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Format message
         text = (
             f"<b>{alert.type} Alert</b>\n"
             f"------------------\n"
@@ -62,7 +61,7 @@ class TelegramNotifier:
         """Pushes a chart image to the user."""
         if not self.bot or not self.chat_id:
             return
-            
+
         try:
             with open(photo_path, 'rb') as photo:
                 await self.bot.send_photo(
@@ -81,6 +80,7 @@ class TelegramApp:
         self.app = ApplicationBuilder().token(config.TELEGRAM_TOKEN).build()
         self.coordinator = coordinator
         self.audit_logger = audit_logger
+        self.logger = logging.getLogger("Bio-Quant.TelegramApp")
         self._setup_handlers()
 
     def _setup_handlers(self):
@@ -100,32 +100,34 @@ class TelegramApp:
         try:
             grams = float(context.args[-1])
             desc = " ".join(context.args[:-1]).lower()
-            
-            # GI Detection (Fast/Liquid vs Slow/Starch)
+
             fast_keywords = ["honey", "sugar", "juice", "liquid", "soda", "gel"]
             gi_type = "LIQUID" if any(k in desc for k in fast_keywords) else "STARCH"
-            
-            # Logic will be handled by Coordinator in actual integration
-            # For now, acknowledge and provide predicted impact
+
             await update.message.reply_text(f"Logged {grams}g of {desc} ({gi_type} profile). Generating Digital Twin forecast...")
-            
-            # Trigger Coordinator processing
+
             if self.coordinator:
-                 await self.coordinator.handle_meal_input(desc, grams, gi_type)
-                 
+                await self.coordinator.handle_meal_input(desc, grams, gi_type)
+
         except ValueError:
             await update.message.reply_text("Please provide grams as a number at the end.")
 
     async def _handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        
-        action, alert_type = query.data.split("_", 1)
-        
-        # Log feedback to AuditLogger (Task 7.1.4)
+
+        # FIX: guard against malformed callback data — previously crashed with ValueError
+        parts = query.data.split("_", 1)
+        if len(parts) != 2:
+            self.logger.warning(f"Malformed callback data received: {query.data!r}")
+            await query.edit_message_text(text="Unknown action.")
+            return
+
+        action, alert_type = parts
+
         if self.audit_logger:
             asyncio.create_task(self.audit_logger.log_feedback(alert_type, action))
-            
+
         if action == "confirm":
             await query.edit_message_text(text=f"✅ Alert {alert_type} acknowledged. Stay safe.")
         else:
@@ -136,10 +138,8 @@ class TelegramApp:
         self.app.run_polling()
 
 if __name__ == "__main__":
-    # Test alert interface (requires token)
     logging.basicConfig(level=logging.INFO)
     async def test():
-        from datetime import timezone
         notifier = TelegramNotifier()
         alert = Alert(
             timestamp=datetime.now(timezone.utc),
@@ -149,5 +149,4 @@ if __name__ == "__main__":
             glucose_value=120.0
         )
         await notifier.send_alert(alert)
-
     # asyncio.run(test())

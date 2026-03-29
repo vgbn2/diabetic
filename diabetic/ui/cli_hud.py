@@ -38,7 +38,8 @@ class RealTimeHUD:
         grid.add_column(justify="right", ratio=1)
         grid.add_row(
             Text("DIABETES-1-predictor", style="bold cyan"),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            # FIX: use UTC so the clock matches all log timestamps
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         )
         return Panel(grid, style="white on blue")
 
@@ -53,13 +54,10 @@ class RealTimeHUD:
             table.add_row("Glucose", f"{snapshot.filtered_value:.1f}", unit)
             table.add_row("Velocity", f"{snapshot.velocity:+.2f}", f"{unit}/min")
             table.add_row("Acceleration", f"{snapshot.acceleration:+.3f}", f"{unit}/min²")
-            
-            # Cardiac Metrics
             bpm = snapshot.bpm if snapshot.bpm else "MOCK"
             hrv = f"{snapshot.hrv:.1f}" if snapshot.hrv else "---"
             table.add_row("Heart Rate", f"{bpm}", "bpm")
             table.add_row("HRV (RMSSD)", hrv, "ms")
-            
             table.add_row("30m Forecast", f"{prediction:.1f}", style="bold yellow")
         else:
             table.add_row("Glucose", "WAITING...", "")
@@ -83,21 +81,24 @@ class RealTimeHUD:
 
     async def run_live(self, coordinator):
         """Connects to the coordinator and runs the live display."""
+        cached_pred = 0.0
+        last_snap_count = 0
+
         with Live(self.generate_display(), refresh_per_second=1, screen=True) as live:
             while coordinator.is_running:
                 latest_snap = coordinator.snapshots[-1] if coordinator.snapshots else None
-                # Fetch prediction from forecaster for HUD
-                pred = coordinator.forecaster.predict_30m(coordinator.snapshots) if latest_snap else 0.0
-                
-                # Simple logic to show last alert status
-                status = "IDLE"
-                # This could be improved to show the actual last alert type
-                
-                live.update(self.generate_display(latest_snap, pred, status))
+
+                # FIX: only recompute prediction when a new snapshot arrives.
+                # Previously called predict_30m() every second — wasted CPU since
+                # readings only arrive every 2.5 minutes.
+                if latest_snap and len(coordinator.snapshots) != last_snap_count:
+                    cached_pred = coordinator.forecaster.predict_30m(coordinator.snapshots)
+                    last_snap_count = len(coordinator.snapshots)
+
+                live.update(self.generate_display(latest_snap, cached_pred, "IDLE"))
                 await asyncio.sleep(1)
 
 if __name__ == "__main__":
-    # Test HUD standalone
     hud = RealTimeHUD()
     from rich.console import Console
     Console().print(hud.generate_display())

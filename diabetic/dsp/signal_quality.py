@@ -14,29 +14,23 @@ class SignalQuality:
         Logic: a drop with immediate recovery OR a non-physiological drop rate.
         """
         from diabetic.dsp.metabolic_math import MetabolicMath
-        
+
         if len(last_readings) < 2:
             return False
 
         r_curr = last_readings[-1]
         r_prev = last_readings[-2]
 
-        # Use centralized logic
         dt = MetabolicMath.get_dt(r_curr.timestamp, r_prev.timestamp)
-
-        velocity = (r_curr.value - r_prev.value) / dt
-        v_per_5min = velocity * mc.SAMPLING_INTERVAL_MINS
+        velocity = (r_curr.value - r_prev.value) / dt  # mmol/L per minute
 
         # 1. Recovery Check (Requires 3 readings)
         if len(last_readings) >= 3:
             r1, r2, r3 = last_readings[-3:]
             dt_r12 = MetabolicMath.get_dt(r2.timestamp, r1.timestamp)
-            
-            # v12 is the "drop velocity" (negative for drop)
             v12 = (r2.value - r1.value) / max(0.1, dt_r12)
             recovery = r3.value - r2.value
 
-            # Trigger: Rapid drop followed by significant immediate recovery
             if v12 < -mc.COMPRESSION_DROP_LIMIT and recovery > mc.COMPRESSION_RECOVERY_MIN:
                 return True
 
@@ -54,4 +48,4 @@ class SignalQuality:
 
         from diabetic.dsp.metabolic_math import MetabolicMath
         dt = MetabolicMath.get_dt(last_readings[-1].timestamp, last_readings[-2].timestamp)
-        return dt > max_gap_mins
+        return dt > max_gap_mins

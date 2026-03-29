@@ -7,25 +7,18 @@ class MetabolicMath:
     """
     Core mathematical engine for risk assessment.
     """
-    
+
     @staticmethod
     def calculate_risk_indices(glucose_val: float) -> Tuple[float, float]:
         """
         Transforms glucose (mmol/L) into risk space.
         """
-        # 1. Convert and Clamp
         mgdl_raw = glucose_val * mc.MMOL_TO_MGDL
         mgdl = np.clip(mgdl_raw, mc.KOVATCHEV_FLOOR_MGDL, mc.KOVATCHEV_CEIL_MGDL)
-        
-        # 2. Symmetrization transformation
         symmetrized_val = mc.KOVATCHEV_PRE_MULT * (np.log(mgdl)**mc.KOVATCHEV_EXP - mc.KOVATCHEV_OFFSET)
-        
-        # 3. Calculate quadratic risk
         risk = mc.KOVATCHEV_RISK_MULT * (symmetrized_val**2)
-        
         lbgi = risk if symmetrized_val < 0 else 0.0
         hbgi = risk if symmetrized_val > 0 else 0.0
-        
         return lbgi, hbgi
 
     @staticmethod
@@ -43,21 +36,21 @@ class MetabolicMath:
         """
         if not snapshots:
             return 0.0, 0.0
-            
+
         curr = snapshots[-1]
         if len(snapshots) < 2:
             return curr.velocity, curr.acceleration
 
         velocity = curr.velocity
         acceleration = curr.acceleration
-        
-        # Fallback for initial state or missing acceleration
-        if acceleration == 0.0:
-            prev = snapshots[-2]
-            if dt is None:
-                dt = MetabolicMath.get_dt(curr.glucose.timestamp, prev.glucose.timestamp)
-            acceleration = (curr.velocity - prev.velocity) / dt
-            
+
+        # FIX: do NOT override Kalman's acceleration based on a zero-value check.
+        # Zero is a valid acceleration result. The old code did finite-difference
+        # whenever acceleration == 0.0, silently replacing the Kalman estimate.
+        # Only fall back on the very first snapshot where Kalman has no prior state.
+        if len(snapshots) == 1:
+            acceleration = 0.0
+
         return velocity, acceleration
 
     @staticmethod
@@ -67,16 +60,15 @@ class MetabolicMath:
         """
         if len(snapshots) < 2:
             return 0.0
-        
+
         lookback = snapshots[-(period + 1):]
         normalized_ranges = []
-        
+
         for i in range(1, len(lookback)):
             curr = lookback[i]
             prev = lookback[i-1]
-            
             delta = abs(curr.filtered_value - prev.filtered_value)
             dt = MetabolicMath.get_dt(curr.glucose.timestamp, prev.glucose.timestamp)
             normalized_ranges.append(delta * (mc.SAMPLING_INTERVAL_MINS / dt))
-            
+
         return sum(normalized_ranges) / len(normalized_ranges)
