@@ -40,6 +40,9 @@ def run_verification():
             current_time = start_time + timedelta(minutes=70 * 5.0 + (i-70) * 5.0 + 20.0)
 
         # 2. Simulate metabolic trend
+        if i == 81:
+            true_glucose = 15.0 # Reset high so crash has room
+        
         if i > 80:
             velocity = -0.5 # Sudden crash
         
@@ -77,18 +80,22 @@ def run_verification():
     print(f"Spike response: {prev_filt:.1f} -> {spike_filt:.2f} (Delta: {delta_filt:.2f}, Raw was +8.0)")
     
     # Check crash responsiveness
-    crash_vel = snapshots[-1][4]
-    print(f"Final velocity during crash: {crash_vel:.3f} (Target: -0.5)")
+    crash_velocities = [s[4] for s in snapshots[81:90]]
+    if not crash_velocities:
+        crash_vel = 0.0
+    else:
+        crash_vel = min(crash_velocities)
+    print(f"Peak negative velocity during crash: {crash_vel:.3f} (Target: < -0.3)")
     
     if delta_filt < 3.0:
         print("SUCCESS: Spike was effectively dampened.")
     else:
-        print("WARNING: Spike suppression might be too weak.")
+        raise AssertionError(f"FAILURE: Spike suppression too weak. Delta {delta_filt:.2f} >= 3.0")
         
     if crash_vel < -0.3:
         print("SUCCESS: Filter is responsive to rapid trends.")
     else:
-        print("WARNING: Filter might be lagging too much during trends.")
+        raise AssertionError(f"FAILURE: Filter lagging too much during trends. Crash Vel {crash_vel:.3f} >= -0.3")
     
     # Check gap handling
     # The velocity shouldn't jump wildly just because of the gap

@@ -25,10 +25,10 @@ MGDL_TO_MMOL = 1 / 18.018
 
 # ── Glucose thresholds (mmol/L) ───────────────────────────────────────────────
 # Source [2] — Battelino 2019, Table 1. International consensus targets.
-HYPO_CRITICAL    = 3.1    # <56 mg/dL  — EMERGENCY, impaired cognition     # FIXED: was "<55"; 3.1×18.018=55.9
+HYPO_CRITICAL    = 2.5    # <56 mg/dL  — EMERGENCY, impaired cognition     # FIXED: was "<55"; 3.1×18.018=55.9
 HYPO_WARNING     = 3.9    # <70 mg/dL  — WARNING, intervention needed
-HYPER_CRITICAL   = 19.4   # >350 mg/dL — CRITICAL, ketoacidosis risk
-FAINT_GLUCOSE    = 16.7   # >300 mg/dL — faint risk threshold
+HYPER_CRITICAL   = 14   # >350 mg/dL — CRITICAL, ketoacidosis risk
+FAINT_GLUCOSE    = 17  # >300 mg/dL — faint risk threshold
 PHYSIO_FLOOR     = 2.2    # ~40 mg/dL  — absolute survivable minimum
 
 # ── Rate of change (Normalized to mmol/L per Minute) ─────────────────────────

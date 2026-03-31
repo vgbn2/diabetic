@@ -28,10 +28,10 @@ class StatelessPush:
                 def default_converter(o):
                     if isinstance(o, datetime):
                         return o.isoformat()
-                    if hasattr(o, "dict"):
-                        return o.dict()
-                    if hasattr(o, "model_dump"):
+                    if hasattr(o, "model_dump"):        # ← this first
                         return o.model_dump(mode='json')
+                    if hasattr(o, "dict"):              # ← fallback for pydantic v1
+                        return o.dict()
                 
                 # We serialize manually to handle datetimes in the payload
                 serialized_data = json.loads(json.dumps(data, default=default_converter))

@@ -36,7 +36,7 @@ class GlucoseFilter:
         
         # Process Noise spectral density (tuned for metabolic changes)
         # We assume the metabolic process is somewhat smooth (low q_var).
-        self.q_var = 0.001 
+        self.q_var = 1e-5 
 
     def _update_matrices(self, dt: float):
         """Updates Transition Matrix F and Process Noise Q based on actual dt."""
