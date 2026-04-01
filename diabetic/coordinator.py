@@ -11,6 +11,7 @@ from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.dsp.kalman import GlucoseFilter
 from diabetic.dsp.signal_quality import SignalQuality
 from diabetic.dsp.metabolic_math import MetabolicMath
+from diabetic.dsp.context_classifier import classify_context
 from diabetic.ml_engine.predictor import GlucoseForecaster
 from diabetic.ml_engine.twin import DigitalTwin
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert
@@ -133,6 +134,9 @@ class Coordinator:
         # 5. Forecasting
         prediction_30m, _ = self.forecaster.predict(self.snapshots + [snapshot], horizon_mins=30.0)
         snapshot.predict_30m = prediction_30m
+
+        # 5b. Context Classification
+        snapshot.activity_label = classify_context(snapshot).value
 
         # 6. Alert Decision
         if not is_backfill:
@@ -281,7 +285,10 @@ class Coordinator:
         history_count = int(60 / config.SAMPLING_INTERVAL_MINS)
         history = self.snapshots[-history_count:]
         if history:
-            prediction_4h = self.twin.predict_4h_trajectory(history, self.last_meal)
+            prediction_4h = self.twin.predict_4h_trajectory(
+                history, self.last_meal,
+                insulin=history[-1].last_insulin if history else None
+            )
 
             # FIX L1: store peak now for use by auto_tune at t+230 min
             self.pending_meal_forecast_peak = float(prediction_4h.max())

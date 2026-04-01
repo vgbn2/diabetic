@@ -47,6 +47,7 @@ class MetabolicSnapshot(BaseModel):
     acceleration: float = 0.0
     atr_14: float = 0.0
     predict_30m: float = 0.0
+    activity_label: str = "UNKNOWN"  # Populated by dsp.context_classifier
     
     @property
     def bpm(self) -> Optional[int]:
