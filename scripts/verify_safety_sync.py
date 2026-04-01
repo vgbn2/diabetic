@@ -34,7 +34,7 @@ class SyncTester:
         snapshot.acceleration = a
         
         # 3. Forecast 30m
-        prediction = self.forecaster.predict_30m(self.history + [snapshot])
+        prediction, _ = self.forecaster.predict(self.history + [snapshot], horizon_mins=30.0)
         
         # 4. Alerting logic
         alert = self.alert_guard.evaluate(snapshot, prediction)

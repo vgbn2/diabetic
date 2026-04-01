@@ -59,7 +59,7 @@ sequenceDiagram
 ### 🧮 Mathematical Models
 | Model / Formula | Purpose | Location (File / Function) |
 | :--- | :--- | :--- |
-| **Kalman 2D State** | Tracks $[x, v]$ where $x$ is glucose and $v$ is velocity. | [kalman.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/kalman.py) / `GlucoseFilter.update` |
+| **Kalman 3D State** | Tracks $[g, v, a]$ where $g$ is glucose, $v$ is velocity, and $a$ is acceleration. | [kalman.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/kalman.py) / `GlucoseFilter.update` |
 | **Kovatchev Risk** | Transforms glucose into Risk Space (LBGI/HBGI) via log-symmetrization. | [metabolic_math.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/metabolic_math.py) / `MetabolicMath.calculate_risk_indices` |
 | **ATR (Volatility)** | Measures metabolic volatility using Average True Range over 14 samples. | [metabolic_math.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/metabolic_math.py) / `MetabolicMath.calculate_atr` |
 | **Kinematic PRED** | $P = G + (V \times t) + (0.5 \times A \times t^2)$ with inertia damping. | [predictor.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/ml_engine/predictor.py) / `GlucoseForecaster.predict` |
@@ -69,13 +69,13 @@ sequenceDiagram
 ### 🧬 Biological Variables & Thresholds
 | Variable | Value / Threshold | Location (File / Function) |
 | :--- | :--- | :--- |
-| **HYPO_CRITICAL** | $3.1\text{ mmol/L}$ (Emergency cognitive impairment) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
-| **FAINT_GLUCOSE** | $>16.7\text{ mmol/L}$ (Risk boundary for syncope) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
-| **HYPER_CRITICAL** | $19.4\text{ mmol/L}$ (Ketoacidosis / DKA Risk) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
+| **HYPO_CRITICAL** | $2.5\text{ mmol/L}$ (Emergency cognitive impairment) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
+| **FAINT_GLUCOSE** | $>17.0\text{ mmol/L}$ (Risk boundary for syncope) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
+| **HYPER_CRITICAL** | $14.0\text{ mmol/L}$ (CRITICAL ketoacidosis risk) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
 | **PHYSIO_FLOOR** | $2.2\text{ mmol/L}$ (Absolute minimum survivable) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
-| **FAINT_VELOCITY** | $>0.5\text{ mmol/L/5min}$ (Artifact Rise Rate) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
-| **PHYSIO_MAX_DROP** | $1.5\text{ mmol/L/5min}$ (Max biological rate) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
-| **COMPRESSION_DROP** | $>2.0\text{ mmol/L/5min}$ (Flagged as sensor noise) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
+| **FAINT_VELOCITY** | $>0.1\text{ mmol/L/min}$ (Rapid climb artifact or risk) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
+| **PHYSIO_MAX_DROP** | $0.3\text{ mmol/L/min}$ (Max biological crash rate) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
+| **COMPRESSION_DROP** | $>0.4\text{ mmol/L/min}$ (Flagged as sensor noise) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
 | **KALMAN_NOISE** | $0.25$ (Variance for Ottai M8 Sensor) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
 | **CARB_SENSITIVITY** | $0.16$ (Default CSF seed for Twin) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |
 | **REGIME_MULT** | $1.25$ (Luteal/Dawn Resistance factor) | [constants.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/medical_constants.py) (Global) |

@@ -111,11 +111,6 @@ class GlucoseForecaster:
         prediction = self.model.predict(features)[0]
         return float(prediction), float(confidence)
 
-    def predict_30m(self, history: List[MetabolicSnapshot]) -> float:
-        """Deprecated: Use predict() instead for new integrations."""
-        val, _ = self.predict(history, 30.0)
-        return val
-
     def load_model(self, path: str):
         """Loads a pre-trained XGBoost model."""
         self.model.load_model(path)
@@ -133,5 +128,5 @@ if __name__ == "__main__":
         acceleration=0.0,
         atr_14=0.0
     )
-    pred = forecaster.predict_30m([snap])
+    pred, _ = forecaster.predict([snap], 30.0)
     print(f"Current: 8.3 mmol/L | Predicted 30m: {pred:.2f} mmol/L")

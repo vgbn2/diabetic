@@ -67,7 +67,6 @@ STALE_DATA_TIMEOUT_SECS  = 900    # 15 minutes — beyond this, data is unreliab
 # ── Signal quality (Normalized to Per Minute) ────────────────────────────────
 # High volatility threshold normalized to per-minute rate.
 HIGH_VOLATILITY_LIMIT_PER_MIN = 0.1    # mmol/L per minute (~0.5 per 5m)
-HIGH_VOLATILITY_MMOL          = HIGH_VOLATILITY_LIMIT_PER_MIN # deprecated alias
 EMA_RESIDUAL_SPAN        = 6      # 6 readings × 5min = 30min EMA window
 COMPRESSION_RECOVERY_MIN = 1.0    # mmol/L — minimum bounce-back to confirm artifact
 MIN_DT_FLOOR             = 0.5    # minutes — prevents division by zero / filter explosion
@@ -78,6 +77,24 @@ INSULIN_HALFLIFE_MINS = 45.0    # rapid-acting analogue baseline
 CARB_ABS_LIQUID_TAU   = 15.0   # Fast-GI absorption peak (mins)
 CARB_ABS_STARCH_TAU   = 60.0   # Slow-GI absorption peak (mins)
 MEAL_WINDOW_MINS   =240.0  # to prevent reading gli spike after meals
+
+# ── Insulin Pharmacodynamics ─────────────────────────────────────────────────
+# Source: Rapid-acting analogue (Novorapid/Humalog) population PK data.
+# Long-acting (Lantus/Levemir) modelled as flat 24h distribution.
+INSULIN_SENSITIVITY_DEFAULT = 2.0     # mmol/L drop per 1 Unit (ISF seed — auto-tuned)
+INSULIN_ACTION_WINDOW_MINS  = 240.0   # 4 hours — total duration of rapid-acting insulin
+INSULIN_PEAK_TAU_RAPID      = 55.0    # minutes — peak activity for rapid-acting
+INSULIN_ONSET_LAG_MINS      = 15.0    # minutes — near-zero impact before this point
+BASAL_DURATION_HOURS        = 24.0    # hours — long-acting insulin distribution window
+
+# ── Context Classifier Thresholds ────────────────────────────────────────────
+# Used by dsp/context_classifier.py to label metabolic snapshots.
+# Source: General population HR/HRV ranges; treat as personalization seeds.
+BPM_EXERCISE_THRESHOLD  = 110   # HR above this → EXERCISE
+BPM_STRESS_THRESHOLD    = 85    # HR above this (but below exercise) → STRESS
+BPM_SLEEP_CEILING       = 65    # HR below this → SLEEP candidate
+HRV_STRESS_CEILING      = 30    # ms — HRV below this during elevated HR → stress confirmed
+HRV_SLEEP_FLOOR         = 60    # ms — HRV above this during low HR → sleep confirmed
 
 # ── Kinematic projection ──────────────────────────────────────────────────────
 # Assumed timescale over which current glucose velocity linearly decays to zero

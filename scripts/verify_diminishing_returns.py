@@ -27,7 +27,7 @@ def test_diminishing_returns():
         acceleration=0.0,
         atr_14=0.0
     )
-    pred_normal = forecaster.predict_30m([snap_normal])
+    pred_normal, _ = forecaster.predict([snap_normal], 30.0)
     drop_normal = 8.0 - pred_normal
     print(f"\n[NORMAL: 8.0 mmol/L] Predicted 30m Drop: {drop_normal:.2f} (Target: ~3.0)")
 
@@ -40,7 +40,7 @@ def test_diminishing_returns():
         acceleration=0.0,
         atr_14=0.0
     )
-    pred_high = forecaster.predict_30m([snap_high])
+    pred_high, _ = forecaster.predict([snap_high], 30.0)
     rise_high = pred_high - 15.0
     print(f"[HIGH: 15.0 mmol/L] Predicted 30m Rise: {rise_high:.2f} (Target: < 3.0 via Renal Sink)")
 
@@ -53,7 +53,7 @@ def test_diminishing_returns():
         acceleration=0.0,
         atr_14=0.0
     )
-    pred_low = forecaster.predict_30m([snap_low])
+    pred_low, _ = forecaster.predict([snap_low], 30.0)
     drop_low = 3.5 - pred_low
     
     un_damped_drop = 0.04 * 30.0

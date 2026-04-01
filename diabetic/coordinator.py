@@ -131,7 +131,7 @@ class Coordinator:
         snapshot.atr_14 = MetabolicMath.calculate_atr(self.snapshots + [snapshot], period=14)
 
         # 5. Forecasting
-        prediction_30m = self.forecaster.predict_30m(self.snapshots + [snapshot])
+        prediction_30m, _ = self.forecaster.predict(self.snapshots + [snapshot], horizon_mins=30.0)
         snapshot.predict_30m = prediction_30m
 
         # 6. Alert Decision
