@@ -148,4 +148,10 @@ CARB_SENSITIVITY_DEFAULT = 0.16  # approx 1g = 0.16 mmol/L rise (~2.9 mg/dL)
 # 300 readings = ~25 hours (cap — allows full prior-day comparison).
 REGIME_MIN_SNAPSHOTS = 200      # minimum history for regime detection
 SNAPSHOT_CAP         = 300      # ring buffer hard cap — must be > REGIME_MIN_SNAPSHOTS
+# ── Context Classifier Thresholds (personalization seeds) ────────────────────
+BPM_EXERCISE_THRESHOLD = 110   # bpm — above this = exercise territory
+BPM_STRESS_THRESHOLD   = 85    # bpm — above this + low HRV = stress
+BPM_SLEEP_CEILING      = 65    # bpm — below this = sleep territory
+HRV_STRESS_CEILING     = 30    # ms  — below this = stress/exercise
+HRV_SLEEP_FLOOR        = 60    # ms  — above this = sleep/recovery
 
