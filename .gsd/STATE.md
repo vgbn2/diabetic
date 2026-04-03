@@ -1,24 +1,34 @@
 ## Current Position
-- **Phase**: Phase 9: Physiological Context & Pharmacodynamics (Wave 1+2 COMPLETE)
-- **Task**: Wave 3: Adaptive ISF Feedback Loop (Logic implemented, needs live data)
-- **Status**: Paused at 2026-04-01 21:37
+- **Phase**: 2 - Forensic Metabolic Ingestion
+- **Task**: Calibration Sweep Preparation
+- **Status**: Paused at 2026-04-03 21:07
 
 ## Last Session Summary
-Successfully completed the primary metabolic intelligence upgrades for Phase 9. Implemented a robust Insulin Pharmacokinetics engine (supporting Rapid-acting boluses with 15m onset lag and Long-acting basal regimes) and a Contextual Reason Classifier using BPM/HRV heuristics to categorize glucose spikes (Food, Exercise, Stress, Sleep, Random).
+Transformed the **Bio-Quant Ingestion Layer** into a Six-Channel Clinical Event Engine.
+
+| Forensic Period | Points | Insulin/Meal Pivots | Status |
+| :--- | :--- | :--- | :--- |
+| **February 2026** | 4,203 | 10 | **SUCCESS** |
+| **June 2025** | 2,485 | 6 | **SUCCESS** |
+
+### Key Improvements
+- **Clinical Resolution**: 4,203 points (Feb) provides 5-min clinical resolution across the month.
+- **Harvester Upgrade**: `high_res_parser.py` now scans both **Curves** and **Rects** for Green, Purple, and Yellow metabolic indicators.
+- **De-Noising**: Successfully identified the "cracked" vertical spikes in the June 2025 report as Basal insulin markers, removing them from the glucose trace.
 
 ## In-Progress Work
-All core logic for Phase 9 is committed. Wave 3 (Adaptive ISF) is implemented in `twin.py` and waits for `Coordinator` to detect correction boluses in real-time.
-- Files modified: `medical_constants.py`, `twin.py`, `registry.py`, `coordinator.py`, `dsp/context_classifier.py`
-- Tests status: All suites (Metabolic, Twin PK, Context Classifier, Coordinator) passing.
+- **Implementation Plan**: Propose `metabolic_replay.py` for a high-fidelity sensitivity sweep.
+- **Files modified**: `diabetic/ingestion/high_res_parser.py`
+- **Tests status**: Forensic integrity verified via point-density checks.
 
-## Blockers
-None.
+## Decisions Made
+- **Greedy P-Mode**: Any P-Numbered color under 60 points is tagged as a metabolic pivot (P50 = bolus).
+- **Object Expansion**: Included `rects` in the parser to catch square insulin icons that weren't represented as curves.
 
-## Context Dump
-### Decisions Made
-- **Sigmoid Onset Lag**: Used a smooth sigmoid ramp for insulin onset at 15m to prevent filter "shocks" during simulation.
-- **Priority Logic**: Context classifier prioritizes logged MEALS over cardiac data, and EXERCISE over STRESS.
-- **Bi-Directional Auto-Tune**: The `auto_tune` method now handles both `CSF` (carbs) and `ISF` (insulin) based on the current metabolic context.
+## Next Steps
+1. **Execute Calibration Sweep**: Run `metabolic_replay.py` on `feb_pixel_dense.csv` to calculate ISF/CSF factors.
+2. **Harden Simulator**: Update `twin.py` to support multi-day cumulative insulin curves.
+3. **Compare Period Drift**: Contrast June 2025 (Resistance) vs February 2026 (Stability) sensitivities.
 
 ### Approaches Tried
 - **Heuristic BPM/HRV**: Successfully mapped physiological states to glucose volatility patterns.
@@ -28,8 +38,10 @@ None.
 - `diabetic/ml_engine/twin.py`: Core simulation logic for carbs and insulin.
 - `diabetic/dsp/context_classifier.py`: Real-time reasoning engine for "why" glucose is moving.
 - `diabetic/coordinator.py`: The orchestrator wiring it all together.
+- `dashboard.py`: Project-level entry point for visualization.
 
 ## Next Steps
-1. **Push to GitHub**: Finalize remote persistence.
-2. **Architecture Documentation**: Update `architecture.md` to reflect the new biocellular model.
-3. **Live Validation**: Run the engine live to observe the Context Classifier in action on real telemetry.
+1. **Architecture Documentation**: Update `architecture.md` to reflect the new biocellular model and context classifier.
+2. **Live Validation**: Run the engine live to observe the Context Classifier in action on real telemetry.
+3. **Phase 10 Planning**: Begin design for adaptive longitudinal sensitivity analysis (instance-based classifier refactor).
+
