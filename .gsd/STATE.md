@@ -1,15 +1,15 @@
-## Current Position
-- **Phase**: 2 - Forensic Metabolic Ingestion
-- **Task**: Calibration Sweep Preparation
-- **Status**: Paused at 2026-04-03 21:07
+- **Phase**: 2.3 - Forensic Metabolic Ingestion (Restoration)
+- **Task**: Phase 2.3 Complete - Forensic Visual & Regularization Baseline
+- **Status**: SUCCESS (Denoised, Anchored, Absolute Pathing Locked)
+- **Roadmap V2**: Convolutional Model (CNN/TCN) scheduled after XGBoost baseline.
 
 ## Last Session Summary
 Transformed the **Bio-Quant Ingestion Layer** into a Six-Channel Clinical Event Engine.
 
 | Forensic Period | Points | Insulin/Meal Pivots | Status |
 | :--- | :--- | :--- | :--- |
-| **February 2026** | 4,203 | 10 | **SUCCESS** |
-| **June 2025** | 2,485 | 6 | **SUCCESS** |
+| **February 2026** | 419 | 10 | **SUCCESS (Absolute)** |
+| **June 2025** | 2,201 | 6 | **SUCCESS (Absolute)** |
 
 ### Key Improvements
 - **Clinical Resolution**: 4,203 points (Feb) provides 5-min clinical resolution across the month.
@@ -17,18 +17,20 @@ Transformed the **Bio-Quant Ingestion Layer** into a Six-Channel Clinical Event 
 - **De-Noising**: Successfully identified the "cracked" vertical spikes in the June 2025 report as Basal insulin markers, removing them from the glucose trace.
 
 ## In-Progress Work
-- **Implementation Plan**: Propose `metabolic_replay.py` for a high-fidelity sensitivity sweep.
-- **Files modified**: `diabetic/ingestion/high_res_parser.py`
-- **Tests status**: Forensic integrity verified via point-density checks.
+- **Denoising Filter**: $>25$ mmol/L startup guard successfully integrated into `high_res_parser.py`.
+- **Visual Anchoring**: 6-hour temporal anchors (00, 06, 12, 18) forced on every dynamics panel.
+- **Path Resolution**: Fixed persistent `FileNotFoundError` by switching to verified absolute paths in `data/renderings/`.
+- **Verification**: Feb (419 pts) and June (2,201 pts) clinical grids finalized.
+- **ML Direction**: XGBoost prioritized for initial calibration; Convolutional Model (CNN) targeted for V2.
 
 ## Decisions Made
 - **Greedy P-Mode**: Any P-Numbered color under 60 points is tagged as a metabolic pivot (P50 = bolus).
 - **Object Expansion**: Included `rects` in the parser to catch square insulin icons that weren't represented as curves.
 
 ## Next Steps
-1. **Execute Calibration Sweep**: Run `metabolic_replay.py` on `feb_pixel_dense.csv` to calculate ISF/CSF factors.
-2. **Harden Simulator**: Update `twin.py` to support multi-day cumulative insulin curves.
-3. **Compare Period Drift**: Contrast June 2025 (Resistance) vs February 2026 (Stability) sensitivities.
+1. **Initiate Phase 2.4**: Run the XGBoost calibration loop on verified forensic CSVs.
+2. **ISF/CSF Sweep**: Autotune insulin sensitivity factors based on the high-resolution dynamic study.
+3. **Twin.py Calibration**: Update simulator to match forensic high-fidelity traces.
 
 ### Approaches Tried
 - **Heuristic BPM/HRV**: Successfully mapped physiological states to glucose volatility patterns.

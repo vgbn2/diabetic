@@ -4,9 +4,7 @@ import matplotlib.dates as mdates
 import argparse
 import numpy as np
 from pathlib import Path
-from datetime import timedelta
 import math
-from scipy.interpolate import PchipInterpolator
 
 
 def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_window=None):
@@ -25,47 +23,66 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
         print("error: no data to plot.")
         return
 
-    latest  = df['timestamp'].max()
-    earliest = df['timestamp'].min()
-    total_span_days = max(1, (latest - earliest).days + 1)
-    num_panels = math.ceil(total_span_days / 5.0)
+    latest           = df['timestamp'].max()
+    earliest         = df['timestamp'].min()
+    total_span_days  = max(1, (latest - earliest).days + 1)
+    num_panels       = math.ceil(total_span_days / 5.0)
 
     fig, axes = plt.subplots(num_panels, 1, figsize=(18, 6 * num_panels), dpi=250)
     if num_panels == 1:
         axes = [axes]
 
     plot_segments = []
-    window_start = earliest.replace(hour=0, minute=0, second=0, microsecond=0)
+    window_start  = earliest.replace(hour=0, minute=0, second=0, microsecond=0)
 
     for i in range(num_panels):
-        window_end = window_start + pd.Timedelta(days=5)
-        segment_data = df[(df['timestamp'] >= window_start) & (df['timestamp'] < window_end)]
-        d_start = window_start.strftime('%b %d')
-        d_end   = (window_end - pd.Timedelta(seconds=1)).strftime('%b %d')
-        title   = f"Metabolic Dynamics: {d_start} – {d_end}"
+        window_end    = window_start + pd.Timedelta(days=5)
+        segment_data  = df[(df['timestamp'] >= window_start) & (df['timestamp'] < window_end)]
+        d_start       = window_start.strftime('%b %d')
+        d_end         = (window_end - pd.Timedelta(seconds=1)).strftime('%b %d')
+        title         = f"Metabolic Dynamics: {d_start} – {d_end}"
         plot_segments.append((axes[i], segment_data, title))
-        window_start = window_end
+        window_start  = window_end
 
     for ax, data, title in plot_segments:
-        if data.empty:
-            ax.set_title(f"{title} (no data)", alpha=0.5)
+
+        # ── clean glucose trace ────────────────────────────────────────────────
+        data_clean = pd.DataFrame()
+        if not data.empty:
+            data_clean = (
+                data.dropna(subset=['glucose'])
+                    .groupby('timestamp')['glucose']
+                    .mean()
+                    .reset_index()
+                    .sort_values('timestamp')
+                    .reset_index(drop=True)
+            )
+
+        has_glucose = not data_clean.empty
+
+        # FIX 1: if there is no glucose trace for this window, mark it clearly
+        # and skip all glucose-dependent rendering (annotations, pivot y-positions)
+        # instead of rendering an empty chart with floating markers.
+        if not has_glucose:
+            ax.set_title(f"{title}  —  no glucose data", fontsize=14, color='#888888', pad=12)
+            ax.set_ylim(0, 16)
+            ax.set_ylabel("Glucose (mmol/L)", fontsize=13)
+            ax.axhspan(3.9, 10.0, color='#00b894', alpha=0.08)
+            ax.axhline(10.0, color='#d63031', linestyle=':', alpha=0.4, linewidth=1.2)
+            ax.axhline(3.9,  color='#e17055', linestyle=':', alpha=0.4, linewidth=1.2)
+            ax.grid(True, which='major', linestyle='-', alpha=0.25)
+            if not data.empty:
+                # still set x range so midnight lines are sensible
+                ax.set_xlim(data['timestamp'].min(), data['timestamp'].max())
+            ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18]))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%a %d, %H:%M'))
+            ax.tick_params(axis='x', which='both', labelbottom=True, labelsize=9)
             continue
 
-        # clean trace — drop NaNs, average exact timestamp collisions
-        data_clean = (
-            data.dropna(subset=['glucose'])
-                .groupby('timestamp')['glucose']
-                .mean()
-                .reset_index()
-                .sort_values('timestamp')
-                .reset_index(drop=True)
-        )
-
-        # 1. Main Trace: Pixel-Perfect Reconstruction with Gap Guard (6-Hour Threshold)
-        # To avoid 'long lines' across multi-day gaps, we break the line on large gaps (> 6 hrs)
+        # ── gap-aware glucose trace ────────────────────────────────────────────
         data_clean['gap'] = data_clean['timestamp'].diff() > pd.Timedelta(hours=6)
         gap_indices = data_clean.index[data_clean['gap']].tolist()
-        
+
         start_idx = 0
         for gap_idx in gap_indices + [len(data_clean)]:
             seg = data_clean.iloc[start_idx:gap_idx]
@@ -73,22 +90,21 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
                 start_idx = gap_idx
                 continue
 
-            # Standard Linear Trace for forensic stability (prevents artificial cubic spikes)
             ax.plot(seg['timestamp'], seg['glucose'],
-                    color='#0984e3', linewidth=2.8, alpha=0.9, zorder=5,
+                    color='#0984e3', linewidth=2.0, alpha=0.9, zorder=5,
                     label='Glucose' if start_idx == 0 else "")
-            
-            # Subtle 'Pixel' Scatter for dense clusters
             ax.scatter(seg['timestamp'], seg['glucose'],
-                       color='#0984e3', s=12, alpha=0.15, edgecolors='none', zorder=6)
-            
+                       color='#0984e3', s=10, alpha=0.12, edgecolors='none', zorder=6)
             start_idx = gap_idx
 
+        # ── reference bands ───────────────────────────────────────────────────
         ax.axhspan(3.9, 10.0, color='#00b894', alpha=0.12, label='Target range (3.9–10.0)')
-        ax.axhline(10.0, color='#d63031', linestyle=':', alpha=0.5, linewidth=1.5, label='Hyperglycemia (>10.0)')
-        ax.axhline(3.9,  color='#e17055', linestyle=':', alpha=0.5, linewidth=1.5, label='Hypoglycemia (<3.9)')
+        ax.axhline(10.0, color='#d63031', linestyle=':', alpha=0.5, linewidth=1.5,
+                   label='Hyperglycemia (>10.0)')
+        ax.axhline(3.9,  color='#e17055', linestyle=':', alpha=0.5, linewidth=1.5,
+                   label='Hypoglycemia (<3.9)')
 
-        # daily high/low annotations + midnight lines
+        # ── per-day annotations & midnight lines ──────────────────────────────
         unique_days = pd.to_datetime(data_clean['timestamp'].dt.date).unique()
         for day in unique_days:
             day_data = data_clean[data_clean['timestamp'].dt.date == day.date()]
@@ -98,29 +114,36 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
             idxmax = day_data['glucose'].idxmax()
             idxmin = day_data['glucose'].idxmin()
 
-            ax.annotate(f"{day_data.loc[idxmax, 'glucose']:.1f}",
-                        xy=(mdates.date2num(day_data.loc[idxmax, 'timestamp']), day_data.loc[idxmax, 'glucose']),
-                        xytext=(0, 10), textcoords='offset points', ha='center', va='bottom',
-                        fontsize=9, fontweight='bold', color='white',
-                        bbox=dict(boxstyle="round,pad=0.3", fc="#d63031", ec="none", alpha=0.9), zorder=10)
-
-            ax.annotate(f"{day_data.loc[idxmin, 'glucose']:.1f}",
-                        xy=(mdates.date2num(day_data.loc[idxmin, 'timestamp']), day_data.loc[idxmin, 'glucose']),
-                        xytext=(0, -10), textcoords='offset points', ha='center', va='top',
-                        fontsize=9, fontweight='bold', color='white',
-                        bbox=dict(boxstyle="round,pad=0.3", fc="#e17055", ec="none", alpha=0.9), zorder=10)
-
-            # FIX 2: midnight line drawn per-day inside the loop, not after it
+            ax.annotate(
+                f"{day_data.loc[idxmax, 'glucose']:.1f}",
+                xy=(mdates.date2num(day_data.loc[idxmax, 'timestamp']),
+                    day_data.loc[idxmax, 'glucose']),
+                xytext=(0, 10), textcoords='offset points',
+                ha='center', va='bottom', fontsize=9, fontweight='bold', color='white',
+                bbox=dict(boxstyle="round,pad=0.3", fc="#d63031", ec="none", alpha=0.9),
+                zorder=10,
+            )
+            ax.annotate(
+                f"{day_data.loc[idxmin, 'glucose']:.1f}",
+                xy=(mdates.date2num(day_data.loc[idxmin, 'timestamp']),
+                    day_data.loc[idxmin, 'glucose']),
+                xytext=(0, -10), textcoords='offset points',
+                ha='center', va='top', fontsize=9, fontweight='bold', color='white',
+                bbox=dict(boxstyle="round,pad=0.3", fc="#e17055", ec="none", alpha=0.9),
+                zorder=10,
+            )
             ax.axvline(pd.Timestamp(day), color='#2d3436', linestyle='--',
                        alpha=0.3, linewidth=1, zorder=1)
 
-        # pivot markers — FIX 1: wrap each condition in () before |
-        # FIX 4: use data_clean for y-position max, and filter from data_clean
-        g_max = data_clean['glucose'].max() if not data_clean.empty else 10.0
+        # ── pivot markers ─────────────────────────────────────────────────────
+        # FIX 2: only render pivot markers when there IS a glucose trace.
+        # g_max is now always derived from actual data (not the 10.0 fallback),
+        # so markers never float in an otherwise empty panel.
+        g_max = data_clean['glucose'].max()
 
-        bolus_data = data[(data['bolus'] > 0)]
-        basal_data = data[(data['basal'] > 0)]
-        meal_data  = data[(data['meal']  > 0)]
+        bolus_data = data[data['bolus'] > 0]
+        basal_data = data[data['basal'] > 0]
+        meal_data  = data[data['meal']  > 0]
 
         if not bolus_data.empty:
             ax.scatter(bolus_data['timestamp'], [g_max + 1.5] * len(bolus_data),
@@ -130,28 +153,32 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
                        marker='^', color='#fdcb6e', s=120, label='Meal (carbs)', zorder=11)
         if not basal_data.empty:
             ax.scatter(basal_data['timestamp'], [g_max + 2.2] * len(basal_data),
-                       marker='*', color='#00cec9', s=100, label='Basal marker', zorder=11, alpha=0.6)
+                       marker='*', color='#00cec9', s=100, label='Basal marker',
+                       zorder=11, alpha=0.7)
 
+        # ── axes & grid ───────────────────────────────────────────────────────
         ax.set_title(title, fontsize=16, fontweight='bold', pad=15, color='#2d3436')
         ax.set_ylabel("Glucose (mmol/L)", fontsize=13)
+        ax.set_ylim(0, max(g_max + 3, 16))
 
-        # Explicit Date/Time Anchors (6-hour increments) - UNIFORMLY ON ALL PANELS
         ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18]))
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%a %d, %H:%M'))
-        ax.xaxis.set_minor_locator(mdates.HourLocator(interval=1)) 
-        
-        # Force absolute visibility for forensic review
+        ax.xaxis.set_minor_locator(mdates.HourLocator(interval=1))
         ax.tick_params(axis='x', which='both', labelbottom=True, labelsize=9)
-        
-        ax.grid(True, which='major', linestyle='-',  alpha=0.3)
+
+        ax.grid(True, which='major', linestyle='-', alpha=0.3)
         ax.grid(True, which='minor', linestyle=':', alpha=0.15)
-        ax.set_ylim(0, max(g_max + 3, 16))
 
     plt.gcf().autofmt_xdate()
 
-    handles, labels = plot_segments[0][0].get_legend_handles_labels()
+    # use first panel with actual glucose data for legend handles
+    legend_ax = next(
+        (seg[0] for seg in plot_segments if not seg[1].dropna(subset=['glucose']).empty),
+        plot_segments[0][0],
+    )
+    handles, labels = legend_ax.get_legend_handles_labels()
     fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, 0.02),
-               ncol=4, fontsize=11, frameon=True, facecolor='white')
+               ncol=5, fontsize=11, frameon=True, facecolor='white')
 
     plt.tight_layout(rect=[0, 0.05, 1, 0.98])
 
@@ -166,8 +193,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="plot high-resolution glucose data")
     parser.add_argument("csv",      help="path to glucose CSV")
     parser.add_argument("--output", "-o", help="save plot to image file")
-    parser.add_argument("--days",   "-d", type=int, default=None, help="days to display (default: all)")
-    parser.add_argument("--smooth", "-s", type=int, default=5,    help="smoothing window (default: 5)")
+    parser.add_argument("--days",   "-d", type=int, default=None,
+                        help="days to display (default: all)")
+    parser.add_argument("--smooth", "-s", type=int, default=5,
+                        help="smoothing window (default: 5)")
     args = parser.parse_args()
 
     if not Path(args.csv).exists():
