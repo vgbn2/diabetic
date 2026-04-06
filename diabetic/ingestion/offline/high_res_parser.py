@@ -58,16 +58,36 @@ class HighResGlucoseParser:
         date_pattern = r"\b(\d{1,2}\s+(?:Th\d{2}|thg\s+\d{1,2}))\b"
         matches      = list(re.finditer(date_pattern, text))
 
+        # Task 1: Position-aware date word lookup
+        # Map character offsets to word indices to handle duplicate dates
+        word_spans = []
+        curr_pos = 0
+        for i, w in enumerate(words):
+            word_spans.append((curr_pos, curr_pos + len(w['text'])))
+            curr_pos += len(w['text']) + 1 # +1 for the space assumed by rejoin
+
+        reconstructed_text = " ".join([w['text'] for w in words])
+        matches = list(re.finditer(date_pattern, reconstructed_text))
+
         raw_headers = []
         for match in matches:
             date_str = match.group(1)
-            dt       = parse_vn_date(f"{date_str} {global_year}")
+            dt = parse_vn_date(f"{date_str} {global_year}")
             if not dt:
                 continue
 
-            date_parts   = date_str.replace(',', '').split()
+            # Map the match offset to the start word index
+            match_start = match.start()
+            start_word_idx = 0
+            for i, span in enumerate(word_spans):
+                if span[0] <= match_start < span[1]:
+                    start_word_idx = i
+                    break
+
+            date_parts = date_str.replace(',', '').split()
             found_coords = None
-            for i in range(len(words) - len(date_parts) + 1):
+            # Search for the consecutive words starting from the mapped index (Fix 1)
+            for i in range(start_word_idx, min(start_word_idx + 10, len(words) - len(date_parts) + 1)):
                 if all(words[i + k]['text'].replace(',', '') == date_parts[k]
                        for k in range(len(date_parts))):
                     found_coords = {
@@ -79,14 +99,9 @@ class HighResGlucoseParser:
                     break
 
             if found_coords:
-                if not any(
-                    abs(h['coords']['top'] - found_coords['top']) < 2 and
-                    abs(h['coords']['x0']  - found_coords['x0'])  < 2
-                    for h in raw_headers
-                ):
-                    raw_headers.append({
-                        'date': dt, 'coords': found_coords, 'date_str': date_str
-                    })
+                raw_headers.append({
+                    'date': dt, 'coords': found_coords, 'date_str': date_str
+                })
 
         if not raw_headers:
             return
@@ -117,6 +132,13 @@ class HighResGlucoseParser:
             # if an "AGP" word appeared elsewhere. Add an explicit floor: y_end
             # must be at least 80 pts below y_start (a chart can't be shorter than that).
             y_end = max(min(next_y, agp_stop), y_start + 80)
+
+            # Fix 3: Exclude report header row (AGP section)
+            # Row 0 usually spans > 2000 pts if it's the header misidentified as a chart.
+            if (y_end - y_start) > 500:
+                # console logging to verify
+                print(f"Skipping possible header/AGP row: y={y_start:.0f}-{y_end:.0f} (height={y_end-y_start:.0f})")
+                continue
 
             row_labels = [
                 w for w in words
@@ -204,10 +226,45 @@ class HighResGlucoseParser:
                 var_y = np.var(ys)
 
                 if channel == "glucose":
-                    if var_y > 0.1 and width > 20:
-                        row_glucose_curves.append(c)
+                    row_glucose_curves.append(c)
                 else:
                     row_pivots.append({'type': channel, 'x': np.mean(xs), 'y': np.mean(ys)})
+
+            # Fix 2: Curve concatenation for small glucose segments
+            concatenated_glucose = []
+            if row_glucose_curves:
+                # Sort by x coordinate
+                row_glucose_curves.sort(key=lambda c: min(p[0] for p in c['pts']))
+                
+                # Chain segments together
+                curr_chain = list(row_glucose_curves[0]['pts'])
+                for i in range(1, len(row_glucose_curves)):
+                    prev_x1 = curr_chain[-1][0]
+                    prev_y1 = curr_chain[-1][1]
+                    next_pts = row_glucose_curves[i]['pts']
+                    next_x0 = next_pts[0][0]
+                    next_y0 = next_pts[0][1]
+                    
+                    # If start of next is close to end of current (within 5 pts)
+                    if abs(next_x0 - prev_x1) < 5 and abs(next_y0 - prev_y1) < 5:
+                        curr_chain.extend(next_pts)
+                    else:
+                        # Evaluate completed chain
+                        ch_xs = [p[0] for p in curr_chain]
+                        ch_ys = [p[1] for p in curr_chain]
+                        width = max(ch_xs) - min(ch_xs)
+                        var_y = np.var(ch_ys)
+                        if var_y > 0.1 and width > 20:
+                            concatenated_glucose.append({'pts': curr_chain})
+                        curr_chain = list(next_pts)
+                
+                # final chain
+                ch_xs = [p[0] for p in curr_chain]
+                ch_ys = [p[1] for p in curr_chain]
+                if np.var(ch_ys) > 0.1 and (max(ch_xs) - min(ch_xs)) > 20:
+                    concatenated_glucose.append({'pts': curr_chain})
+            
+            row_glucose_curves = concatenated_glucose
 
             for rect in page.rects:
                 if not (y_start - 30 < rect['top'] < y_end + 60):
@@ -283,9 +340,6 @@ class HighResGlucoseParser:
             print("no data after filtering.")
             return
         df = df.sort_values('timestamp')
-        # Drop readings where glucose > 25 that appear in the first 2 hours (noise/calibration)
-        df = df[~((df['glucose'] > 25) & (df['timestamp'] < df['timestamp'].min() + pd.Timedelta(hours=2)))]
-        
         df.to_csv(output_path, index=False)
         print(f"extracted {len(df)} points → {output_path}")
 
