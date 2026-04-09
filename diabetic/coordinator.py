@@ -8,6 +8,7 @@ from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent
 from diabetic import medical_constants
 from diabetic.ingestion.nightscout import NightscoutClient
 from diabetic.ingestion.cardiac import HeartRateIngestor
+from diabetic.ingestion.weather import WeatherIngestor
 from diabetic.dsp.kalman import GlucoseFilter
 from diabetic.dsp.signal_quality import SignalQuality
 from diabetic.dsp.metabolic_math import MetabolicMath
@@ -18,6 +19,7 @@ from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker
 from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
 from diabetic.ui.cli_hud import RealTimeHUD
 from diabetic.ui.visualizer import MetabolicVisualizer
+from diabetic.ml_engine.metabolic_palace import MetabolicPalace
 from diabetic.utils.audit_logger import AuditLogger
 from diabetic.utils.stateless_push import StatelessPush
 
@@ -33,6 +35,7 @@ class Coordinator:
         self.audit = audit_logger or AuditLogger()
         self.client = NightscoutClient()
         self.hr_client = HeartRateIngestor()
+        self.weather_client = WeatherIngestor()
         self.filter = GlucoseFilter()
 
         # FIX: load XGBoost model if the file exists — previously always passed
@@ -48,6 +51,7 @@ class Coordinator:
         self.twin = DigitalTwin()
         self.visualizer = MetabolicVisualizer(output_dir="charts")
         self.pusher = StatelessPush()
+        self.palace = MetabolicPalace()
 
         self.snapshots: List[MetabolicSnapshot] = []
 
@@ -103,7 +107,8 @@ class Coordinator:
         try:
             tr_task = self.client.fetch_recent_treatments(count=10)
             hr_task = self.hr_client.fetch_latest()
-            results = await asyncio.gather(tr_task, hr_task, return_exceptions=True)
+            we_task = self.weather_client.fetch_current(config.LATITUDE, config.LONGITUDE)
+            results = await asyncio.gather(tr_task, hr_task, we_task, return_exceptions=True)
 
             tr_res = results[0]
             if not isinstance(tr_res, Exception) and isinstance(tr_res, tuple):
@@ -120,6 +125,13 @@ class Coordinator:
             else:
                 self.logger.warning(f"Cardiac ingestion failed: {hr_res}")
                 snapshot.cardiac = None
+            
+            we_res = results[2]
+            if not isinstance(we_res, Exception):
+                snapshot.environment = we_res
+            else:
+                self.logger.warning(f"Weather ingestion failed: {we_res}")
+                snapshot.environment = None
 
         except Exception as e:
             self.logger.warning(f"In-depth ingestion failed: {e}. Falling back to defaults.")
@@ -148,6 +160,16 @@ class Coordinator:
                 task.add_done_callback(self.background_tasks.discard)
 
         self.snapshots.append(snapshot)
+
+        # 6b. Semantic Memory (Layer 4/5)
+        # Trapping anomalies: e.g., high prediction, high value, or HR distress
+        if not is_backfill:
+            if prediction_30m > 16.0 or reading.value > 16.0 or (snapshot.bpm and snapshot.bpm > 110):
+                task = asyncio.create_task(asyncio.to_thread(
+                    self.palace.remember_snapshot, snapshot.model_dump(), room="l4_anomaly_audit"
+                ))
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
 
         if len(self.snapshots) > medical_constants.SNAPSHOT_CAP:
             self.snapshots.pop(0)
