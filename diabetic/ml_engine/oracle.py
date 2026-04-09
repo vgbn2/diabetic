@@ -2,8 +2,8 @@ import numpy as np
 from datetime import datetime, timezone
 from scipy.optimize import curve_fit
 from typing import List, Optional
-from src.shared.core.registry import MetabolicSnapshot
-from src.shared.core import medical_constants as mc
+from diabetic.registry import MetabolicSnapshot
+from diabetic import medical_constants as mc
 
 class BasalOracle:
     """

@@ -1,8 +1,8 @@
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple, Optional
-from src.shared.core.registry import MealEvent, InsulinDose, MetabolicSnapshot
-from src.shared.core import medical_constants as mc
+from diabetic.registry import MealEvent, InsulinDose, MetabolicSnapshot
+from diabetic import medical_constants as mc
 
 class DigitalTwin:
     """
@@ -77,15 +77,49 @@ class DigitalTwin:
             
         return resistance
 
+    def get_environmental_multiplier(self, env: Optional[MetabolicSnapshot]) -> float:
+        """
+        Calculates Layer 2 forcing: How weather and air quality shift ISF/CSF.
+        Formula: Baseline (1.0) + (Heat Shift) + (Pollution Shift)
+        """
+        if not env or not env.environment:
+            return 1.0
+        
+        e = env.environment
+        multiplier = 1.0
+        
+        # 1. Heat-Induced Absorption Shift (ISF up / Resistance down)
+        # Baseline: mc.ENVIRONMENT_TEMP_BASELINE. +10°C -> mc.ENVIRONMENT_Q10_COEFFICIENT boost
+        if e.temperature > mc.ENVIRONMENT_TEMP_BASELINE:
+            heat_delta = e.temperature - mc.ENVIRONMENT_TEMP_BASELINE
+            absorption_boost = (heat_delta / 10.0) * mc.ENVIRONMENT_Q10_COEFFICIENT
+            multiplier -= absorption_boost # Less resistance
+            
+        # 2. Pollution-Induced Inflammation (AQI/PM2.5)
+        # WHO baseline: mc.ENVIRONMENT_AQI_BASELINE. 
+        # Every 10µg/m³ above increases resistance by mc.ENVIRONMENT_POLLUTION_RESISTANCE
+        if e.aqi and e.aqi > mc.ENVIRONMENT_AQI_BASELINE:
+            aqi_delta = e.aqi - mc.ENVIRONMENT_AQI_BASELINE
+            pollution_resistance = (aqi_delta / 10.0) * mc.ENVIRONMENT_POLLUTION_RESISTANCE
+            multiplier += pollution_resistance
+            
+        # 3. Humidity Friction (Heat Stress)
+        if e.humidity > 85.0 and e.temperature > 28.0:
+            multiplier += 0.05 # +5% fixed penalty for high heat index stress
+            
+        return np.clip(multiplier, 0.7, 1.4)
+
     def simulate_carb_impact(self, carbs_g: float, gi_type: str = "STARCH", 
                             resolution_mins: Optional[float] = None,
                             stochastic: bool = False,
-                            timestamp: Optional[datetime] = None) -> np.ndarray:
+                            snapshot: Optional[MetabolicSnapshot] = None) -> np.ndarray:
         if resolution_mins is None:
             resolution_mins = mc.SAMPLING_INTERVAL_MINS
         tau = self.liquid_tau if gi_type.upper() == "LIQUID" else self.starch_tau
         
+        timestamp = snapshot.glucose.timestamp if snapshot else None
         hormonal_mult = self.get_hormonal_multiplier(timestamp) if timestamp else 1.0
+        env_mult = self.get_environmental_multiplier(snapshot) if snapshot else 1.0
 
         if stochastic:
             tau *= np.random.uniform(0.8, 1.2)
@@ -93,19 +127,23 @@ class DigitalTwin:
 
         t = np.arange(0, 240 + resolution_mins, resolution_mins)
         impact = (t / tau) * np.exp(1 - t / tau)
-        total_rise = carbs_g * self.csf * self.regime_multiplier * hormonal_mult
+        # Layer 2 & 3 Synthesis: Behavior * (Physiological + Environmental state)
+        total_rise = carbs_g * self.csf * self.regime_multiplier * hormonal_mult * env_mult
         curve = impact * total_rise
         return curve
 
     def simulate_insulin_impact(self, units: float, insulin_type: str = "RAPID",
                                 resolution_mins: Optional[float] = None,
                                 stochastic: bool = False,
-                                timestamp: Optional[datetime] = None) -> np.ndarray:
+                                snapshot: Optional[MetabolicSnapshot] = None) -> np.ndarray:
         if resolution_mins is None:
             resolution_mins = mc.SAMPLING_INTERVAL_MINS
         
+        timestamp = snapshot.glucose.timestamp if snapshot else None
         hormonal_mult = self.get_hormonal_multiplier(timestamp) if timestamp else 1.0
-        effective_isf = self.isf / hormonal_mult
+        env_mult = self.get_environmental_multiplier(snapshot) if snapshot else 1.0
+        
+        effective_isf = self.isf / (hormonal_mult * env_mult)
 
         duration = mc.INSULIN_ACTION_WINDOW_MINS
         t = np.arange(0, duration + resolution_mins, resolution_mins)
@@ -159,7 +197,7 @@ class DigitalTwin:
                 dt_meal_mins = (latest.glucose.timestamp - meal.timestamp).total_seconds() / 60.0
                 if dt_meal_mins > 240.0: continue
 
-                full_meal_curve = self.simulate_carb_impact(meal.carbs, meal.gi_type, timestamp=meal.timestamp)
+                full_meal_curve = self.simulate_carb_impact(meal.carbs, meal.gi_type, snapshot=latest)
                 start_idx = int(max(0, dt_meal_mins // dt))
                 meal_projection = full_meal_curve[start_idx : start_idx + len(t)]
                 
@@ -173,7 +211,7 @@ class DigitalTwin:
                 dt_insulin_mins = (latest.glucose.timestamp - dose.timestamp).total_seconds() / 60.0
                 if dt_insulin_mins > mc.INSULIN_ACTION_WINDOW_MINS: continue
 
-                full_insulin_curve = self.simulate_insulin_impact(dose.units, dose.type, timestamp=dose.timestamp)
+                full_insulin_curve = self.simulate_insulin_impact(dose.units, dose.type, snapshot=latest)
                 start_idx = int(max(0, dt_insulin_mins // dt))
                 insulin_projection = full_insulin_curve[start_idx : start_idx + len(t)]
 

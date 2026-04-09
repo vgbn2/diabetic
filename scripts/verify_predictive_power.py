@@ -5,7 +5,7 @@ from scipy.signal import correlate
 from pathlib import Path
 
 def verify_predictive_power():
-    path = Path("offline/ingestion/ottai_data/processed/synthetic_glucose_machine_learned.csv")
+    path = Path("storage/data/processed/synthetic_glucose_study.csv")
     if not path.exists():
         print("Error: Dataset not found.")
         return

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 def plot_lag_diagnostic():
-    path = Path("offline/ingestion/ottai_data/processed/synthetic_glucose_machine_learned.csv")
+    path = Path("storage/data/processed/synthetic_glucose_study.csv")
     df = pd.read_csv(path)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     
@@ -23,8 +23,8 @@ def plot_lag_diagnostic():
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    plt.savefig("offline/ingestion/ottai_data/processed/lag_diagnostic.png")
-    print("🖼️ Saved lag diagnostic to offline/ingestion/ottai_data/processed/lag_diagnostic.png")
+    plt.savefig("storage/charts/lag_diagnostic.png")
+    print("🖼️ Saved lag diagnostic to storage/charts/lag_diagnostic.png")
 
 if __name__ == "__main__":
     plot_lag_diagnostic()

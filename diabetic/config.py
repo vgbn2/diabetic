@@ -2,12 +2,14 @@ import os
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict
-from src.shared.core import medical_constants
+from diabetic import medical_constants
 
 class Settings(BaseSettings):
     # Core Medical APIs
     NIGHTSCOUT_URL: str = ""
     API_SECRET: str = ""
+    OPENWEATHER_API_KEY: str = ""
+    WEATHER_MOCK_MODE: bool = True
     
     # Alerting (Telegram)
     TELEGRAM_TOKEN: str = Field("", validation_alias="TELEGRAM_BOT_TOKEN")

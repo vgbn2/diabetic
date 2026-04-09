@@ -1,9 +1,9 @@
 import numpy as np
 import xgboost as xgb
 from typing import List, Optional
-from src.shared.core.registry import MetabolicSnapshot
-from src.shared.dsp.metabolic_math import MetabolicMath
-from src.shared.core import medical_constants
+from diabetic.registry import MetabolicSnapshot
+from diabetic.dsp.metabolic_math import MetabolicMath
+from diabetic import medical_constants
 
 class GlucoseForecaster:
     """
@@ -118,7 +118,7 @@ class GlucoseForecaster:
 
 if __name__ == "__main__":
     from datetime import datetime, timezone
-    from src.shared.core.registry import GlucoseReading
+    from diabetic.registry import GlucoseReading
 
     forecaster = GlucoseForecaster()
     snap = MetabolicSnapshot(

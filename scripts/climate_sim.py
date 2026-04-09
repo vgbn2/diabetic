@@ -4,12 +4,13 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
-from src.shared.ml.twin import DigitalTwin
-from src.shared.ml.predictor import GlucoseForecaster
-from src.shared.ml.oracle import BasalOracle
-from src.shared.core.registry import MetabolicSnapshot, GlucoseReading, CardiacReading, ProbabilisticForecast, MealEvent, InsulinDose
-from src.shared.dsp.kalman import GlucoseFilter
-from src.shared.core import medical_constants as mc
+from diabetic.ml_engine.twin import DigitalTwin
+from diabetic.ml_engine.predictor import GlucoseForecaster
+from diabetic.ml_engine.oracle import BasalOracle
+from diabetic.registry import MetabolicSnapshot, GlucoseReading, CardiacReading, ProbabilisticForecast, MealEvent, InsulinDose
+from diabetic.ingestion.weather import WeatherIngestor
+from diabetic.dsp.kalman import GlucoseFilter
+from diabetic import medical_constants as mc
 
 class OrnsteinUhlenbeckNoise:
     def __init__(self, dt, theta=0.15, sigma=0.2, mu=0.0):
@@ -24,13 +25,13 @@ class OrnsteinUhlenbeckNoise:
         self.x += dx
         return self.x
 
-from src.shared.weather.fetcher import WeatherFetcher
+# Weather section restored via WeatherIngestor
 
-def run_climate_aware_simulation():
+async def run_climate_aware_simulation():
     print(" Generating Climatological Metabolic Forecast (5-Day Confidence)")
 
     # 1. CORE ENGINES
-    from src.shared.core.config import config
+    from diabetic.config import config
     twin = DigitalTwin(isf=mc.INSULIN_SENSITIVITY_DEFAULT, 
                        csf=mc.CARB_SENSITIVITY_DEFAULT,
                        gender=config.PATIENT_GENDER)
@@ -42,9 +43,21 @@ def run_climate_aware_simulation():
     
     g_filter = GlucoseFilter(dt=mc.SAMPLING_INTERVAL_MINS)
 
-    # 2. ENVIRONMENTAL FORCING (5-DAY)
-    fetcher = WeatherFetcher()
-    df_env = fetcher.fetch_forecast(days=5)
+    # 2. WEATHER FETCHING (Layer 2)
+    ingestor = WeatherIngestor()
+    forecasts = await ingestor.fetch_forecast_5d(config.LATITUDE, config.LONGITUDE)
+    
+    # Bridge Pydantic models to DataFrame for simulation math
+    weather_data = []
+    for f in forecasts:
+        weather_data.append({
+            'time': f.timestamp,
+            'temperature_2m': f.temperature,
+            'humidity': f.humidity,
+            'pm2_5': f.aqi if f.aqi else 15.0
+        })
+    
+    df_env = pd.DataFrame(weather_data)
     if df_env.empty:
         print("[ERROR] Weather forecast unavailable. Aborting.")
         return
@@ -208,4 +221,5 @@ def run_climate_aware_simulation():
     print(f"✅ Climatological Simulation Complete. Path: {forensic_path}")
 
 if __name__ == "__main__":
-    run_climate_aware_simulation()
+    import asyncio
+    asyncio.run(run_climate_aware_simulation())
