@@ -9,3 +9,4 @@ httpx>=0.24.0
 motor>=3.2.0
 rich>=13.0.0
 bleak>=0.21.0
+torch>=2.0.0
