@@ -1,0 +1,65 @@
+wing: hyperglycemia_faint_predictor
+rooms:
+- name: data
+  description: Files from data/
+  keywords:
+  - data
+  - data
+- name: diabetic
+  description: Files from diabetic/
+  keywords:
+  - diabetic
+  - diabetic
+- name: mempalace
+  description: Files from mempalace/
+  keywords:
+  - mempalace
+  - mempalace
+- name: ops
+  description: Files from ops/
+  keywords:
+  - ops
+  - ops
+- name: scripts
+  description: Files from scripts/
+  keywords:
+  - scripts
+  - scripts
+- name: storage
+  description: Files from storage/
+  keywords:
+  - storage
+  - storage
+- name: tmp
+  description: Files from tmp/
+  keywords:
+  - tmp
+  - tmp
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: testing
+  description: Files from test/
+  keywords:
+  - testing
+  - test
+- name: frontend
+  description: Files from ui/
+  keywords:
+  - frontend
+  - ui
+- name: design
+  description: Files from assets/
+  keywords:
+  - design
+  - assets
+- name: backend
+  description: Files from models/
+  keywords:
+  - backend
+  - models
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []
