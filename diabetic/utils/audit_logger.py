@@ -7,6 +7,7 @@ from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
+from diabetic.ml_engine.metabolic_palace import MetabolicPalace
 
 class AuditLogger:
     """
@@ -20,6 +21,7 @@ class AuditLogger:
         self.db = None
         self.collection = None
         self.logger = logging.getLogger("Bio-Quant.Audit")
+        self.palace = MetabolicPalace()
 
         # Initialize MongoDB (connect if URI provided)
         if self.uri:
@@ -106,6 +108,21 @@ class AuditLogger:
                 await asyncio.to_thread(_write_db)
             except Exception as e:
                 self.logger.error(f"Failed to persist log to SQLite: {e}")
+
+        # Semantic Indexing (Layer 4/5 Trigger)
+        if level in ["WARNING", "ERROR"] or event_type in ["USER_FEEDBACK", "REGIME_SHIFT"]:
+            try:
+                task = asyncio.create_task(asyncio.to_thread(
+                    self.palace.remember_snapshot, {
+                        "event_type": event_type,
+                        "timestamp": timestamp.isoformat(),
+                        "level": level,
+                        **data
+                    }, 
+                    room="l4_anomaly_audit" if level != "INFO" else "l5_user_feedback"
+                ))
+            except Exception as e:
+                self.logger.error(f"Failed to semantically index event: {e}")
 
     async def log_reading(self, reading: GlucoseReading):
         """Persists a raw glucose reading for long-term audit (Task 7.1.7)."""
