@@ -1,0 +1,42 @@
+{
+  "project_name": "hyperglycemia_faint_predictor",
+  "rooms": [
+    {
+      "name": "l1_sensor_drift",
+      "description": "Layer 1: Raw data artifacts, noise, and Kalman filter residuals.",
+      "keywords": ["noise", "drift", "signal", "kalman"]
+    },
+    {
+      "name": "l2_climate_forcing",
+      "description": "Layer 2: Environmental events and their correlation with metabolic shift.",
+      "keywords": ["aqi", "humidity", "temperature", "heat", "pollution"]
+    },
+    {
+      "name": "l3_kinematic_forecast",
+      "description": "Layer 3: Behavioral predictions and glucose trajectory anomalies.",
+      "keywords": ["prediction", "forecast", "kinematics", "residual"]
+    },
+    {
+      "name": "l4_anomaly_audit",
+      "description": "Layer 4: High-risk episodes and faint events with full context.",
+      "keywords": ["faint", "dizzy", "audit", "critical", "hypo", "hyper"]
+    },
+    {
+      "name": "l5_user_feedback",
+      "description": "Layer 5: Qualitative interaction and RLHF feedback.",
+      "keywords": ["feedback", "interaction", "user", "symptom"]
+    }
+  ],
+  "metabolic_aaak_spec": {
+    "abbreviations": {
+      "glucose": "G",
+      "heart_rate": "HR",
+      "hrv": "V",
+      "acceleration": "ACC",
+      "prediction": "P",
+      "residual": "R",
+      "faint_risk": "FR",
+      "timestamp": "T"
+    }
+  }
+}
