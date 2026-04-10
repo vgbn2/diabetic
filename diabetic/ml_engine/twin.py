@@ -12,10 +12,10 @@ class DigitalTwin:
     """
     def __init__(self, csf: float = mc.CARB_SENSITIVITY_DEFAULT,
                  isf: float = mc.INSULIN_SENSITIVITY_DEFAULT,
-                 gender: str = "MALE",
+                 gender: str = "FEMALE",
                  age: int = 30,
-                 weight_kg: float = 75.0,
-                 height_cm: float = 175.0,
+                 weight_kg: float = 45.0,
+                 height_cm: float = 158.0,
                  ethnicity: str = "ASIAN",
                  nationality: str = "VIETNAMESE",
                  religion: str = "NON_RELIGIOUS",

@@ -48,7 +48,17 @@ def calibrate_scale(
     for w in candidates:
         val = int(w["text"])
         y_map.setdefault(val, []).append(w["top"])
-    averaged = {v: float(np.mean(ys)) for v, ys in y_map.items()}
+    
+    # Clustering: if a page has 4 rows, we'll see multiple labels for '10'.
+    # Pick the one closest to y_start for this specific row.
+    averaged = {}
+    for val, ys in y_map.items():
+        relevant = [y for y in ys if y_start - 20 < y < y_start + 200]
+        if relevant:
+            averaged[val] = float(np.mean(relevant))
+        elif ys:
+            # Fallback to absolute closest if nothing in range
+            averaged[val] = float(ys[np.argmin(np.abs(np.array(ys) - y_start))])
 
     if 0 in averaged and 10 in averaged:
         ppm = (averaged[0] - averaged[10]) / 10.0

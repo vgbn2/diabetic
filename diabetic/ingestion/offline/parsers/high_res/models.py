@@ -4,8 +4,10 @@ All engines communicate through these typed dicts/dataclasses.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
+import pandas as pd
+import numpy as np
 
 
 # -----------------------------------------------------------------
@@ -68,25 +70,17 @@ class DayCell:
     events: List[EventMarker] = field(default_factory=list)
 
     def to_records(self) -> list:
-        """Flatten into a list of row dicts for DataFrame construction."""
-        from datetime import timedelta
-        import numpy as np
+        """Flatten into a list of raw row dicts. Fine aggregation happens at Orchestrator level."""
         records = []
-        seen_minutes: set = set()
-
         for curve in self.glucose_curves:
             for px, py in curve.pts:
                 if not (self.time_anchor.left_x - 3 <= px <= self.time_anchor.right_x + 3):
                     continue
-                minutes = self.time_anchor.x_to_minutes(px)
                 glucose = (self.scale.zero_y - py) / max(0.01, self.scale.pts_per_mmol)
                 if not (0.5 < glucose < 40.0):
                     continue
-                # Round to nearest 0.5-minute bucket to deduplicate
-                bucket = round(minutes * 2) / 2
-                if bucket in seen_minutes:
-                    continue
-                seen_minutes.add(bucket)
+                
+                minutes = self.time_anchor.x_to_minutes(px)
                 ts = self.date + timedelta(minutes=minutes)
                 records.append({
                     "timestamp": ts,
@@ -95,8 +89,6 @@ class DayCell:
                 })
 
         for ev in self.events:
-            if not (self.time_anchor.left_x - 3 <= ev.x <= self.time_anchor.right_x + 3):
-                continue
             minutes = self.time_anchor.x_to_minutes(ev.x)
             ts = self.date + timedelta(minutes=minutes)
             row = {"timestamp": ts, "glucose": float("nan"),
@@ -104,4 +96,6 @@ class DayCell:
             row[ev.type] = 1
             records.append(row)
 
-        return records
+        if not records: return []
+        df = pd.DataFrame(records).sort_values("timestamp")
+        return df.to_dict("records")

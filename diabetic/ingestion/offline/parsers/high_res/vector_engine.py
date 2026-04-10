@@ -53,19 +53,21 @@ def _classify_channel(obj: dict) -> str:
     if (bc > 0.8 and gc > 0.3 and rc < 0.4) or (bc > 0.9 and rc > 0.8):
         return "glucose"
 
-    # Palette matching
+    # Palette matching (ONLY include variants that are confirmed to be glucose)
+    # Avoid red/orange if they overlap with event colors too much.
     for ref in _CH_GLUCOSE_RGB:
-        if (abs(rc - ref[0]) < _MATCH_TOL
-                and abs(gc - ref[1]) < _MATCH_TOL
-                and abs(bc - ref[2]) < _MATCH_TOL):
+        if (abs(rc - ref[0]) < 0.03
+                and abs(gc - ref[1]) < 0.03
+                and abs(bc - ref[2]) < 0.03):
             return "glucose"
 
-    if gc > 0.45 and rc < 0.4 and bc < 0.5:
+    # More specific event colors
+    if rc > 0.8 and gc < 0.4 and bc > 0.5: # Purple-ish
         return "bolus"
-    if rc > 0.4 and bc > 0.4 and gc < 0.5:
-        return "basal"
-    if rc > 0.7 and gc > 0.6 and bc < 0.5:
+    if rc > 0.8 and gc > 0.6 and bc < 0.4: # Orange-ish
         return "meal"
+    if bc > 0.4 and rc < 0.3 and gc < 0.5: # Blue-grey
+        return "basal"
 
     return "unknown"
 
@@ -140,23 +142,39 @@ def _concatenate_segments(
 ) -> List[GlucoseCurve]:
     """
     Merge adjacent glucose segments into continuous curves.
-
-    `gap_tol`  — max distance (pts) between end of one segment and start of next.
-    `min_width` — minimum X span for a curve to be accepted (filters stray dots).
+    Rejects segments that are too vertical (likely grid lines) or cause
+    implausible glucose jumps.
     """
     if not segs:
         return []
 
-    segs.sort(key=lambda s: min(p[0] for p in s["pts"]))
+    # Filter out vertical-dominant segments (grid lines)
+    filtered = []
+    for s in segs:
+        pts = s["pts"]
+        dx = abs(pts[-1][0] - pts[0][0])
+        dy = abs(pts[-1][1] - pts[0][1])
+        # A glucose curve can't be vertical. Grid lines are.
+        # Max physiological slope is ~2 mmol/L per min. 
+        # In PDF points, if dy > 10*dx, it's definitely a grid line or bracket.
+        if dx > 0.2 and (dy / max(0.01, dx)) < 10.0:
+            filtered.append(s)
+    
+    if not filtered: return []
+    filtered.sort(key=lambda s: min(p[0] for p in s["pts"]))
 
     chains: List[List[Tuple[float, float]]] = []
-    curr = list(segs[0]["pts"])
+    curr = list(filtered[0]["pts"])
 
-    for seg in segs[1:]:
+    for seg in filtered[1:]:
         nxt = seg["pts"]
         dx = abs(nxt[0][0] - curr[-1][0])
         dy = abs(nxt[0][1] - curr[-1][1])
-        if dx < gap_tol and dy < gap_tol:
+        
+        # Sawtooth prevention: don't join if Y-jump is too large relative to X
+        # Physiological limit: max ~1 mmol/L per minute. 
+        # In PDF terms: if dy >> dx, it's a jump.
+        if dx < gap_tol and dy < (gap_tol * 3): 
             curr.extend(nxt)
         else:
             chains.append(curr)
