@@ -5,6 +5,8 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 import re
+from diabetic.ingestion.offline.vision_parser.render_engine import PDFRenderer
+from diabetic.ingestion.offline.vision_parser.icon_detector import IconDetector
 
 VN_MONTH = {
     "Th01": 1, "Th1": 1, "thg 1": 1,
@@ -37,20 +39,53 @@ def parse_vn_date(text: str) -> datetime:
 
 class HighResGlucoseParser:
     def __init__(self, pdf_path):
-        self.pdf_path   = Path(pdf_path)
+        self.pdf_path    = Path(pdf_path)
         self.data_points = []
+        self._renderer   = None
+        self._detector   = IconDetector()
+
+    def _crop_safe(self, bbox):
+        """Clamps a bounding box to be strictly within the current page boundaries."""
+        px0, py0, px1, py1 = self.page.bbox
+        x0, y0, x1, y1 = bbox
+        return (
+            max(px0, min(px1, x0)),
+            max(py0, min(py1, y0)),
+            max(px0, min(px1, x1)),
+            max(py0, min(py1, y1))
+        )
 
     def parse(self):
-        print(f"parsing: {self.pdf_path.name}")
+        # 1. Automated Normalization for Share reports
+        active_path = self.pdf_path
         with pdfplumber.open(self.pdf_path) as pdf:
-            for page in pdf.pages:
-                self._process_page(page)
+            if len(pdf.pages) == 1 and pdf.pages[0].height > 2000:
+                print(f"Detected Ottai Share format. Attempting automated normalization...")
+                try:
+                    from diabetic.ingestion.offline.normalize_ottai_share import normalize_share_report
+                    norm_path = normalize_share_report(self.pdf_path)
+                    if norm_path and norm_path.exists():
+                        active_path = norm_path
+                        print(f"Normalization successful. Switched to: {active_path.name}")
+                except ImportError:
+                    print("ERROR: normalize_ottai_share.py not found. Cannot parse large Share PDF.")
+                    return []
+
+        print(f"parsing: {active_path.name}")
+        self._renderer = PDFRenderer(active_path)
+        
+        with pdfplumber.open(active_path) as pdf:
+            for i, page in enumerate(pdf.pages):
+                self._process_page(page, i)
         return self.data_points
 
-    def _process_page(self, page):
-        text   = page.extract_text() or ""
-        words  = page.extract_words()
-        curves = page.curves
+    def _process_page(self, page_obj, page_idx):
+        # Use a strict bounding box to localize coordinates and prevent ghosting
+        self.page = page_obj.within_bbox(page_obj.cropbox)
+        
+        text   = self.page.extract_text() or ""
+        words  = self.page.extract_words()
+        curves = self.page.curves
 
         year_match  = re.search(r"\b(202\d)\b", text)
         global_year = int(year_match.group(1)) if year_match else datetime.now().year
@@ -122,10 +157,10 @@ class HighResGlucoseParser:
 
             y_start   = row_headers[0]['coords']['top']
             next_y    = (rows[row_idx + 1][0]['coords']['top']
-                         if row_idx + 1 < len(rows) else page.height)
+                         if row_idx + 1 < len(rows) else self.page.height)
 
             agp_words = [w for w in words if "AGP" in w['text'] and w['top'] > y_start]
-            agp_stop  = min(w['top'] for w in agp_words) - 5 if agp_words else page.height
+            agp_stop  = min(w['top'] for w in agp_words) - 5 if agp_words else self.page.bbox[3]
 
             # FIX 1: the original y_end clipped the last row on a page too tightly
             # because next_y == page.height and agp_stop could be very small
@@ -134,18 +169,27 @@ class HighResGlucoseParser:
             y_end = max(min(next_y, agp_stop), y_start + 80)
 
             # Fix 3: Exclude report header row (AGP section)
-            # Row 0 usually spans > 2000 pts if it's the header misidentified as a chart.
-            if (y_end - y_start) > 500:
-                # console logging to verify
+            # Row 0 usually spans > 2000 pts in Share format if misidentified.
+            # Normal A4 charts are usually 250-400 pts high.
+            if (y_end - y_start) > 2000:
                 print(f"Skipping possible header/AGP row: y={y_start:.0f}-{y_end:.0f} (height={y_end-y_start:.0f})")
                 continue
 
+            # Local Scale Search first
             row_labels = [
                 w for w in words
                 if y_start < w['top'] < y_end
                 and w['text'] in ['0', '10', '30']
                 and w['x0'] < 100
             ]
+
+            # Global Scale Scanner Fallback for sparse reports
+            if not row_labels:
+                x0, y0, x1, y1 = self.page.bbox
+                # Scan full width for labels
+                search_box = self._crop_safe((x0, y0, x1, y1))
+                all_page_labels = self.page.within_bbox(search_box).extract_words()
+                row_labels = [w for w in all_page_labels if w['text'] in ['0', '10', '30']]
 
             y_map = {}
             for lbl in row_labels:
@@ -160,11 +204,25 @@ class HighResGlucoseParser:
             elif 10 in y_map and 30 in y_map:
                 pts_per_mmol = (y_map[10] - y_map[30]) / 20.0
                 zero_y       = y_map[10] + 10.0 * pts_per_mmol
+            elif 0 in y_map and 30 in y_map:
+                pts_per_mmol = (y_map[0] - y_map[30]) / 30.0
+                zero_y       = y_map[0]
+            elif 10 in y_map:
+                pts_per_mmol = 1.38 # Best guess for standard scale
+                zero_y       = y_map[10] + 10.0 * pts_per_mmol
+            elif 0 in y_map:
+                pts_per_mmol = 1.38
+                zero_y       = y_map[0]
+            elif 30 in y_map:
+                pts_per_mmol = 1.38
+                zero_y       = y_map[30] + 30.0 * pts_per_mmol
             else:
-                if not row_labels:
+                if not y_map:
                     continue
                 pts_per_mmol = 1.38
-                zero_y       = y_start + 50
+                # Fallback zero_y should be near the bottom of a standard chart area
+                # if nothing else is found.
+                zero_y = y_start + (y_end - y_start) * 0.8 
 
             CH_GLUCOSE_RGB = [
                 (0.2314, 0.4706, 1.0),
@@ -190,6 +248,10 @@ class HighResGlucoseParser:
                     return "unknown"
 
                 rc, gc, bc = color[:3]
+                # Glucose Blue variants
+                if (bc > 0.8 and gc > 0.3 and rc < 0.4) or (bc > 0.9 and rc > 0.8):
+                    return "glucose"
+                
                 for ref in CH_GLUCOSE_RGB:
                     if abs(rc - ref[0]) < 0.05 and abs(gc - ref[1]) < 0.05 and abs(bc - ref[2]) < 0.05:
                         return "glucose"
@@ -202,18 +264,24 @@ class HighResGlucoseParser:
             row_glucose_curves = []
             row_pivots         = []
 
-            for c in curves:
-                pts = c.get('pts', [])
+            # Gather all vector objects (curves and lines)
+            all_vectors = curves + self.page.lines
+
+            for c in all_vectors:
+                # Normalize lines into pts structure
+                if 'pts' in c:
+                    pts = c['pts']
+                else:
+                    pts = [(c['x0'], c['top']), (c['x1'], c['bottom'])]
+                    c['pts'] = pts
+                
                 if not pts:
                     continue
+                
+                # Slicing Filter: Process curve if any part is within the row's vertical range
                 ys_all = [p[1] for p in pts]
-                c_top  = min(ys_all)
-                c_bot  = max(ys_all)
-                # FIX 2: widen the vertical search band for the last row on a page —
-                # use +60 instead of +40 on the bottom so curves that bleed slightly
-                # past y_end are still captured.
-                if not (y_start - 30 < c_top < y_end + 60 or
-                        y_start - 30 < c_bot < y_end + 60):
+                c_top, c_bot = min(ys_all), max(ys_all)
+                if c_bot < y_start - 5 or c_top > y_end + 5:
                     continue
 
                 channel = get_metabolic_channel(c)
@@ -221,7 +289,7 @@ class HighResGlucoseParser:
                     continue
 
                 xs    = [p[0] for p in pts]
-                ys    = ys_all
+                ys    = [p[1] for p in pts]
                 width = max(xs) - min(xs)
                 var_y = np.var(ys)
 
@@ -229,6 +297,29 @@ class HighResGlucoseParser:
                     row_glucose_curves.append(c)
                 else:
                     row_pivots.append({'type': channel, 'x': np.mean(xs), 'y': np.mean(ys)})
+
+            # --- Vision Extraction Integration ---
+            # Render page and detect icons that vector engine might miss
+            try:
+                img_bgr = self._renderer.render_page(page_idx)
+                masks = self._renderer.generate_masks(img_bgr)
+                
+                # Detect and sync coordinates (Divide by 8.0 for 576 DPI -> 72 DPI points)
+                for cX, cY in self._detector.detect_centroids(masks["syringe"]):
+                    ptX, ptY = cX / 8.0, cY / 8.0
+                    if y_start - 30 < ptY < y_end + 60:
+                        # Deduplicate against vector engine bolus/basal
+                        if not any(abs(p['x'] - ptX) < 10 and abs(p['y'] - ptY) < 10 for p in row_pivots):
+                            row_pivots.append({'type': 'bolus', 'x': ptX, 'y': ptY})
+                
+                for cX, cY in self._detector.detect_centroids(masks["meal"]):
+                    ptX, ptY = cX / 8.0, cY / 8.0
+                    if y_start - 30 < ptY < y_end + 60:
+                        if not any(abs(p['x'] - ptX) < 10 and abs(p['y'] - ptY) < 10 for p in row_pivots):
+                            row_pivots.append({'type': 'meal', 'x': ptX, 'y': ptY})
+                            
+            except Exception as e:
+                print(f"Vision engine warning on page {page_idx}: {e}")
 
             # Fix 2: Curve concatenation for small glucose segments
             concatenated_glucose = []
@@ -266,7 +357,7 @@ class HighResGlucoseParser:
             
             row_glucose_curves = concatenated_glucose
 
-            for rect in page.rects:
+            for rect in self.page.rects:
                 if not (y_start - 30 < rect['top'] < y_end + 60):
                     continue
                 channel = get_metabolic_channel(rect)
@@ -280,7 +371,7 @@ class HighResGlucoseParser:
             for col_idx, header in enumerate(row_headers):
                 x_start      = max(0, header['coords']['x0'] - 10)
                 x_next_start = (row_headers[col_idx + 1]['coords']['x0']
-                                if col_idx + 1 < len(row_headers) else page.width)
+                                if col_idx + 1 < len(row_headers) else self.page.width)
                 x_end        = x_next_start - 5
 
                 cell_time_labels = [
@@ -291,12 +382,10 @@ class HighResGlucoseParser:
                 ]
 
                 if not cell_time_labels:
-                    left_x  = header['coords']['x0']
-                    # FIX 3: for a single-column row (one day on the page), the
-                    # fallback right_x of x0+50 was far too narrow — the chart
-                    # could span hundreds of pts. Use x_end as the right boundary
-                    # when there are no time labels instead.
-                    right_x = x_end
+                    # FALLBACK for single-column or sparse reports:
+                    # Use a wider margin to catch the chart start/end
+                    left_x  = 50 
+                    right_x = x_end - 20
                 else:
                     left_x  = min(w['x0'] for w in cell_time_labels)
                     right_x = max(w['x1'] for w in cell_time_labels)
@@ -309,6 +398,8 @@ class HighResGlucoseParser:
                             rel_x         = (px - left_x) / max(1, right_x - left_x)
                             total_minutes = max(0.0, min(1439.99, rel_x * 1440))
                             glucose       = (zero_y - py) / pts_per_mmol
+                            if i < 10 and page_idx == 0:
+                                print(f"DEBUG POINT: x={px:.1f}, y={py:.1f}, zero={zero_y:.1f}, glu={glucose:.2f}")
                             if 0.5 < glucose < 40.0:
                                 ts = header['date'] + timedelta(minutes=total_minutes)
                                 day_data.append({
@@ -339,9 +430,13 @@ class HighResGlucoseParser:
         if df.empty:
             print("no data after filtering.")
             return
-        df = df.sort_values('timestamp')
+            
+        # Deduplication: Remove exact duplicate rows and sort chronologically
+        initial_len = len(df)
+        df = df.drop_duplicates().sort_values('timestamp')
+        
         df.to_csv(output_path, index=False)
-        print(f"extracted {len(df)} points → {output_path}")
+        print(f"extracted {len(df)} points (cleaned {initial_len - len(df)} duplicates) -> {output_path}")
 
 
 if __name__ == "__main__":
