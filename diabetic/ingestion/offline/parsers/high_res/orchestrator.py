@@ -183,7 +183,7 @@ class HighResParser:
                 continue # Not a primary glucose chart
 
             row_bbox = RowBBox(y_start=y_start, y_end=y_end, page_idx=page_idx)
-            scale = calibrate_scale(words, y_start, y_end, page.width)
+            scale = calibrate_scale(words, lines, y_start, y_end, page.width)
             if scale is None: continue
 
             gl_curves, vec_events = extract_row_vectors(page, row_bbox)

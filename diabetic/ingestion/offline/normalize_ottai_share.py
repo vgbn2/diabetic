@@ -16,41 +16,49 @@ def normalize_share_report(pdf_path, output_path=None):
         words = page.extract_words()
         
         daily_log_y = 0
+        # More robust keywords for start of logs
+        keywords = ["Nhật", "ký", "Báo", "cáo", "Thứ", "Ngày"]
         for i, word in enumerate(words):
-            if "Nhật" in word['text'] and i+1 < len(words) and "ký" in words[i+1]['text']:
-                daily_log_y = word['top'] - 15
+            if any(k in word['text'] for k in keywords):
+                daily_log_y = max(0, word['top'] - 50)
                 break
         
         raw_headers = []
-        for i in range(len(words)-2):
-            text = f"{words[i]['text']} {words[i+1]['text']} {words[i+2]['text']}"
-            if ',' in text and any(year in text for year in ['2024', '2025', '2026']):
-                y = words[i]['top']
-                if y >= daily_log_y:
-                    raw_headers.append(y)
+        # Pattern: "Thứ X, dd ThXX 20XX" or similar
+        for i in range(len(words)-1):
+            w1 = words[i]['text']
+            w2 = words[i+1]['text']
+            # Look for years or months with commas
+            if (',' in w1 or ',' in w2) and any(y in (w1+w2) for y in ['2023','2024', '2025', '2026']):
+                raw_headers.append(words[i]['top'])
+            # Look for Vietnamese date markers
+            if "Th" in w1 and any(y in w2 for y in ['2023','2024', '2025', '2026']):
+                raw_headers.append(words[i]['top'])
         
         raw_headers.sort()
         deduped_headers = []
         if raw_headers:
             deduped_headers.append(raw_headers[0])
             for h in raw_headers[1:]:
-                if h - deduped_headers[-1] > 50:
+                if h - deduped_headers[-1] > 300: # charts are roughly 350-450 pts tall
                     deduped_headers.append(h)
         
         split_points = [0]
-        if deduped_headers:
-            split_points.append(deduped_headers[0] - 5)
-            for i in range(len(deduped_headers)-1):
-                split_points.append(deduped_headers[i+1] - 5)
+        if len(deduped_headers) > 1:
+            # Use headers as split points
+            for h in deduped_headers:
+                split_points.append(h - 10)
             split_points.append(full_height)
         else:
-            print(f"  Warning: No headers detected in log section. Using layout fallback.")
-            if daily_log_y > 0:
-                split_points.append(daily_log_y)
+            # FALLBACK: Fixed height splitting for long 'Share' pages
+            print(f"  Warning: Insufficient headers for {pdf_path.name}. Using fixed-height geometry.")
+            current_y = daily_log_y if daily_log_y > 0 else 0
+            if current_y > 100: split_points.append(current_y)
             
-            current_y = split_points[-1]
+            # Standard Ottai charts are ~420pts tall. 
+            # We split every 421pts to avoid cutting through the middle of a row.
             while current_y < full_height:
-                current_y += 842 
+                current_y += 421 
                 split_points.append(min(current_y, full_height))
 
     reader = PdfReader(pdf_path)

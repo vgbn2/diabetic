@@ -38,9 +38,16 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
     for i in range(num_panels):
         window_end    = window_start + pd.Timedelta(days=5)
         segment_data  = df[(df['timestamp'] >= window_start) & (df['timestamp'] < window_end)]
+        
+        # Clamp label to actual data bounds to avoid "phantom" future dates
+        actual_end    = min(window_end - pd.Timedelta(seconds=1), latest)
         d_start       = window_start.strftime('%b %d')
-        d_end         = (window_end - pd.Timedelta(seconds=1)).strftime('%b %d')
+        d_end         = actual_end.strftime('%b %d')
+        
         title         = f"Metabolic Dynamics: {d_start} – {d_end}"
+        if d_start == d_end:
+            title = f"Metabolic Dynamics: {d_start} (Summary)"
+            
         plot_segments.append((axes[i], segment_data, title))
         window_start  = window_end
 

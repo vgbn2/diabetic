@@ -21,6 +21,7 @@ from .models import ScaleAnchor, TemporalAnchor
 
 def calibrate_scale(
     words: list,
+    lines: list,
     y_start: float,
     y_end: float,
     page_width: float,
@@ -61,33 +62,31 @@ def calibrate_scale(
             averaged[val] = float(ys[np.argmin(np.abs(np.array(ys) - y_start))])
 
     if 0 in averaged and 10 in averaged:
-        ppm = (averaged[0] - averaged[10]) / 10.0
-        return ScaleAnchor(zero_y=averaged[0], pts_per_mmol=ppm,
-                           source="labels" if local else "global_labels")
+        v0, v10 = averaged[0], averaged[10]
+        # BINGO: Grid Snapping Logic
+        # Text is usually ~4.05 pts above the actual grid line in some Ottai reports.
+        # We find the nearest horizontal vector line within 6pts of the text.
+        grid_0 = [l for l in lines if abs(l.get('top', 0) - v0) < 6.0 and abs(l.get('top', 0) - l.get('bottom', 0)) < 0.2]
+        grid_10 = [l for l in lines if abs(l.get('top', 0) - v10) < 6.0 and abs(l.get('top', 0) - l.get('bottom', 0)) < 0.2]
+        
+        y0 = grid_0[0]['top'] if grid_0 else v0
+        y10 = grid_10[0]['top'] if grid_10 else v10
+        
+        ppm = (y0 - y10) / 10.0
+        return ScaleAnchor(zero_y=y0, pts_per_mmol=ppm,
+                           source="grid_labels" if grid_0 else "text_labels")
 
     if 10 in averaged and 30 in averaged:
-        ppm = (averaged[10] - averaged[30]) / 20.0
-        return ScaleAnchor(zero_y=averaged[10] + 10.0 * ppm, pts_per_mmol=ppm,
-                           source="labels" if local else "global_labels")
-
-    if 0 in averaged and 30 in averaged:
-        ppm = (averaged[0] - averaged[30]) / 30.0
-        return ScaleAnchor(zero_y=averaged[0], pts_per_mmol=ppm,
-                           source="partial_labels")
-
-    # Single-point anchors (need assumed ppm)
-    PPM_DEFAULT = 1.38   # pts per mmol on standard Ottai layout
-    if 10 in averaged:
-        return ScaleAnchor(
-            zero_y=averaged[10] + 10.0 * PPM_DEFAULT, pts_per_mmol=PPM_DEFAULT,
-            source="single_label")
-    if 0 in averaged:
-        return ScaleAnchor(zero_y=averaged[0], pts_per_mmol=PPM_DEFAULT,
-                           source="single_label")
-    if 30 in averaged:
-        return ScaleAnchor(
-            zero_y=averaged[30] + 30.0 * PPM_DEFAULT, pts_per_mmol=PPM_DEFAULT,
-            source="single_label")
+        v10, v30 = averaged[10], averaged[30]
+        grid_10 = [l for l in lines if abs(l.get('top', 0) - v10) < 6.0 and abs(l.get('top', 0) - l.get('bottom', 0)) < 0.2]
+        grid_30 = [l for l in lines if abs(l.get('top', 0) - v30) < 6.0 and abs(l.get('top', 0) - l.get('bottom', 0)) < 0.2]
+        
+        y10 = grid_10[0]['top'] if grid_10 else v10
+        y30 = grid_30[0]['top'] if grid_30 else v30
+        
+        ppm = (y10 - y30) / 20.0
+        return ScaleAnchor(zero_y=y10 + 10.0 * ppm, pts_per_mmol=ppm,
+                           source="grid_labels" if grid_10 else "text_labels")
 
     # Complete fallback — geometric estimate
     chart_height = max(1.0, y_end - y_start)
