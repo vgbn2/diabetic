@@ -223,8 +223,8 @@ class HighResParser:
         # If we have a _prev_date and there are curves ABOVE the first header,
         # recover them as a continuation of the previous day.
         first_header_y = rows[0][0]["coords"]["top"]
-        if self._prev_date and first_header_y > 50:
-            # There's meaningful space above the first header — check for curves
+        if self._prev_date and first_header_y > 10:
+            # Relaxed threshold: recover orphans even on tightly packed pages
             orphan_bbox = RowBBox(y_start=0, y_end=first_header_y - 5, page_idx=page_idx)
             orphan_curves, orphan_events = extract_row_vectors(page, orphan_bbox)
             if orphan_curves:
