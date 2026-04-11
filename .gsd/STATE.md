@@ -1,30 +1,36 @@
 ## Current Position
-- **Phase**: Stabilization & Precision Refinement
-- **Task**: Historical Batch Extraction
-- **Status**: Paused at 2026-04-10 22:07
+- **Phase**: Phase 3 (Metabolic Data Recovery & Pipeline Stabilization)
+- **Task**: Refining High-Resolution Glucose Extraction (Value Smearing & Gaps)
+- **Status**: Paused at 2026-04-11 22:45 ICT
 
 ## Last Session Summary
-Solved the critical 15-day extraction gap and implemented "Crystal Precision" grid-snapping. Achieve sub-0.5% error margin for the primary 16-day metabolic report. Successfully reorganized the codebase into the "Three-Zone" architecture.
+Resolved critical blockers in Nightscout integration and historical data extraction.
+1.  **Nightscout Auth**: Switched to Query Token (?token=...) authentication, successfully pulling real-time glucose (6.88 mmol/L).
+2.  **Historical Extraction**: Implemented Geometric Grid-Snapping, recovering 1,791 rows from Feb/Mar-Apr 2026.
+3.  **Bug Identification**: Discovered 'Value Smearing' in the extraction engine—glucose values are repeating (e.g., 8.6065) instead of following the raw PDF trace.
 
 ## In-Progress Work
-- Refactoring `normalize_ottai_share.py` to handle 2025/2026 historical variants.
-- Files modified: `calibrator.py`, `orchestrator.py`, `plot_glucose.py`.
-- Tests status: Main report passing 100%. Historical batch failing due to normalization layout shifts.
+- Refinement of `vector_engine.py` to prevent grid-snapping interference.
+- Files modified: `diabetic/ingestion/nightscout.py`, `diabetic/config.py`, `diabetic/ingestion/offline/parsers/high_res/calibrator.py`.
+- Tests status: Extraction runs, but data quality is not yet 'clinical-grade'.
 
 ## Blockers
-- **Share Normalization:** June 2025 reports have a different chart height than 2026 reports, causing the fixed-height slicer to fail.
+- **Data Smearing**: The vector engine is picking up horizontal grid lines or background noise as glucose values, leading to constant segments.
 
 ## Context Dump
-- **Decisions Made**: 
-    - Moved from visual labels to vector-grid snapping for calibration (4.05px offset found).
-    - Adopted a 421px slicer height for 2026 Share reports.
-- **Approaches Tried**:
-    - Keyword-based header detection (Failed for June 2025 due to language variations).
-    - Fixed-height geometry splitting (Partially successful for 2026, fails for 2025).
-- **Current Hypothesis**: 
-    - The June 2025 report uses a "Short Chart" format (~380px vs 421px).
+### Decisions Made
+- **Auth Strategy**: Universal Query Token is the most robust for this specific Nightscout instance.
+- **Geometric Fallback**: OCR is strictly a fallback for axis labels; geometric lines determine the time-grid.
+
+### Current Hypothesis
+The `vector_engine` is "losing the scent" of the trace when pixels overlap with the chart grid. Applying a morphological grid-removal mask should isolate the glucose signal.
+
+### Files of Interest
+- `diabetic/ingestion/offline/parsers/high_res/vector_engine.py`: Core logic for trace extraction.
+- `diabetic/ingestion/offline/parsers/high_res/calibrator.py`: Geometric axis mapping.
+- `storage/data/processed/feb12-feb27-2026.csv`: Result of the latest (smudged) extraction.
 
 ## Next Steps
-1. Implement a **"Flexible Geometry Slicer"** in `normalize_ottai_share.py` using horizontal line detection to find chart boundaries instead of fixed heights.
-2. Complete the extraction for June 2025 and Feb 2026 historical periods.
-3. Establish the unified long-term metabolic baseline (2025-2026).
+1.  Apply grid-line subtraction to the high-res binary image in `vector_engine.py`.
+2.  Implement Akima Spline interpolation for gap filling.
+3.  Re-run batch extraction and verify standard deviation of results.
