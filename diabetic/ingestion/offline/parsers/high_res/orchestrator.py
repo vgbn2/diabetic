@@ -181,8 +181,10 @@ class HighResParser:
         if not words: return
 
         # --- Coordinate Origin Flattening ---
+        # Shift all elements so the topmost word starts at y≈0.
+        # Normalized long-scrolls can have negative or very large min_y.
         min_y = min(w["top"] for w in words)
-        if min_y > 500:
+        if abs(min_y) > 5:  # Shift for any non-trivial offset
             for w in words:
                 w["top"] -= min_y
                 w["bottom"] -= min_y
@@ -192,7 +194,7 @@ class HighResParser:
         curves = page.curves
         
         # Shift lines and curves too
-        if min_y > 500:
+        if abs(min_y) > 5:
             for l in lines:
                 if "top" in l: l["top"] -= min_y; l["bottom"] -= min_y
                 if "y0" in l: l["y0"] -= min_y; l["y1"] -= min_y
