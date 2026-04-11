@@ -337,6 +337,7 @@ def _compute_y_end(row_idx: int, rows: list, page, words: list, y_start: float) 
     next_y = (rows[row_idx + 1][0]["coords"]["top"] if row_idx + 1 < len(rows) else page.height)
     agp = [w for w in words if "AGP" in w["text"] and w["top"] > y_start]
     agp_stop = min(w["top"] for w in agp) - 5 if agp else page.height
-    # OTTI charts are strictly isolated. Avoid Basal Chart below by capping at +160.
-    # OTTI charts are strictly isolated. Increased cap from 160 to 500 for full-page historical variants.
-    return max(min(next_y, agp_stop, y_start + 500), y_start + 100)
+    # Overhang geometry: charts on tightly packed pages can extend far below
+    # the next day's header. The minimum height of 400px ensures we capture the
+    # full glucose trace. X-range time-calibration prevents cross-day contamination.
+    return max(min(next_y, agp_stop, y_start + 500), y_start + 400)
