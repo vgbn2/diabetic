@@ -1,6 +1,6 @@
-import pdfplumber
-from pypdf import PdfReader, PdfWriter
 from pathlib import Path
+import pdfplumber
+from pypdf import PdfReader, PdfWriter, Transformation
 import sys
 
 def normalize_share_report(pdf_path, output_path=None):
@@ -35,54 +35,68 @@ def normalize_share_report(pdf_path, output_path=None):
             if "Th" in w1 and any(y in w2 for y in ['2023','2024', '2025', '2026']):
                 raw_headers.append(words[i]['top'])
         
-        raw_headers.sort()
-        deduped_headers = []
-        if raw_headers:
-            deduped_headers.append(raw_headers[0])
-            for h in raw_headers[1:]:
-                if h - deduped_headers[-1] > 300: # charts are roughly 350-450 pts tall
-                    deduped_headers.append(h)
+        # Find wide horizontal lines (>70% width)
+        h_lines = [l for l in page.lines if abs(l['top'] - l['bottom']) < 1 and l['width'] > (full_width * 0.7)]
         
-        split_points = [0]
-        if len(deduped_headers) > 1:
-            # Use headers as split points
-            for h in deduped_headers:
-                split_points.append(h - 10)
-            split_points.append(full_height)
-        else:
-            # FALLBACK: Fixed height splitting for long 'Share' pages
-            print(f"  Warning: Insufficient headers for {pdf_path.name}. Using fixed-height geometry.")
-            current_y = daily_log_y if daily_log_y > 0 else 0
-            if current_y > 100: split_points.append(current_y)
+        # Unified Splitting Strategy: Dates + Wide Horizontal Lines
+        all_candidates = raw_headers + [l['top'] for l in h_lines]
+        all_candidates.sort()
+        
+        deduped = []
+        if all_candidates:
+            deduped.append(all_candidates[0])
+            for c in all_candidates[1:]:
+                # charts are at least 350-500 pts tall in daily views
+                if c - deduped[-1] > 350: 
+                    deduped.append(c)
+        
+        # SCROLL DETECTION FALLBACK
+        # If the page is a "Giant Scroll" (e.g. 3000pt) and we found < 3 markers, force split
+        if full_height > 1000 and len(deduped) < 3:
+            print(f"  [Scroll Detected] Force splitting every 500pt...")
+            deduped = list(range(450, int(full_height), 480))
             
-            # Standard Ottai charts are ~420pts tall. 
-            # We split every 421pts to avoid cutting through the middle of a row.
-            while current_y < full_height:
-                current_y += 421 
-                split_points.append(min(current_y, full_height))
+        split_points = [0]
+        for d in deduped:
+            if d > 100: # Avoid splitting the very top header
+                # Ensure we don't split too early
+                if not split_points or (d - split_points[-1] > 300):
+                    split_points.append(d - 30) # 30pt margin for headers
+        
+        if not split_points or split_points[-1] < full_height - 300:
+            split_points.append(full_height)
+        
+        print(f"  Generated {len(split_points)-1} segments (Height Pattern: {[int(split_points[i+1]-split_points[i]) for i in range(len(split_points)-1)]})")
 
     reader = PdfReader(pdf_path)
     writer = PdfWriter()
     source_page = reader.pages[0]
     
     for i in range(len(split_points)-1):
-        new_page = writer.add_page(source_page)
-        
         top = float(split_points[i])
         bottom = float(split_points[i+1])
         
-        # Apply 20pt overlap except for boundaries
-        effective_top = max(0, top - (20 if i > 0 else 0))
-        effective_bottom = min(full_height, bottom + (20 if i < len(split_points)-2 else 0))
+        # Apply 15pt overlap to catch boundary labels
+        eff_top = max(0, top - 15)
+        eff_bottom = min(full_height, bottom + 15)
+        eff_height = eff_bottom - eff_top
         
-        pypdf_bottom = full_height - effective_bottom
-        pypdf_top = full_height - effective_top
+        # Create a clean page with the segment height
+        new_page = writer.add_blank_page(width=full_width, height=eff_height)
         
-        # Crop exactly to the segment
-        new_page.mediabox.lower_left = (0, pypdf_bottom)
-        new_page.mediabox.upper_right = (full_width, pypdf_top)
-        new_page.cropbox.lower_left = (0, pypdf_bottom)
-        new_page.cropbox.upper_right = (full_width, pypdf_top)
+        # Construct transformation: shift the source segment to (0,0)
+        # pdfplumber y is from top (0 at top). 
+        # pypdf y is from bottom (0 at bottom).
+        shift_y = -(full_height - eff_bottom)
+        
+        new_page.merge_page(source_page)
+        new_page.add_transformation(Transformation().translate(0, shift_y))
+        
+        # Set all boxes to (0, 0, width, height)
+        new_page.mediabox.lower_left = (0, 0)
+        new_page.mediabox.upper_right = (full_width, eff_height)
+        new_page.cropbox.lower_left = (0, 0)
+        new_page.cropbox.upper_right = (full_width, eff_height)
 
     with open(output_path, "wb") as f:
         writer.write(f)

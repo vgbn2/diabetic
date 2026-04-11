@@ -22,9 +22,9 @@ class HighResGlucoseParser:
         # The new parser stores records in self.parser._records
         return self.parser._records
 
-    def save_csv(self, output_path):
+    def save_csv(self, output_path, **kwargs):
         """Redirects to the modular save_csv logic."""
-        return self.parser.save_csv(output_path)
+        return self.parser.save_csv(output_path, **kwargs)
 
 if __name__ == "__main__":
     import argparse

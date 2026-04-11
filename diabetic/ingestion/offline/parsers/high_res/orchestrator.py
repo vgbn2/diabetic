@@ -26,21 +26,21 @@ from .vision_engine import VisionEngine
 
 
 VN_MONTH = {
-    "th01": 1, "th1": 1,  "thg 1": 1,
-    "th02": 2, "th2": 2,  "thg 2": 2,
-    "th03": 3, "th3": 3,  "thg 3": 3,
-    "th04": 4, "th4": 4,  "thg 4": 4,
-    "th05": 5, "th5": 5,  "thg 5": 5,
-    "th06": 6, "th6": 6,  "thg 6": 6,
-    "th07": 7, "th7": 7,  "thg 7": 7,
-    "th08": 8, "th8": 8,  "thg 8": 8,
-    "th09": 9, "th9": 9,  "thg 9": 9,
+    "th01": 1, "th1": 1, "thg 1": 1, "thg 01":1,
+    "th02": 2, "th2": 2, "thg 2": 2, "thg 02":2,
+    "th03": 3, "th3": 3, "thg 3": 3, "thg 03":3,
+    "th04": 4, "th4": 4, "thg 4": 4, "thg 04":4,
+    "th05": 5, "th5": 5, "thg 5": 5, "thg 05":5,
+    "th06": 6, "th6": 6, "thg 6": 6, "thg 06":6,
+    "th07": 7, "th7": 7, "thg 7": 7, "thg 07":7,
+    "th08": 8, "th8": 8, "thg 8": 8, "thg 08":8,
+    "th09": 9, "th9": 9, "thg 9": 9, "thg 09":9,
     "th10": 10, "thg 10": 10,
     "th11": 11, "thg 11": 11,
     "th12": 12, "thg 12": 12,
 }
 # Supports: '25-Th03', '25 Th03', '25/03', '25 thg 03'
-_DATE_PATTERN = re.compile(r"(\d{1,2})[-/\s]((?:th\d{2}|thg\s+\d{1,2}|th\d{1,2}))(?:[-/\s](\d{4}))?", re.IGNORECASE)
+_DATE_PATTERN = re.compile(r"(\d{1,2})[-/\s]+((?:th\d{2}|thg\s+\d{1,2}|th\d{1,2}|jan|feb|fed|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|tháng\s+\d{1,2}))(?:[-/\s]+(\d{4}))?", re.IGNORECASE)
 _YEAR_PATTERN = re.compile(r"\b(202\d)\b")
 
 
@@ -49,7 +49,16 @@ def _parse_vn_date(day_str: str, month_str: str, year_str: Optional[str], defaul
         y = int(year_str) if year_str else default_year
         m_key = month_str.lower().strip()
         
-        # If month_str is numeric (like '03' in '25/03')
+        # English/Typo support: Feb, Fed, Mar, etc.
+        m_map = {
+            "jan": 1, "feb": 2, "fed": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
+        }
+        for k, v in m_map.items():
+            if k in m_key:
+                return datetime(y, v, int(day_str))
+
+        # Numeric month (like '03' in '25/03')
         if m_key.isdigit():
             return datetime(y, int(m_key), int(day_str))
             
@@ -74,21 +83,30 @@ class HighResParser:
         self.pdf_path = Path(pdf_path)
         self._records: List[dict] = []
         self._vision: Optional[VisionEngine] = None
+        self._prev_date: Optional[datetime] = None  # Cross-page continuation
 
     def parse(self) -> "HighResParser":
         active_path = self._maybe_normalize(self.pdf_path)
         self._vision = VisionEngine(active_path)
         print(f"[parser] Processing: {active_path.name}")
 
+        self._prev_date = None
         with pdfplumber.open(active_path) as pdf:
             for page_idx, raw_page in enumerate(pdf.pages):
                 page = self._localize(raw_page)
                 print(f"  Page {page_idx + 1}/{len(pdf.pages)}", end="\r")
-                self._process_page(page, page_idx)
+                self._process_page(page, page_idx, "normalized" in active_path.name.lower())
         print()
         return self
 
-    def save_csv(self, output_path: str | Path) -> Path:
+    def save_csv(self, output_path: str | Path, date_range: tuple = None) -> Path:
+        """Save extracted data to CSV.
+        
+        Args:
+            output_path: Where to save the CSV.
+            date_range: Optional (start_date, end_date) tuple to filter records.
+                        Both should be datetime objects. Records outside this range are dropped.
+        """
         output_path = Path(output_path)
         if not self._records:
             print("[parser] No data extracted.")
@@ -96,6 +114,15 @@ class HighResParser:
 
         df = pd.DataFrame(self._records)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
+        
+        # --- Date Range Filter ---
+        if date_range:
+            start, end = date_range
+            before = len(df)
+            df = df[(df["timestamp"] >= pd.Timestamp(start)) & (df["timestamp"] <= pd.Timestamp(end))]
+            dropped = before - len(df)
+            if dropped > 0:
+                print(f"[parser] Date filter: dropped {dropped} out-of-range records")
         
         # --- Global Clinical Binning & Smoothing ---
         # Ottai clinical reports have ~2.5min native resolution. 
@@ -149,19 +176,38 @@ class HighResParser:
         try: return raw_page.within_bbox(raw_page.cropbox)
         except Exception: return raw_page
 
-    def _process_page(self, page, page_idx: int):
-        text = (page.extract_text() or "").lower()
+    def _process_page(self, page, page_idx: int, is_share_normalized: bool = False):
         words = page.extract_words()
-        lines = page.lines
+        if not words: return
 
-        words = page.extract_words()
+        # --- Coordinate Origin Flattening ---
+        min_y = min(w["top"] for w in words)
+        if min_y > 500:
+            for w in words:
+                w["top"] -= min_y
+                w["bottom"] -= min_y
+
+        text = " ".join(w["text"] for w in words).lower()
         lines = page.lines
+        curves = page.curves
+        
+        # Shift lines and curves too
+        if min_y > 500:
+            for l in lines:
+                if "top" in l: l["top"] -= min_y; l["bottom"] -= min_y
+                if "y0" in l: l["y0"] -= min_y; l["y1"] -= min_y
+            for c in curves:
+                if "top" in c: c["top"] -= min_y; c["bottom"] -= min_y
+                if "y0" in c: c["y0"] -= min_y; c["y1"] -= min_y
+                if "pts" in c:
+                    c["pts"] = [(p[0], p[1] - min_y) for p in c["pts"]]
+
         year_m = _YEAR_PATTERN.search(text)
         year = int(year_m.group(1)) if year_m else datetime.now().year
 
         recon = " ".join(w["text"] for w in words)
         spans = _build_word_spans(words)
-        raw_headers = _find_date_headers(recon, spans, words, year)
+        raw_headers = _find_date_headers(recon, spans, words, year, is_share_normalized)
         if not raw_headers: return
         
         print(f"    Dates: {[h['date'].strftime('%m-%d') for h in raw_headers]}")
@@ -169,22 +215,47 @@ class HighResParser:
         raw_headers.sort(key=lambda h: h["coords"]["top"])
         rows = _group_into_rows(raw_headers)
 
+        # --- Cross-Page Continuation ---
+        # On normalized two-date pages, the second day's chart extends onto
+        # the next page. That next page starts with orphaned curves (no header).
+        # If we have a _prev_date and there are curves ABOVE the first header,
+        # recover them as a continuation of the previous day.
+        first_header_y = rows[0][0]["coords"]["top"]
+        if self._prev_date and first_header_y > 50:
+            # There's meaningful space above the first header — check for curves
+            orphan_bbox = RowBBox(y_start=0, y_end=first_header_y - 5, page_idx=page_idx)
+            orphan_curves, orphan_events = extract_row_vectors(page, orphan_bbox)
+            if orphan_curves:
+                # Use the previous page's scale/time calibration for these curves
+                orphan_scale = calibrate_scale(words, lines, 0, first_header_y - 5, page.width)
+                orphan_time = calibrate_time(words, lines, 0, first_header_y - 5, 0, page.width)
+                if orphan_scale:
+                    cell = DayCell(
+                        date=self._prev_date,
+                        scale=orphan_scale,
+                        time_anchor=orphan_time,
+                        glucose_curves=orphan_curves,
+                        events=orphan_events,
+                    )
+                    cont_records = cell.to_records()
+                    if cont_records:
+                        print(f"    [continuation] +{len(cont_records)} records for {self._prev_date.strftime('%m-%d')}")
+                        self._records.extend(cont_records)
+
         for row_idx, row_headers in enumerate(rows):
             row_headers.sort(key=lambda h: h["coords"]["x0"])
             y_start = row_headers[0]["coords"]["top"]
             y_end = _compute_y_end(row_idx, rows, page, words, y_start)
 
-            # --- Row Structural Validation ---
-            # Standard daily charts MUST have a Y-axis with 0, 10, 20 scale on the left.
-            # This rejects basal rate charts and metadata rows.
             labels = [w for w in words if y_start - 30 < w["top"] < y_end + 30 and w["x0"] < 100]
             numeric_scales = [w["text"] for w in labels if w["text"] in ("0", "10", "20", "30")]
-            if len(set(numeric_scales)) < 2:
-                continue # Not a primary glucose chart
-
+            
             row_bbox = RowBBox(y_start=y_start, y_end=y_end, page_idx=page_idx)
             scale = calibrate_scale(words, lines, y_start, y_end, page.width)
-            if scale is None: continue
+            
+            if scale is None or (len(set(numeric_scales)) < 2 and scale.source == "fallback"):
+                if len(words) < 50:
+                    continue
 
             gl_curves, vec_events = extract_row_vectors(page, row_bbox)
             vision_events = self._vision.extract_events(page_idx, y_start, y_end, existing_events=vec_events)
@@ -204,6 +275,11 @@ class HighResParser:
                 )
                 self._records.extend(cell.to_records())
 
+        # Track last date on this page for cross-page continuation
+        last_row_headers = rows[-1]
+        last_row_headers.sort(key=lambda h: h["coords"]["top"])
+        self._prev_date = last_row_headers[-1]["date"]
+
 
 def _build_word_spans(words: list) -> list:
     spans, pos = [], 0
@@ -213,10 +289,10 @@ def _build_word_spans(words: list) -> list:
     return spans
 
 
-def _find_date_headers(recon: str, spans: list, words: list, year: int) -> list:
+def _find_date_headers(recon: str, spans: list, words: list, year: int, is_share_normalized: bool = False) -> list:
     headers = []
     for match in _DATE_PATTERN.finditer(recon):
-        day_str = match.group(1)
+        day_str = match.group(1).zfill(2)
         month_str = match.group(2)
         year_str = match.group(3)
         
@@ -226,15 +302,18 @@ def _find_date_headers(recon: str, spans: list, words: list, year: int) -> list:
         # Determine the word index in the word list
         idx = next((i for i, s in enumerate(spans) if s[0] <= match.start() < s[1]), 0)
         
-        # Robust token matching: The date might be one word '25-Th03' or two '25', 'Th03'
-        # We check the window around idx
+        # Robust token matching:
+        # We search around idx for a word that contains the day. 
+        # If we find it, and it's not noise, use it as anchor.
         coords = None
-        for i in range(max(0, idx - 2), min(len(words), idx + 3)):
+        for i in range(max(0, idx - 2), min(len(words), idx + 5)):
             w_text = words[i]["text"].strip("-,/ ").lower()
-            # If the word contains the day and part of the month string, it's our anchor
-            if day_str in w_text and (month_str.lower() in w_text or month_str.lower()[:3] in w_text):
-                # Ignore metadata headers in the very top of the page (Reports usually start charts below y=80)
-                if words[i]["top"] < 75:
+            
+            # Match day string exactly (or padded)
+            if day_str in w_text or match.group(1) in w_text:
+                # Basic noise filter: charts start low-ish on first page, 
+                # but in segments they are at the very top.
+                if words[i]["top"] < 50 and not is_share_normalized:
                     continue
                     
                 coords = {"x0": words[i]["x0"], "x1": words[i]["x1"], "top": words[i]["top"], "bottom": words[i]["bottom"]}
@@ -257,4 +336,5 @@ def _compute_y_end(row_idx: int, rows: list, page, words: list, y_start: float) 
     agp = [w for w in words if "AGP" in w["text"] and w["top"] > y_start]
     agp_stop = min(w["top"] for w in agp) - 5 if agp else page.height
     # OTTI charts are strictly isolated. Avoid Basal Chart below by capping at +160.
-    return max(min(next_y, agp_stop, y_start + 160), y_start + 100)
+    # OTTI charts are strictly isolated. Increased cap from 160 to 500 for full-page historical variants.
+    return max(min(next_y, agp_stop, y_start + 500), y_start + 100)

@@ -148,17 +148,31 @@ def _concatenate_segments(
     if not segs:
         return []
 
-    # Filter out vertical-dominant segments (grid lines)
+    # Filter out vertical-dominant segments (grid lines) but keep dots.
+    # Legacy Ottai PDFs encode glucose readings as tiny 4-point curves 
+    # (dx≈0, dy≈0.4). These are valid data, not grid lines.
+    # True grid lines are tall vertical segments (dy >> 10, dx ≈ 0).
     filtered = []
     for s in segs:
         pts = s["pts"]
-        dx = abs(pts[-1][0] - pts[0][0])
-        dy = abs(pts[-1][1] - pts[0][1])
-        # A glucose curve can't be vertical. Grid lines are.
-        # Max physiological slope is ~2 mmol/L per min. 
-        # In PDF points, if dy > 10*dx, it's definitely a grid line or bracket.
-        if dx > 0.2 and (dy / max(0.01, dx)) < 10.0:
-            filtered.append(s)
+        all_x = [p[0] for p in pts]
+        all_y = [p[1] for p in pts]
+        dx = max(all_x) - min(all_x)
+        dy = max(all_y) - min(all_y)
+        
+        if dx < 0.05:
+            # Near-zero width: could be a dot OR a grid line.
+            # Dots have small dy (< 3pt). Grid lines have large dy (> 10pt).
+            if dy < 3.0:
+                # It's a dot — collapse to centroid
+                cx = sum(all_x) / len(all_x)
+                cy = sum(all_y) / len(all_y)
+                filtered.append({"pts": [(cx, cy)]})
+            # else: grid line, skip
+        else:
+            # Has horizontal extent — check slope
+            if (dy / max(0.01, dx)) < 25.0:
+                filtered.append(s)
     
     if not filtered: return []
     filtered.sort(key=lambda s: min(p[0] for p in s["pts"]))

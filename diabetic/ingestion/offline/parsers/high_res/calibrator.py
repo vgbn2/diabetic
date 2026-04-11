@@ -19,6 +19,8 @@ from .models import ScaleAnchor, TemporalAnchor
 
 # -------- Y-Axis (Glucose Scale) ------------------------------------------
 
+PPM_DEFAULT = 8.7  # Default vertical scale (approx 260pt height / 30.0 mmol/L)
+
 def calibrate_scale(
     words: list,
     lines: list,
@@ -54,7 +56,7 @@ def calibrate_scale(
     # Pick the one closest to y_start for this specific row.
     averaged = {}
     for val, ys in y_map.items():
-        relevant = [y for y in ys if y_start - 20 < y < y_start + 200]
+        relevant = [y for y in ys if y_start - 20 < y < y_start + 500]
         if relevant:
             averaged[val] = float(np.mean(relevant))
         elif ys:
