@@ -144,8 +144,35 @@ class HighResParser:
                 "bolus": "max", "basal": "max", "meal": "max"
             }).reset_index(drop=True)
             
-            # Smoothing (light rolling median)
-            glu["glucose"] = glu["glucose"].rolling(window=3, center=True).median().fillna(glu["glucose"])
+            # --- Akima Spline Interpolation (GAP FILLER) ---
+            # 1. Create a continuous range of 5-min timestamps
+            t_min = glu["time_group"].min()
+            t_max = glu["time_group"].max()
+            full_index = pd.date_range(start=t_min, end=t_max, freq="5min")
+            
+            # 2. Re-index and interpolate
+            glu = glu.set_index("time_group").reindex(full_index)
+            glu["timestamp"] = glu.index
+            
+            # We use Akima because it's local and avoids the wild oscillates of cubic splines
+            # during rapid metabolic shifts.
+            if len(glu.dropna(subset=["glucose"])) > 5:
+                from scipy.interpolate import Akima1DInterpolator
+                # Drop NaNs to find valid points for the interpolator
+                valid = glu.dropna(subset=["glucose"])
+                # Convert timestamps to numeric seconds for interpolation
+                x = valid.index.view(int) / 10**9
+                y = valid["glucose"].values
+                akima = Akima1DInterpolator(x, y)
+                
+                x_full = glu.index.view(int) / 10**9
+                # Only interpolate gaps up to 30 minutes (6 bins)
+                # For longer gaps, leave as NaN to avoid hallucinations
+                glu["glucose"] = glu["glucose"].interpolate(method="akima", limit=6).fillna(glu["glucose"])
+            
+            # 3. Final Rolling Smoothing (light)
+            glu["glucose"] = glu["glucose"].rolling(window=3, center=True, min_periods=1).median()
+            glu = glu.reset_index(drop=True)
 
         # 4. Integrate Events (ensure they aren't lost)
         final_df = pd.concat([glu, evs], sort=False).sort_values("timestamp")
@@ -156,7 +183,7 @@ class HighResParser:
         final_df = final_df.drop_duplicates(subset=["timestamp"], keep="first").sort_values("timestamp")
         
         final_df.to_csv(output_path, index=False)
-        print(f"[parser] Saved {len(final_df)} binned clinical rows -> {output_path}")
+        print(f"[parser] Saved {len(final_df)} clinical rows (interpolated) -> {output_path}")
         return output_path
 
     def _maybe_normalize(self, path: Path) -> Path:
@@ -180,29 +207,39 @@ class HighResParser:
         words = page.extract_words()
         if not words: return
 
-        # --- Coordinate Origin Flattening ---
-        # Shift all elements so the topmost word starts at y≈0.
-        # Normalized long-scrolls can have negative or very large min_y.
-        min_y = min(w["top"] for w in words)
-        if abs(min_y) > 5:  # Shift for any non-trivial offset
-            for w in words:
+        # --- Coordinate Origin Flattening & Strict Filtering ---
+        # 1. We must filter to the VISIBLE window [0, page.height].
+        # Content outside this range is "Ghost Data" from the original giant scroll.
+        
+        # We use a 20pt margin to catch items slightly off-screen
+        visible_words = [w for w in words if -20 <= w["top"] < page.height + 20]
+        visible_lines = [l for l in page.lines if -20 <= l["top"] < page.height + 20]
+        visible_curves = [c for c in page.curves if -20 <= c.get("top", -20) < page.height + 20]
+        
+        if not visible_words: return
+        
+        # 2. Shift all elements so the topmost visible word starts at y≈0.
+        min_y = min(w["top"] for w in visible_words)
+        
+        if abs(min_y) > 2: # Reduce threshold for precision on small segments
+            for w in visible_words:
                 w["top"] -= min_y
                 w["bottom"] -= min_y
-
-        text = " ".join(w["text"] for w in words).lower()
-        lines = page.lines
-        curves = page.curves
-        
-        # Shift lines and curves too
-        if abs(min_y) > 5:
-            for l in lines:
+            for l in visible_lines:
                 if "top" in l: l["top"] -= min_y; l["bottom"] -= min_y
                 if "y0" in l: l["y0"] -= min_y; l["y1"] -= min_y
-            for c in curves:
+            for c in visible_curves:
                 if "top" in c: c["top"] -= min_y; c["bottom"] -= min_y
                 if "y0" in c: c["y0"] -= min_y; c["y1"] -= min_y
                 if "pts" in c:
                     c["pts"] = [(p[0], p[1] - min_y) for p in c["pts"]]
+
+        # Re-assign filtered/shifted items to the page object context
+        words = visible_words
+        lines = visible_lines
+        curves = visible_curves
+
+        text = " ".join(w["text"] for w in words).lower()
 
         year_m = _YEAR_PATTERN.search(text)
         year = int(year_m.group(1)) if year_m else datetime.now().year
@@ -259,7 +296,9 @@ class HighResParser:
                 if len(words) < 50:
                     continue
 
-            gl_curves, vec_events = extract_row_vectors(page, row_bbox)
+            # --- New Hybrid Strategy: Vision-Guided Vector Extraction ---
+            trace_mask = self._vision.extract_trace_mask(page_idx, y_start, y_end)
+            gl_curves, vec_events = extract_row_vectors(page, row_bbox, trace_mask=trace_mask)
             vision_events = self._vision.extract_events(page_idx, y_start, y_end, existing_events=vec_events)
             all_events = vec_events + vision_events
 
@@ -334,10 +373,19 @@ def _group_into_rows(headers: list, tol: float = 25.0) -> list:
 
 
 def _compute_y_end(row_idx: int, rows: list, page, words: list, y_start: float) -> float:
-    next_y = (rows[row_idx + 1][0]["coords"]["top"] if row_idx + 1 < len(rows) else page.height)
+    next_y = (rows[row_idx + 1][0]["coords"]["top"] if row_idx + 1 < len(rows) else None)
+    
+    if next_y is not None:
+        # Internal Overlap Prevention: 
+        # If there's a header below us, we must NOT use the 400px aggressive floor,
+        # otherwise we'll pick up the next day's labels and confuse time-calibration.
+        # 15px bleed is enough to catch any curve tips.
+        return min(next_y + 15, page.height)
+
+    # For the last day on the page, the 400px floor is still required to 
+    # recover data from deep-scroll segments that cut off mid-chart.
     agp = [w for w in words if "AGP" in w["text"] and w["top"] > y_start]
     agp_stop = min(w["top"] for w in agp) - 5 if agp else page.height
-    # Overhang geometry: charts on tightly packed pages can extend far below
-    # the next day's header. The minimum height of 400px ensures we capture the
-    # full glucose trace. X-range time-calibration prevents cross-day contamination.
-    return max(min(next_y, agp_stop, y_start + 500), y_start + 400)
+    
+    min_floor = min(y_start + 400, page.height)
+    return max(min(agp_stop, y_start + 500), min_floor)

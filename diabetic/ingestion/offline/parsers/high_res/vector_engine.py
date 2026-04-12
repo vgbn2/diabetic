@@ -86,12 +86,10 @@ def _obj_pts(obj: dict) -> List[Tuple[float, float]]:
 def extract_row_vectors(
     page,
     row: RowBBox,
+    trace_mask: Optional[np.ndarray] = None,
 ) -> Tuple[List[GlucoseCurve], List[EventMarker]]:
     """
     Extract glucose curves and event markers from a page for a single row bbox.
-
-    Uses page-level curves + lines to include reports that rasterise the
-    glucose trace as many tiny line segments rather than a single curve.
     """
     all_objects = list(page.curves) + list(page.lines)
 
@@ -131,7 +129,7 @@ def extract_row_vectors(
                 y=(rect["top"] + rect["bottom"]) / 2,
             ))
 
-    curves = _concatenate_segments(raw_glucose)
+    curves = _concatenate_segments(raw_glucose, trace_mask=trace_mask)
     return curves, events
 
 
@@ -139,19 +137,18 @@ def _concatenate_segments(
     segs: List[dict],
     gap_tol: float = 5.0,
     min_width: float = 5.0,
+    trace_mask: Optional[np.ndarray] = None,
 ) -> List[GlucoseCurve]:
     """
     Merge adjacent glucose segments into continuous curves.
-    Rejects segments that are too vertical (likely grid lines) or cause
-    implausible glucose jumps.
+    Uses an optional vision-based trace_mask to filter out grid-line interference.
     """
     if not segs:
         return []
 
-    # Filter out vertical-dominant segments (grid lines) but keep dots.
-    # Legacy Ottai PDFs encode glucose readings as tiny 4-point curves 
-    # (dx≈0, dy≈0.4). These are valid data, not grid lines.
-    # True grid lines are tall vertical segments (dy >> 10, dx ≈ 0).
+    # Scale factor for mapping PDF pts -> Mask pixels
+    _V_SCALE = 400 / 72.0 
+
     filtered = []
     for s in segs:
         pts = s["pts"]
@@ -160,18 +157,26 @@ def _concatenate_segments(
         dx = max(all_x) - min(all_x)
         dy = max(all_y) - min(all_y)
         
+        # 1. Vision-Guided Validation
+        if trace_mask is not None:
+            # Check the centroid of the segment in mask space
+            cx, cy = np.mean(all_x), np.mean(all_y)
+            mx, my = int(cx * _V_SCALE), int(cy * _V_SCALE)
+            
+            # Bounds check for mask
+            if 0 <= my < trace_mask.shape[0] and 0 <= mx < trace_mask.shape[1]:
+                # If the mask is 0 (grid removed), skip this segment
+                if trace_mask[my, mx] == 0:
+                    continue
+        
+        # 2. Geometric Constraints (Legacy Fallback/Refinement)
         if dx < 0.05:
-            # Near-zero width: could be a dot OR a grid line.
-            # Dots have small dy (< 3pt). Grid lines have large dy (> 10pt).
-            if dy < 3.0:
-                # It's a dot — collapse to centroid
+            if dy < 4.0:
                 cx = sum(all_x) / len(all_x)
                 cy = sum(all_y) / len(all_y)
                 filtered.append({"pts": [(cx, cy)]})
-            # else: grid line, skip
         else:
-            # Has horizontal extent — check slope
-            if (dy / max(0.01, dx)) < 25.0:
+            if (dy / max(0.01, dx)) < 15.0 and dy < 15.0:
                 filtered.append(s)
     
     if not filtered: return []

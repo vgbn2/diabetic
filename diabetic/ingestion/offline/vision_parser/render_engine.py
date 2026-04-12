@@ -28,23 +28,28 @@ class PDFRenderer:
 
     def generate_masks(self, img_bgr: np.ndarray) -> dict:
         """
-        Isolates purple insulin syringes and orange meal markers using HSV color masks.
-        This ignores the noise from the dense grey grid lines.
+        Isolates purple insulin syringes, orange meal markers, and BLUE glucose traces.
+        This ignores the noise from the dense grey grid lines by targeting specific spectra.
         """
         hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
         
         # Purple Bounds (Insulin Syringes)
-        # Ottai purple is vibrant; we target the 120-160 hue range.
         lower_purple = np.array([125, 40, 40])
         upper_purple = np.array([155, 255, 255])
         
         # Orange/Yellow Bounds (Meal Dots)
-        # Focused on the high-saturation orange used for meal markers.
         lower_orange = np.array([5, 100, 100])
         upper_orange = np.array([25, 255, 255])
+
+        # Blue Bounds (Glucose Trace)
+        # Ottai uses a specific blue (approx HSV 100-115).
+        # We allow for light blue variants seen in rasterised charts.
+        lower_blue = np.array([90, 50, 50])
+        upper_blue = np.array([130, 255, 255])
         
         masks = {
             "syringe": cv2.inRange(hsv, lower_purple, upper_purple),
-            "meal": cv2.inRange(hsv, lower_orange, upper_orange)
+            "meal": cv2.inRange(hsv, lower_orange, upper_orange),
+            "glucose": cv2.inRange(hsv, lower_blue, upper_blue)
         }
         return masks

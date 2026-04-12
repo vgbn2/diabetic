@@ -40,6 +40,53 @@ class VisionEngine:
             self._renderer = PDFRenderer(self._pdf_path, scale=_scale)
             self._detector = IconDetector()
 
+    def extract_trace_mask(
+        self,
+        page_idx: int,
+        y_start: float,
+        y_end: float,
+    ) -> Optional[np.ndarray]:
+        """
+        Generates a clean binary mask of the glucose trace by removing grid lines.
+        Returns a binary mask where 255 = glucose, 0 = background/grid.
+        """
+        try:
+            import cv2
+            import numpy as np
+            self._ensure_loaded()
+            
+            # Render and get glucose mask
+            img_bgr = self._renderer.render_page(page_idx)
+            masks = self._renderer.generate_masks(img_bgr)
+            mask = masks.get("glucose")
+            
+            if mask is None:
+                return None
+
+            # --- Morphological Grid Removal ---
+            # 1. Detect long horizontal lines (Grid Lines)
+            # Typically grid lines are > 50 pixels wide, while trace segments are shorter or curved.
+            h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+            h_lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, h_kernel)
+            
+            # 2. Detect long vertical lines (Hour Markers)
+            v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+            v_lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, v_kernel)
+            
+            # 3. Subtract grid from mask
+            # We use bitwise_and with bitwise_not to clear the detected grid regions
+            clean_mask = cv2.bitwise_and(mask, cv2.bitwise_not(cv2.bitwise_or(h_lines, v_lines)))
+            
+            # 4. Clean up noise with a small closing operation
+            noise_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            clean_mask = cv2.morphologyEx(clean_mask, cv2.MORPH_CLOSE, noise_kernel)
+            
+            return clean_mask
+            
+        except Exception as exc:
+            print(f"[vision_engine] Mask generation error on page {page_idx}: {exc}")
+            return None
+
     def extract_events(
         self,
         page_idx: int,
