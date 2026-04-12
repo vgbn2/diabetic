@@ -12,3 +12,11 @@ bleak>=0.21.0
 torch>=2.0.0
 -e ./mempalace
 chromadb>=0.6.0
+aiohttp
+matplotlib
+pandas
+pdfplumber
+pypdf
+pypdfium2
+opencv-python
+scipy

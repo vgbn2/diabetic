@@ -78,8 +78,18 @@ class GlucoseFilter:
         dt = MetabolicMath.get_dt(reading.timestamp, self.last_ts)
         
         if dt > medical_constants.STALE_DATA_TIMEOUT_SECS / 60.0:
-            self.initialized = False
-            return self.update(reading)
+            # Stale data reset: avoid recursion to prevent stack overflow.
+            # Manually re-initialize state instead of calling update() again.
+            self.kf.x = np.array([[reading.value], [0.],[0.]])
+            self.last_ts = reading.timestamp
+            self.initialized = True
+            self._update_matrices(self.dt) 
+            return MetabolicSnapshot(
+                glucose=reading,
+                filtered_value=float(reading.value),
+                velocity=0.0,
+                acceleration=0.0
+            )
             
         self._update_matrices(dt)
         self.last_ts = reading.timestamp

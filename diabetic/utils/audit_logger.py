@@ -7,7 +7,11 @@ from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
-from diabetic.ml_engine.metabolic_palace import MetabolicPalace
+try:
+    from diabetic.ml_engine.metabolic_palace import MetabolicPalace
+    PALACE_ENABLED = True
+except (ImportError, ModuleNotFoundError):
+    PALACE_ENABLED = False
 
 class AuditLogger:
     """
@@ -21,7 +25,14 @@ class AuditLogger:
         self.db = None
         self.collection = None
         self.logger = logging.getLogger("Bio-Quant.Audit")
-        self.palace = MetabolicPalace()
+        
+        self.palace = None
+        if PALACE_ENABLED:
+            try:
+                self.palace = MetabolicPalace()
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize Metabolic Palace: {e}")
+                self.palace = None
 
         # Initialize MongoDB (connect if URI provided)
         if self.uri:
@@ -110,7 +121,7 @@ class AuditLogger:
                 self.logger.error(f"Failed to persist log to SQLite: {e}")
 
         # Semantic Indexing (Layer 4/5 Trigger)
-        if level in ["WARNING", "ERROR"] or event_type in ["USER_FEEDBACK", "REGIME_SHIFT"]:
+        if self.palace and (level in ["WARNING", "ERROR"] or event_type in ["USER_FEEDBACK", "REGIME_SHIFT"]):
             try:
                 task = asyncio.create_task(asyncio.to_thread(
                     self.palace.remember_snapshot, {

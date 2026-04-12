@@ -75,8 +75,9 @@ class NightscoutClient:
             if 'sgv' in entry:
                 raw = float(entry['sgv'])
                 units_in_entry = entry.get('units', '').lower()
-                is_already_mmol = (units_in_entry == 'mmol' or 
-                                  (not units_in_entry and raw < 30))
+                # Safe check: Nightscout uses 'mmol' or 'mmol/L'. 
+                # Floor for mg/dL is typically 40. Values below 30 are almost certainly mmol.
+                is_already_mmol = ("mmol" in units_in_entry or (not units_in_entry and raw < 40))
                 
                 if config.PREFER_MMOL:
                     value = raw if is_already_mmol else raw / medical_constants.MMOL_TO_MGDL
@@ -139,10 +140,18 @@ class NightscoutClient:
 
                     # Parse Insulin
                     if 'insulin' in t and not latest_insulin:
+                        ev_type = t.get('eventType', 'correction').lower()
+                        # Map Nightscout types to Twin types (RAPID/LONG)
+                        # Rule: Most Nightscout events are rapid (Bolus, correction).
+                        # Basal/Long tags are long-acting.
+                        insulin_type = "RAPID"
+                        if any(x in ev_type for x in ["long", "basal", "levermir", "lantus", "tresiba"]):
+                            insulin_type = "LONG"
+
                         latest_insulin = InsulinDose(
                             timestamp=ts,
                             units=float(t['insulin']),
-                            type=t.get('eventType', 'correction')
+                            type=insulin_type
                         )
                     
                     # Parse Carbs

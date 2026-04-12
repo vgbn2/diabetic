@@ -48,7 +48,12 @@ class Coordinator:
         self.notifier = TelegramNotifier()
         self.bot_app = TelegramApp(coordinator=self, audit_logger=self.audit) if config.TELEGRAM_TOKEN else None
         self.hud = RealTimeHUD()
-        self.twin = DigitalTwin()
+        self.twin = DigitalTwin(
+            weight_kg=config.PATIENT_WEIGHT_KG,
+            height_cm=config.PATIENT_HEIGHT_CM,
+            gender=config.PATIENT_GENDER,
+            diabetes_type=config.PATIENT_DIABETES_TYPE
+        )
         self.visualizer = MetabolicVisualizer(output_dir="charts")
         self.pusher = StatelessPush()
         self.palace = MetabolicPalace()
@@ -308,8 +313,9 @@ class Coordinator:
         history = self.snapshots[-history_count:]
         if history:
             prediction_4h = self.twin.predict_4h_trajectory(
-                history, self.last_meal,
-                insulin=history[-1].last_insulin if history else None
+                history, 
+                meals=[self.last_meal],
+                insulin_doses=history[-1].last_insulin if history else None
             )
 
             # FIX L1: store peak now for use by auto_tune at t+230 min

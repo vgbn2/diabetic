@@ -65,7 +65,7 @@ class HeartRateIngestor:
             self._last_reading_Snapshot.max_bpm = max(self.bpm_aggregate)
             
             # Signal quality based on variance (0.0 = chaotic/noise, 1.0 = stable)
-            if len(self.bpm_aggregate) > 2.5:
+            if len(self.bpm_aggregate) > 2:
                 volatility = statistics.stdev(self.bpm_aggregate)
                 self._last_reading_Snapshot.signal_quality = max(0.0, min(1.0, 1.0 - (volatility / CARDIAC_QUALITY_DIVISOR)))
             

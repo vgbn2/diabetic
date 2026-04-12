@@ -88,6 +88,8 @@ class MetabolicSnapshot(BaseModel):
     sensor_health: float = 1.0   # Diagnostic integrity (0.0 - 1.0)
     
     # Layer 3 (The Behavioral Engine)
+    active_carbs: float = 0.0     # Carbs on Board (COB)
+    active_insulin: float = 0.0   # Insulin on Board (IOB)
     activity_label: str = "UNKNOWN"  # Populated by dsp.context_classifier
     
     @property

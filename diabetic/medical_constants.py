@@ -25,6 +25,15 @@ STALE_DATA_TIMEOUT_SECS  = 900    # 15 minutes — beyond this, data is unreliab
 KALMAN_MEASUREMENT_NOISE = 0.25   # R = σ² = 0.5² (Ottai M8 base accuracy)
 MIN_DT_FLOOR             = 0.5    # minutes — prevents division by zero / filter explosion
 
+# ── Cardiac Telemetry (HR & HRV) ─────────────────────────────────────────────
+# Source: Clinical telemetry defaults for T1D activity detection.
+CARDIAC_WINDOW_SAMPLES  = 24      # 1 hour window at 2.5 min sampling
+CARDIAC_QUALITY_DIVISOR = 4.0     # Threshold for signal-to-noise validation
+BPM_MOCK_CEILING        = 120.0   # Upper bound for internal logic testing
+BPM_MOCK_FLOOR          = 60.0    # Lower bound for internal logic testing
+HRV_MOCK_CEILING        = 80.0
+HRV_MOCK_FLOOR          = 20.0
+
 # ── Glucose Thresholds (mmol/L) ──────────────────────────────────────────────
 # Source: Battelino 2019, Table 1. International consensus targets.
 PHYSIO_FLOOR     = 2.2    # ~40 mg/dL  — absolute survivable minimum

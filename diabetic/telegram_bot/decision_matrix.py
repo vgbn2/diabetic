@@ -56,19 +56,7 @@ class DecisionMatrix:
                 prediction_30m=prediction_30m
             )
 
-        # 3. CRITICAL HYPER (Current)
-        # NOTE: returns here — FAINT_RISK kinematics are not evaluated above 19.4 mmol/L.
-        # Intentional: DKA risk dominates at this level.
-        if g > medical_constants.HYPER_CRITICAL:
-            return Alert(
-                timestamp=datetime.now(timezone.utc),
-                type="CRITICAL_HYPER",
-                severity=AlertSeverity.HIGH,
-                message=f"{self.config.UI_SETTINGS['CRITICAL_HYPER']}: Glucose is {g:.1f} mmol/L. Check ketones.",
-                glucose_value=g
-            )
-
-        # 4. FAINT RISK (Hyper + Rapid climb + Cardiac stress)
+        # 3. FAINT RISK (Hyper + Rapid climb + Cardiac stress)
         if g > medical_constants.FAINT_GLUCOSE:
             is_faint_risk = v > medical_constants.FAINT_VELOCITY_LIMIT_PER_MIN
             cardiac_stress = hr > 100 or hrv < 20
@@ -79,11 +67,21 @@ class DecisionMatrix:
                 return Alert(
                     timestamp=datetime.now(timezone.utc),
                     type="FAINT_RISK",
-                    severity=AlertSeverity.HIGH,  # FIX: was MEDIUM — 15-min cooldown could suppress a sustained faint risk
+                    severity=AlertSeverity.HIGH,
                     message=f"{self.config.UI_SETTINGS['FAINT_RISK']}: Rapid climb ({v:+1f} mmol/L/min) | Glucose: {g:.1f} | HR: {hr:.0f}bpm.",
                     glucose_value=g,
                     prediction_30m=prediction_30m
                 )
+
+        # 4. CRITICAL HYPER (Current)
+        if g > medical_constants.HYPER_CRITICAL:
+            return Alert(
+                timestamp=datetime.now(timezone.utc),
+                type="CRITICAL_HYPER",
+                severity=AlertSeverity.HIGH,
+                message=f"{self.config.UI_SETTINGS['CRITICAL_HYPER']}: Glucose is {g:.1f} mmol/L. Check ketones.",
+                glucose_value=g
+            )
 
         return None
 
