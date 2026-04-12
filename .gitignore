@@ -69,3 +69,7 @@ models/*.pkl
 models/*.pt
 models/*.h5
 logs/
+charts/
+scratch/
+storage/
+*.bak
