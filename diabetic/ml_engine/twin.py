@@ -112,7 +112,8 @@ class DigitalTwin:
     def simulate_carb_impact(self, carbs_g: float, gi_type: str = "STARCH", 
                             resolution_mins: Optional[float] = None,
                             stochastic: bool = False,
-                            snapshot: Optional[MetabolicSnapshot] = None) -> np.ndarray:
+                            snapshot: Optional[MetabolicSnapshot] = None,
+                            csf_override: Optional[float] = None) -> np.ndarray:
         if resolution_mins is None:
             resolution_mins = mc.SAMPLING_INTERVAL_MINS
         tau = self.liquid_tau if gi_type.upper() == "LIQUID" else self.starch_tau
@@ -128,14 +129,16 @@ class DigitalTwin:
         t = np.arange(0, 240 + resolution_mins, resolution_mins)
         impact = (t / tau) * np.exp(1 - t / tau)
         # Layer 2 & 3 Synthesis: Behavior * (Physiological + Environmental state)
-        total_rise = carbs_g * self.csf * self.regime_multiplier * hormonal_mult * env_mult
+        csf = csf_override if csf_override is not None else self.csf
+        total_rise = carbs_g * csf * self.regime_multiplier * hormonal_mult * env_mult
         curve = impact * total_rise
         return curve
 
     def simulate_insulin_impact(self, units: float, insulin_type: str = "RAPID",
                                 resolution_mins: Optional[float] = None,
                                 stochastic: bool = False,
-                                snapshot: Optional[MetabolicSnapshot] = None) -> np.ndarray:
+                                snapshot: Optional[MetabolicSnapshot] = None,
+                                isf_override: Optional[float] = None) -> np.ndarray:
         if resolution_mins is None:
             resolution_mins = mc.SAMPLING_INTERVAL_MINS
         
@@ -143,7 +146,8 @@ class DigitalTwin:
         hormonal_mult = self.get_hormonal_multiplier(timestamp) if timestamp else 1.0
         env_mult = self.get_environmental_multiplier(snapshot) if snapshot else 1.0
         
-        effective_isf = self.isf / (hormonal_mult * env_mult)
+        isf = isf_override if isf_override is not None else self.isf
+        effective_isf = isf / (hormonal_mult * env_mult)
 
         duration = mc.INSULIN_ACTION_WINDOW_MINS
         t = np.arange(0, duration + resolution_mins, resolution_mins)
@@ -173,7 +177,9 @@ class DigitalTwin:
     def predict_4h_trajectory(self, history: List[MetabolicSnapshot],
                               meals: Optional[List[MealEvent]] = None,
                               insulin_doses: Optional[List[InsulinDose]] = None,
-                              basal_drift: Optional[np.ndarray] = None) -> np.ndarray:
+                              basal_drift: Optional[np.ndarray] = None,
+                              csf_override: Optional[float] = None,
+                              isf_override: Optional[float] = None) -> np.ndarray:
         if not history:
             points = int(240 / mc.SAMPLING_INTERVAL_MINS) + 1
             return np.zeros(points)
@@ -197,7 +203,7 @@ class DigitalTwin:
                 dt_meal_mins = (latest.glucose.timestamp - meal.timestamp).total_seconds() / 60.0
                 if dt_meal_mins > 240.0: continue
 
-                full_meal_curve = self.simulate_carb_impact(meal.carbs, meal.gi_type, snapshot=latest)
+                full_meal_curve = self.simulate_carb_impact(meal.carbs, meal.gi_type, snapshot=latest, csf_override=csf_override)
                 start_idx = int(max(0, dt_meal_mins // dt))
                 meal_projection = full_meal_curve[start_idx : start_idx + len(t)]
                 
@@ -211,7 +217,7 @@ class DigitalTwin:
                 dt_insulin_mins = (latest.glucose.timestamp - dose.timestamp).total_seconds() / 60.0
                 if dt_insulin_mins > mc.INSULIN_ACTION_WINDOW_MINS: continue
 
-                full_insulin_curve = self.simulate_insulin_impact(dose.units, dose.type, snapshot=latest)
+                full_insulin_curve = self.simulate_insulin_impact(dose.units, dose.type, snapshot=latest, isf_override=isf_override)
                 start_idx = int(max(0, dt_insulin_mins // dt))
                 insulin_projection = full_insulin_curve[start_idx : start_idx + len(t)]
 
@@ -231,24 +237,15 @@ class DigitalTwin:
             return np.zeros(pts), np.zeros(pts), np.zeros(pts)
 
         all_sims = []
-        orig_isf = self.isf
-        orig_csf = self.csf
-        orig_liquid = self.liquid_tau
-        orig_starch = self.starch_tau
-
         for _ in range(N):
-            self.isf = orig_isf * np.random.uniform(0.85, 1.15)
-            self.csf = orig_csf * np.random.uniform(0.9, 1.1)
-            self.liquid_tau = orig_liquid * np.random.uniform(0.8, 1.2)
-            self.starch_tau = orig_starch * np.random.uniform(0.8, 1.2)
+            local_isf = self.isf * np.random.uniform(0.85, 1.15)
+            local_csf = self.csf * np.random.uniform(0.9, 1.1)
             
-            traj = self.predict_4h_trajectory(history, meals, insulin, basal_drift)
+            # Note: liquid_tau/starch_tau stochasticity is handled inside simulate_carb_impact 
+            # if we passed stochastic=True. For now we use the stateless override pattern.
+            traj = self.predict_4h_trajectory(history, meals, insulin, basal_drift, 
+                                            csf_override=local_csf, isf_override=local_isf)
             all_sims.append(traj)
-
-        self.isf = orig_isf
-        self.csf = orig_csf
-        self.liquid_tau = orig_liquid
-        self.starch_tau = orig_starch
 
         stack = np.vstack(all_sims)
         mean_traj = np.mean(stack, axis=0)

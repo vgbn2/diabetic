@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise
@@ -19,6 +20,7 @@ class GlucoseFilter:
             from diabetic.config import config
             dt = config.SAMPLING_INTERVAL_MINS
             
+        self.logger = logging.getLogger("Bio-Quant.DSP.Kalman")
         self.kf = KalmanFilter(dim_x=3, dim_z=1)
         self.dt = dt  # Default dt
         self.last_ts = None
@@ -63,33 +65,15 @@ class GlucoseFilter:
         
         # 1. Handle Initialization
         if not self.initialized:
-            self.kf.x = np.array([[reading.value], [0.],[0.]])
-            self.last_ts = reading.timestamp
-            self.initialized = True
-            self._update_matrices(self.dt) 
-            return MetabolicSnapshot(
-                glucose=reading,
-                filtered_value=float(reading.value),
-                velocity=0.0,
-                acceleration=0.0
-            )
+            return self._initialize_from_reading(reading)
 
         # 2. Calculate actual dt from timestamps
         dt = MetabolicMath.get_dt(reading.timestamp, self.last_ts)
         
         if dt > medical_constants.STALE_DATA_TIMEOUT_SECS / 60.0:
-            # Stale data reset: avoid recursion to prevent stack overflow.
-            # Manually re-initialize state instead of calling update() again.
-            self.kf.x = np.array([[reading.value], [0.],[0.]])
-            self.last_ts = reading.timestamp
-            self.initialized = True
-            self._update_matrices(self.dt) 
-            return MetabolicSnapshot(
-                glucose=reading,
-                filtered_value=float(reading.value),
-                velocity=0.0,
-                acceleration=0.0
-            )
+            # Stale data reset: Deterministic re-initialization to ensure filter stability.
+            self.logger.warning(f"Data gap detected ({dt:.1f} mins). Re-initializing Kalman Filter state.")
+            return self._initialize_from_reading(reading)
             
         self._update_matrices(dt)
         self.last_ts = reading.timestamp
@@ -128,4 +112,17 @@ class GlucoseFilter:
             filtered_value=float(x),
             velocity=float(v),
             acceleration=float(a)
+        )
+
+    def _initialize_from_reading(self, reading: GlucoseReading) -> MetabolicSnapshot:
+        """Sets internal state to match the very first available reading."""
+        self.kf.x = np.array([[reading.value], [0.0], [0.0]])
+        self.last_ts = reading.timestamp
+        self.initialized = True
+        self._update_matrices(self.dt)
+        return MetabolicSnapshot(
+            glucose=reading,
+            filtered_value=float(reading.value),
+            velocity=0.0,
+            acceleration=0.0
         )

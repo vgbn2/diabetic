@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     PATIENT_WEIGHT_KG: float = 75.0
     PATIENT_HEIGHT_CM: float = 175.0
     PATIENT_ETHNICITY: str = "ASIAN" # Baseline for insulin resistance bias
-    PATIEN_NATIONALITY: str="VIETNAMESE"
+    PATIENT_NATIONALITY: str="VIETNAMESE"
     PATIENT_RELIGION: str = "NON_RELIGIOUS" 
     PATIENT_GENDER: str = "FEMALE"  # "MALE" or "FEMALE"
     PATIENT_DIABETES_TYPE: str = "T1D" # From E10.7 code

@@ -58,7 +58,7 @@ class Coordinator:
             diabetes_type=config.PATIENT_DIABETES_TYPE,
             age=config.PATIENT_AGE,
             ethnicity=config.PATIENT_ETHNICITY,
-            nationality=config.PATIEN_NATIONALITY,
+            nationality=config.PATIENT_NATIONALITY,
             religion=config.PATIENT_RELIGION,
             diagnosis_year=config.PATIENT_DIAGNOSIS_YEAR,
             activity_level=config.PATIENT_ACTIVITY_LEVEL,
@@ -161,11 +161,11 @@ class Coordinator:
 
         # 3b. Estimate Active Carbs/Insulin (COB/IOB) for Oracle Filtering
         # Approximation: Linear 4-hour decay
-        if snapshot.last_meal:
+        if snapshot.last_meal and snapshot.last_meal.carbs is not None:
             dt_m = (now - snapshot.last_meal.timestamp).total_seconds() / 60.0
             snapshot.active_carbs = max(0.0, snapshot.last_meal.carbs * (1.0 - dt_m / 240.0))
         
-        if snapshot.last_insulin:
+        if snapshot.last_insulin and snapshot.last_insulin.units is not None:
             dt_i = (now - snapshot.last_insulin.timestamp).total_seconds() / 60.0
             snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * (1.0 - dt_i / 240.0))
 
