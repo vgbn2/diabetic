@@ -19,9 +19,12 @@ from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker
 from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
 from diabetic.ui.cli_hud import RealTimeHUD
 from diabetic.ui.visualizer import MetabolicVisualizer
-from diabetic.ml_engine.metabolic_palace import MetabolicPalace
-from diabetic.utils.audit_logger import AuditLogger
 from diabetic.utils.stateless_push import StatelessPush
+from diabetic.utils.audit_logger import AuditLogger
+try:
+    from diabetic.ml_engine.metabolic_palace import MetabolicPalace
+except ImportError:
+    MetabolicPalace = None
 
 class Coordinator:
     """
@@ -52,11 +55,24 @@ class Coordinator:
             weight_kg=config.PATIENT_WEIGHT_KG,
             height_cm=config.PATIENT_HEIGHT_CM,
             gender=config.PATIENT_GENDER,
-            diabetes_type=config.PATIENT_DIABETES_TYPE
+            diabetes_type=config.PATIENT_DIABETES_TYPE,
+            age=config.PATIENT_AGE,
+            ethnicity=config.PATIENT_ETHNICITY,
+            nationality=config.PATIEN_NATIONALITY,
+            religion=config.PATIENT_RELIGION,
+            diagnosis_year=config.PATIENT_DIAGNOSIS_YEAR,
+            activity_level=config.PATIENT_ACTIVITY_LEVEL,
+            fructosamin=config.PATIENT_FRUCTOSAMIN,
+            is_inflamed=config.PATIENT_INFLAMMATORY_MARKER,
+            cycle_start=config.PATIENT_CYCLE_START
         )
         self.visualizer = MetabolicVisualizer(output_dir="charts")
         self.pusher = StatelessPush()
-        self.palace = MetabolicPalace()
+        try:
+            self.palace = MetabolicPalace()
+        except Exception as e:
+            self.logger.warning(f"MetabolicPalace initialization failed: {e}. Semantic memory disabled.")
+            self.palace = None
 
         self.snapshots: List[MetabolicSnapshot] = []
 
@@ -142,6 +158,16 @@ class Coordinator:
             self.logger.warning(f"In-depth ingestion failed: {e}. Falling back to defaults.")
             snapshot.last_meal = self.last_meal
             snapshot.cardiac = None
+
+        # 3b. Estimate Active Carbs/Insulin (COB/IOB) for Oracle Filtering
+        # Approximation: Linear 4-hour decay
+        if snapshot.last_meal:
+            dt_m = (now - snapshot.last_meal.timestamp).total_seconds() / 60.0
+            snapshot.active_carbs = max(0.0, snapshot.last_meal.carbs * (1.0 - dt_m / 240.0))
+        
+        if snapshot.last_insulin:
+            dt_i = (now - snapshot.last_insulin.timestamp).total_seconds() / 60.0
+            snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * (1.0 - dt_i / 240.0))
 
         # 4. Feature Extraction
         _, acceleration = MetabolicMath.extract_kinematics(self.snapshots + [snapshot])
@@ -315,7 +341,7 @@ class Coordinator:
             prediction_4h = self.twin.predict_4h_trajectory(
                 history, 
                 meals=[self.last_meal],
-                insulin_doses=history[-1].last_insulin if history else None
+                insulin_doses=[history[-1].last_insulin] if history and history[-1].last_insulin else None
             )
 
             # FIX L1: store peak now for use by auto_tune at t+230 min
