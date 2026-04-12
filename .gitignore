@@ -61,6 +61,8 @@ env.bak/
 venv.bak/
 
 # Project specific
+.gsd/
+mempalace/
 data/raw/*
 data/processed/*
 models/*.pkl
