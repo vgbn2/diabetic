@@ -2,6 +2,11 @@ from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import Optional, List
 
+# =============================================================================
+# 🩸 [LAYER 1: RAW PHYSIOLOGICAL TELEMETRY]
+# =Focus: High-Fidelity Biometric Streams (Glucose, Cardiac)
+# =============================================================================
+
 class GlucoseReading(BaseModel):
     """Represents a single glucose data point from CGM."""
     timestamp: datetime
@@ -10,6 +15,29 @@ class GlucoseReading(BaseModel):
     source: str = "nightscout"
     unit: str = "mmol/L"
 
+# =============================================================================
+# 🌍 [LAYER 2: ENVIRONMENTAL & SOCIAL CONTEXT]
+# =Focus: External Forcing and Atmospheric Conditions
+# =============================================================================
+class EnvironmentReading(BaseModel):
+    """External environment data (Layer 2 - The Adaptive Regimes)."""
+    timestamp: datetime
+    temperature: float
+    humidity: float
+    aqi: Optional[float] = None
+
+class CardiacReading(BaseModel):
+    """Represents heart rate and variability data."""
+    timestamp: datetime
+    bpm: int
+    hrv: float  # Heart Rate Variability index
+    mean_bpm: Optional[int] = None
+    max_bpm: Optional[int] = None
+    signal_quality: float = 1.0
+# =============================================================================
+# 💊 [LAYER 3: BEHAVIORAL INPUT EVENTS]
+# =Focus: User Agency and Pharmacodynamic Events
+# =============================================================================
 class InsulinDose(BaseModel):
     """Represents an insulin delivery event."""
     timestamp: datetime
@@ -32,22 +60,11 @@ class HydrationEvent(BaseModel):
     milliliters: float
     type: str = "WATER"  # "WATER", "ELECTROLYTE", "CAFFEINE"
 
-class EnvironmentReading(BaseModel):
-    """External environment data (Layer 2 - The Adaptive Regimes)."""
-    timestamp: datetime
-    temperature: float
-    humidity: float
-    aqi: Optional[float] = None
 
-class CardiacReading(BaseModel):
-    """Represents heart rate and variability data."""
-    timestamp: datetime
-    bpm: int
-    hrv: float  # Heart Rate Variability index
-    mean_bpm: Optional[int] = None
-    max_bpm: Optional[int] = None
-    signal_quality: float = 1.0
-
+# =============================================================================
+# 🔬 [LAYER 4: SYSTEM STATES & METADATA]
+# =Focus: User Feedback, Signal Integrity, and Forecasting
+# =============================================================================
 class UserFeedback(BaseModel):
     """Subjective truth collected via UI (Layer 5 - The Interaction Layer)."""
     timestamp: datetime
@@ -63,6 +80,10 @@ class ProbabilisticForecast(BaseModel):
     p95: float
     std_dev: float
 
+# =============================================================================
+# 💎 [LAYER 5: UNIFIED METABOLIC SYNTHESIS]
+# =Focus: 5-Layer Integration (MetabolicSnapshot)
+# =============================================================================
 class MetabolicSnapshot(BaseModel):
     """A unified state representing a person's metabolic condition at a point in time (5-Layer Synthesis)."""
     glucose: GlucoseReading

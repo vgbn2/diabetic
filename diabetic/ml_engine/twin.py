@@ -3,7 +3,12 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Tuple, Optional
 from diabetic.registry import MealEvent, InsulinDose, MetabolicSnapshot
 from diabetic import medical_constants as mc
+from diabetic.utils.temporal import temporal_engine
 
+# =============================================================================
+# 🧬 [PHYSIOLOGICAL CORE]
+# =Focus: Static Biometric Baselines and Hormonal/Circadian Multipliers
+# =============================================================================
 class DigitalTwin:
     """
     Simulation engine for 4-hour forward projections of carb AND insulin impact.
@@ -75,7 +80,11 @@ class DigitalTwin:
             cycle_pos = (2 * np.pi * (days_since % mc.MENSTRUAL_CYCLE_DAYS) / mc.MENSTRUAL_CYCLE_DAYS)
             resistance += (mc.LUTEAL_RESISTANCE_MULT - 1.0) * (0.5 * (1 + np.sin(cycle_pos - np.pi/2)))
             
-        return resistance
+        # 4. Temporal Intelligence (Weekends/Holidays)
+        temporal_mult = temporal_engine.get_multiplier(timestamp)
+        resistance *= temporal_mult
+
+        return np.clip(resistance, 0.7, 1.5)
 
     def get_environmental_multiplier(self, env: Optional[MetabolicSnapshot]) -> float:
         """
@@ -109,6 +118,10 @@ class DigitalTwin:
             
         return np.clip(multiplier, 0.7, 1.4)
 
+# =============================================================================
+# 🧪 [PHARMACODYNAMIC ENGINE]
+# =Focus: Carb Absorption (GI-Tuning) and Insulin Depletion (PK/PD)
+# =============================================================================
     def simulate_carb_impact(self, carbs_g: float, gi_type: str = "STARCH", 
                             resolution_mins: Optional[float] = None,
                             stochastic: bool = False,
@@ -174,6 +187,10 @@ class DigitalTwin:
         curve = impact * total_drop
         return curve
 
+# =============================================================================
+# 🔮 [TRAJECTORY PREDICTION]
+# =Focus: 4-Hour Forward Projections and Monte Carlo Confidence Ranges
+# =============================================================================
     def predict_4h_trajectory(self, history: List[MetabolicSnapshot],
                               meals: Optional[List[MealEvent]] = None,
                               insulin_doses: Optional[List[InsulinDose]] = None,
@@ -254,6 +271,10 @@ class DigitalTwin:
 
         return mean_traj, p5_traj, p95_traj
 
+# =============================================================================
+# 🛠️ [METABOLIC TUNING]
+# =Focus: Adaptive Gain, Self-Correction, and Regime Inference
+# =============================================================================
     def auto_tune(self, actual_glucose: float, predicted_glucose: float, context: str = "MEAL"):
         if predicted_glucose <= 0.1: return
         error_ratio = actual_glucose / predicted_glucose

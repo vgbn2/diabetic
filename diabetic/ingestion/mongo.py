@@ -5,6 +5,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from diabetic.config import config
 from diabetic.registry import GlucoseReading, InsulinDose, MealEvent
 
+# =============================================================================
+# 🔌 [DATABASE CONNECTIVITY]
+# =Focus: Mongo Connection Pooling, Atlas Auth, and Collection Initialization
+# =============================================================================
 class MongoDBClient:
     """
     High-Fidelity Ingestor for direct Nightscout MongoDB access.
@@ -34,6 +38,10 @@ class MongoDBClient:
         except Exception as e:
             self.logger.error(f"Failed to initialize MongoDB client: {e}")
 
+# =============================================================================
+# 📥 [INGESTION & DATA RETRIEVAL]
+# =Focus: Real-Time Polling and Historical Backfilling (Glucose & Treatments)
+# =============================================================================
     async def fetch_recent_glucose(self, count: int = 10) -> List[GlucoseReading]:
         """Fetches the latest N glucose readings (Live Mode)."""
         if self.entries is None: return []
@@ -93,6 +101,10 @@ class MongoDBClient:
             
         return doses, meals
 
+# =============================================================================
+# 📊 [CLINICAL REPORTING & MAINTENANCE]
+# =Focus: CSV Exports, Regional Sync, and Retention Cleanup Logic
+# =============================================================================
     async def export_sensor_periods(self, output_dir: str = "data/exports", scrub_pii: bool = True):
         """
         Segments the entire history into 15-day sensor chapters and exports as CSV.
@@ -215,6 +227,10 @@ class MongoDBClient:
         except Exception as e:
             self.logger.error(f"Cleanup failed: {e}")
 
+# =============================================================================
+# 🛠️ [DOCUMENT MAPPING]
+# =Focus: Translating Raw BSON to Standardized Metabolic Registry Types
+# =============================================================================
     def _map_entry_to_reading(self, doc: dict) -> Optional[GlucoseReading]:
         """Maps a Nightscout entry (SGV) document to a GlucoseReading."""
         try:

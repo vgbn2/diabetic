@@ -13,6 +13,10 @@ try:
 except (ImportError, ModuleNotFoundError):
     PALACE_ENABLED = False
 
+# =============================================================================
+# 📖 [AUDIT CONNECTIVITY]
+# =Focus: Persistent Logging Initialization (MongoDB + SQLite WAL)
+# =============================================================================
 class AuditLogger:
     """
     Persistent Audit Logger using MongoDB and local SQLite.
@@ -72,6 +76,10 @@ class AuditLogger:
         """)
         self.local_conn.commit()
 
+# =============================================================================
+# 📝 [EVENT LOGGING ENGINE]
+# =Focus: JSON Persistence, Semantic Indexing, and Priority Routing
+# =============================================================================
     async def log_event(self, event_type: str, data: dict, level: str = "INFO"):
         """Stores an event in the database and local logger."""
         timestamp = datetime.now(timezone.utc)
@@ -135,6 +143,10 @@ class AuditLogger:
             except Exception as e:
                 self.logger.error(f"Failed to semantically index event: {e}")
 
+# =============================================================================
+# 🩸 [TELEMETRY & USER FEEDBACK]
+# =Focus: Raw Reading Persistence and RLHF Feedback Loops
+# =============================================================================
     async def log_reading(self, reading: GlucoseReading):
         """Persists a raw glucose reading for long-term audit (Task 7.1.7)."""
         await self.log_event("RAW_READING", reading.model_dump())
@@ -171,6 +183,10 @@ class AuditLogger:
             "is_false_alarm": action != "confirm"
         })
 
+# =============================================================================
+# 🛡️ [ADMINISTRATIVE INTEGRITY]
+# =Focus: Secure Tracking of Maintenance and System Overrides
+# =============================================================================
     async def log_admin_action(self, action_name: str, details: dict):
         """Logs sensitive administrative actions (Task III)."""
         await self.log_event("ADMIN_ACTION", {

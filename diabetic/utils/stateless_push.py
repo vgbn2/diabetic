@@ -5,6 +5,10 @@ from datetime import datetime
 from typing import Dict, Any
 from diabetic.config import config
 
+# =============================================================================
+# 🔗 [FRONTEND INTEGRATION]
+# =Focus: Proactive Data Propagation to the Render Cloud Hub
+# =============================================================================
 class StatelessPush:
     """
     Handles proactive data pushing from Backend to Frontend (Render).
@@ -42,6 +46,10 @@ class StatelessPush:
         except Exception as e:
             self.logger.error(f"Failed to push data to frontend: {e}")
 
+# =============================================================================
+# 💓 [INFRASTRUCTURE HEARTBEAT]
+# =Focus: Render Service Persistence and Stay-Alive Pings
+# =============================================================================
     async def heartbeat(self):
         """Self-pinging mechanism to keep the Render server alive."""
         if not self.push_url:

@@ -10,6 +10,11 @@ from diabetic.utils.audit_logger import AuditLogger
 
 # Core orchestration logic relocated to diabetic/main.py
 
+# =============================================================================
+# 🧪 [METABOLIC SIMULATION]
+# =Focus: Synthetic Stress Scenarios and Trajectory Validation
+# =============================================================================
+
 async def run_simulation(scenario: str):
     """
     Runs a metabolic simulation scenario.
@@ -52,6 +57,10 @@ async def run_simulation(scenario: str):
         await asyncio.sleep(0.05) # Speed up simulation
 
 async def handle_admin_commands(cmd: str):
+# =============================================================================
+# 🛠️ [ADMINISTRATIVE OVERRIDES]
+# =Focus: Secure CLI Data Management, Exports, and Retention Policy
+# =============================================================================
     """
     Handles secure administrative and data management commands.
     Task III Implementation.
@@ -73,6 +82,10 @@ async def handle_admin_commands(cmd: str):
         print("[ADMIN] Cleanup complete.")
         await audit.log_admin_action("CLEANUP_COMPLETE", {"retention_days": 180})
 
+# =============================================================================
+# 🚀 [SERVICE ORCHESTRATION]
+# =Focus: CLI Argument Parsing and Live/Offline Mode Bootstrapping
+# =============================================================================
 async def main():
     if len(sys.argv) > 1:
         cmd = sys.argv[1]

@@ -31,6 +31,10 @@ try:
 except ImportError:
     MetabolicPalace = None
 
+# =============================================================================
+# 🏗️ [ORCHESTRATION ARCHITECTURE]
+# =Focus: System Initialization, State Tracking, and Registry Managed
+# =============================================================================
 class Coordinator:
     """
     The Orchestrator. Connects ingestion, smoothing, prediction, and alerting.
@@ -93,6 +97,10 @@ class Coordinator:
 
         self.is_running = False
 
+# =============================================================================
+# 📡 [DATA SYNTHESIS PIPELINE]
+# =Focus: Signal Quality, Smoothing (Kalman), and Multi-Stream Ingestion
+# =============================================================================
     async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
         """Standard processing pipeline for a single reading."""
         task = asyncio.create_task(self.audit.log_reading(reading))
@@ -250,6 +258,10 @@ class Coordinator:
         # 10. Update Continuous Chart
         self.visualizer.update_continuous(self.snapshots)
 
+# =============================================================================
+# 🎮 [INTERACTION & INTERFACE]
+# =Focus: Alert Dispatching, Meal Logging, and User Feedback
+# =============================================================================
     def _active_meal(self, ns_meal: Optional[MealEvent]) -> Optional[MealEvent]:
         """
         Arbitrate between Telegram-logged meal and Nightscout-logged meal.
@@ -271,6 +283,10 @@ class Coordinator:
         self.logger.error(f"ALERT DISPATCHED: {alert.type} - {alert.message}")
         await self.notifier.send_alert(alert)
 
+# =============================================================================
+# ⚙️ [MAINTENANCE & REGIONAL SYNC]
+# =Focus: Automated Daily Sync, Retention Policy, and Timezone Discovery
+# =============================================================================
     async def _maintenance_loop(self):
         """
         Automated Daily Maintenance (Task III). 
@@ -313,6 +329,10 @@ class Coordinator:
             # Ensure we don't double-trigger if maintenance is extremely fast
             await asyncio.sleep(60)
 
+# =============================================================================
+# 🔄 [LIVE MONITORING LOOP]
+# =Focus: Real-Time Polling, Backfill Management, and HUD Orchestration
+# =============================================================================
     async def start_live_mode(self):
         """Polls Nightscout every N minutes and runs HUD."""
         self.is_running = True
@@ -443,6 +463,10 @@ class Coordinator:
         # FIX: removed asyncio.wait() from here — it belongs only in stop(), not
         # in an interactive command handler (was blocking up to 5s on every /meal).
 
+# =============================================================================
+# 🛑 [TERMINATION]
+# =Focus: Graceful Shutdown of Background Tasks and Services
+# =============================================================================
     async def stop(self):
         """Graceful shutdown of all services."""
         self.is_running = False

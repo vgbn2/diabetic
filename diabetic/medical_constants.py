@@ -11,8 +11,8 @@ Sections:
 """
 
 # =============================================================================
-# 🏗️ LAYER 1: THE BIO-BASAL VESSEL (Static Physiology & Hardware)
-# =Focus: Personal baseline and real-time biometric telemetry.
+# 🏗️ [LAYER 1: THE BIO-BASAL VESSEL]
+# =Focus: Static Physiology, Hardware Sampling, and Critical Thresholds
 # =============================================================================
 
 # ── Unit Conversion ──────────────────────────────────────────────────────────
@@ -60,8 +60,8 @@ KOVATCHEV_FLOOR_MGDL = 20.0
 KOVATCHEV_CEIL_MGDL  = 600.0
 
 # =============================================================================
-# 🌊 LAYER 2: THE ADAPTIVE REGIMES (Forced Oscillations)
-# =Focus: External and internal biological forcing.
+# 🌊 [LAYER 2: THE ADAPTIVE REGIMES]
+# =Focus: Climatology, Hormonal Cycles, and Temporal Intelligence
 # =============================================================================
 
 # ── Environmental Forcing (Climatology) ──────────────────────────────────────
@@ -79,6 +79,11 @@ MENSTRUAL_CYCLE_DAYS     = 28.0  # standard baseline
 LUTEAL_RESISTANCE_MULT   = 1.30  # +30% resistance peak during luteal phase
 REGIME_SENSITIVITY_MULT  = 1.25  # +25% resistance during sick/dawn phenomenon
 
+# ── Temporal Intelligence (Layer 2) ──────────────────────────────────────────
+WEEKEND_RESISTANCE_MULT  = 1.05  # +5% resistance context
+HOLIDAY_RESISTANCE_MULT  = 1.10  # +10% resistance context
+FESTIVAL_RESISTANCE_MULT = 1.20  # +20% resistance context (e.g. Tet, Social Eating)
+
 # ── Metabolic Braking (Spillover & Defense) ──────────────────────────────────
 # RENAL_THRESHOLD: above this, kidneys spill glucose into urine.
 RENAL_THRESHOLD       = 10.0   # mmol/L
@@ -90,8 +95,8 @@ LOW_SIDE_THRESHOLD    = 3.9    # mmol/L
 LOW_SIDE_BRAKE_SLOPE  = 0.25   # damping aggressive drops
 
 # =============================================================================
-# 🎮 LAYER 3: THE BEHAVIORAL ENGINE (Agency & Pharmacodynamics)
-# =Focus: User-driven inputs and lifestyle choices.
+# 🎮 [LAYER 3: THE BEHAVIORAL ENGINE]
+# =Focus: Pharmacodynamics, User Agency, and Activity Context
 # =============================================================================
 
 # ── Sensitivity Defaults (Seeds for auto-tuning) ─────────────────────────────
@@ -118,8 +123,8 @@ HRV_STRESS_CEILING      = 30
 HRV_SLEEP_FLOOR         = 60
 
 # =============================================================================
-#  LAYER 4: THE META-CORRECTION LAYER (Self-Awareness)
-# =Focus: Systemic error and forecast auditing.
+# 🔬 [LAYER 4: THE META-CORRECTION LAYER]
+# =Focus: Systemic Error, Signal Integrity, and Forecast Auditing
 # =============================================================================
 
 # ── Projection Parameters ────────────────────────────────────────────────────
@@ -138,8 +143,8 @@ REGIME_MIN_SNAPSHOTS = 200      # minimum for detection
 SNAPSHOT_CAP         = 300      # ring buffer cap
 
 # =============================================================================
-#  LAYER 5: THE INTERACTION LAYER (Interface & User logic)
-# =Focus: Subjective truth and personal calibration.
+# 📱 [LAYER 5: THE INTERACTION LAYER]
+# =Focus: User Logic, Alert Interface, and Personalized Calibration
 # =============================================================================
 
 ALERT_RETRY_MINS        = 15.0 # Delay between repeated critical alerts

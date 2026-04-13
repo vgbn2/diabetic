@@ -5,7 +5,10 @@ from typing import Optional, Dict
 from diabetic import medical_constants
 
 class Settings(BaseSettings):
-    # Core Medical APIs
+# =============================================================================
+# 🔐 [LAYER 0: CORE MEDICAL & ALERTING APIs]
+# =Focus: Nightscout, OpenWeather, and Telegram Credentials
+# =============================================================================
     NIGHTSCOUT_URL: str = ""
     API_SECRET: str = ""
     OPENWEATHER_API_KEY: str = ""
@@ -16,26 +19,34 @@ class Settings(BaseSettings):
     USER_ID: int = Field(0, validation_alias="TELEGRAM_CHAT_ID")
     CAREGIVER_ID: Optional[int] = None
     
-    # System Config
+# =============================================================================
+# ⚙️ [SYSTEM RUNTIME & SAMPLING]
+# =Focus: Polling intervals, Logging levels, and Data Stability
+# =============================================================================
     LOG_LEVEL: str = "INFO"
     DATA_POLLING_INTERVAL: int = 150  # 2,5 minutes
-    # Medical Units
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
     
-    # Patient Profile (Layer One - Physiological Baselines)
+# =============================================================================
+# 🧬 [PHYSIOLOGICAL BASELINE PROFILE]
+# =Focus: Layer 1 Hardware/Biological Static Markers
+# =============================================================================
     PATIENT_AGE: int = 30
     PATIENT_WEIGHT_KG: float = 75.0
     PATIENT_HEIGHT_CM: float = 175.0
-    PATIENT_ETHNICITY: str = "ASIAN" # Baseline for insulin resistance bias
+    PATIENT_ETHNICITY: str = "ASIAN" 
     PATIENT_NATIONALITY: str="VIETNAMESE"
     PATIENT_RELIGION: str = "NON_RELIGIOUS" 
-    PATIENT_GENDER: str = "FEMALE"  # "MALE" or "FEMALE"
-    PATIENT_DIABETES_TYPE: str = "T1D" # From E10.7 code
+    PATIENT_GENDER: str = "FEMALE"  
+    PATIENT_DIABETES_TYPE: str = "T1D" 
     PATIENT_DIAGNOSIS_YEAR: int = 2020
     PATIENT_ACTIVITY_LEVEL: str = "MODERATE"
     
-    # Regional & Maintenance Logic
+# =============================================================================
+# 🌍 [REGIONAL & MAINTENANCE LOGIC]
+# =Focus: Timezone Discovery and Automated Sync Scheduling
+# =============================================================================
     USER_TIMEZONE: str = Field("Asia/Ho_Chi_Minh", validation_alias="BIO_USER_TIMEZONE")
     MAINTENANCE_LOCAL_HOUR: int = Field(3, validation_alias="BIO_MAINTENANCE_HOUR")
     
@@ -53,7 +64,10 @@ class Settings(BaseSettings):
     LATITUDE: float  = medical_constants.DEFAULT_LATITUDE
     LONGITUDE: float = medical_constants.DEFAULT_LONGITUDE
     
-    # UI & Alert Settings
+# =============================================================================
+# 📱 [INTERACTION & HARDWARE STACK]
+# =Focus: UI Settings, BLE Addresses, and Data Persistence
+# =============================================================================
     UI_SETTINGS: Dict[str, str] = {
         "EMERGENCY": "🚨 EMERGENCY",
         "HIGH": "⚠️ WARNING",
