@@ -171,6 +171,13 @@ class AuditLogger:
             "is_false_alarm": action != "confirm"
         })
 
+    async def log_admin_action(self, action_name: str, details: dict):
+        """Logs sensitive administrative actions (Task III)."""
+        await self.log_event("ADMIN_ACTION", {
+            "action": action_name,
+            **details
+        }, level="WARNING")
+
 if __name__ == "__main__":
     import asyncio
     async def test():

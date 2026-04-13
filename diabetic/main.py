@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from diabetic.config import config
 from diabetic.coordinator import Coordinator
 from diabetic.registry import GlucoseReading
+from diabetic.ingestion.mongo import MongoDBClient
+from diabetic.utils.audit_logger import AuditLogger
 
 # Core orchestration logic relocated to diabetic/main.py
 
@@ -49,6 +51,28 @@ async def run_simulation(scenario: str):
         await coordinator._process_reading(r)
         await asyncio.sleep(0.05) # Speed up simulation
 
+async def handle_admin_commands(cmd: str):
+    """
+    Handles secure administrative and data management commands.
+    Task III Implementation.
+    """
+    audit = AuditLogger()
+    mongo = MongoDBClient()
+    
+    if cmd == "export":
+        print(f"\n[ADMIN] Initiating 15-day sensor period export...")
+        await audit.log_admin_action("EXPORT_START", {"scope": "all_sensor_periods"})
+        await mongo.export_sensor_periods()
+        print("[ADMIN] Export complete. files saved to data/exports/")
+        await audit.log_admin_action("EXPORT_COMPLETE", {"scope": "all_sensor_periods"})
+        
+    elif cmd == "cleanup":
+        print(f"\n[ADMIN] Enforcing 180-day retention policy cleanup...")
+        await audit.log_admin_action("CLEANUP_START", {"retention_days": 180})
+        await mongo.run_retention_cleanup(days=180)
+        print("[ADMIN] Cleanup complete.")
+        await audit.log_admin_action("CLEANUP_COMPLETE", {"retention_days": 180})
+
 async def main():
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
@@ -58,9 +82,11 @@ async def main():
         elif cmd == "live":
             coordinator = Coordinator()
             await coordinator.start_live_mode()
+        elif cmd in ["export", "cleanup"]:
+            await handle_admin_commands(cmd)
         else:
             print(f"Unknown command: {cmd}")
-            print("Usage: python main.py [crash|faint|simulation|live]")
+            print("Usage: python main.py [crash|faint|simulation|live|export|cleanup]")
     else:
         # Default to regular simulation
         await run_simulation("simulation")

@@ -1,12 +1,17 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 from typing import List, Optional
 from diabetic.config import config
 from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent
 from diabetic import medical_constants
 from diabetic.ingestion.nightscout import NightscoutClient
+from diabetic.ingestion.mongo import MongoDBClient
 from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.ingestion.weather import WeatherIngestor
 from diabetic.dsp.kalman import GlucoseFilter
@@ -37,6 +42,7 @@ class Coordinator:
         self.background_tasks = set()
         self.audit = audit_logger or AuditLogger()
         self.client = NightscoutClient()
+        self.mongo = MongoDBClient()
         self.hr_client = HeartRateIngestor()
         self.weather_client = WeatherIngestor()
         self.filter = GlucoseFilter()
@@ -265,6 +271,48 @@ class Coordinator:
         self.logger.error(f"ALERT DISPATCHED: {alert.type} - {alert.message}")
         await self.notifier.send_alert(alert)
 
+    async def _maintenance_loop(self):
+        """
+        Automated Daily Maintenance (Task III). 
+        Staggered based on USER_TIMEZONE for load distribution.
+        """
+        tz = ZoneInfo(config.USER_TIMEZONE)
+        self.logger.info(f"Regional Maintenance Loop active. Local Timezone: {config.USER_TIMEZONE}")
+        
+        while self.is_running:
+            now = datetime.now(tz)
+            
+            # Target is the next occurrence of config.MAINTENANCE_LOCAL_HOUR
+            target = now.replace(hour=config.MAINTENANCE_LOCAL_HOUR, minute=0, second=0, microsecond=0)
+            
+            if now >= target:
+                target += timedelta(days=1)
+                
+            sleep_secs = (target - now).total_seconds()
+            self.logger.info(f"REGIONAL_SYNC_SCHEDULED: Next maintenance window in {sleep_secs/3600:.1f} hours (Local: {target.strftime('%H:%M')})")
+            
+            await asyncio.sleep(sleep_secs)
+            
+            # Maintenance Cycle
+            try:
+                self.logger.warning("Starting Regional Maintenance Cycle...")
+                await self.audit.log_admin_action("AUTO_MAINTENANCE_START", {"local_time": str(target)})
+                
+                # 1. Incremental Sync
+                await self.mongo.sync_current_period()
+                
+                # 2. Retention Policy Cleanup
+                await self.mongo.run_retention_cleanup(days=180)
+                
+                await self.audit.log_admin_action("AUTO_MAINTENANCE_COMPLETE", {"local_time": str(target)})
+                self.logger.info("Regional Maintenance Cycle complete.")
+            except Exception as e:
+                self.logger.error(f"Maintenance cycle failed: {e}")
+                await self.audit.log_admin_action("AUTO_MAINTENANCE_FAILED", {"error": str(e)})
+            
+            # Ensure we don't double-trigger if maintenance is extremely fast
+            await asyncio.sleep(60)
+
     async def start_live_mode(self):
         """Polls Nightscout every N minutes and runs HUD."""
         self.is_running = True
@@ -281,6 +329,10 @@ class Coordinator:
         task_hr = asyncio.create_task(self.hr_client.start_ble_client())
         self.background_tasks.add(task_hr)
         task_hr.add_done_callback(self.background_tasks.discard)
+
+        task_maint = asyncio.create_task(self._maintenance_loop())
+        self.background_tasks.add(task_maint)
+        task_maint.add_done_callback(self.background_tasks.discard)
 
         if self.bot_app:
             self.logger.info("Initializing Telegram Bot callback loop...")
@@ -301,7 +353,15 @@ class Coordinator:
             gap_mins = (now - last_ts).total_seconds() / 60
             if medical_constants.SAMPLING_INTERVAL_MINS < gap_mins < config.BACKFILL_MAX_HOURS * 60:
                 self.logger.info(f"Detected {gap_mins:.1f} min gap. Starting backfill...")
-                backfill_readings = await self.client.fetch_since(last_ts)
+                
+                # OPTIMIZATION: Prioritize MongoDB for deep historical backfills
+                if self.mongo.entries is not None:
+                    self.logger.info("Using MongoDB for high-fidelity backfill optimization...")
+                    backfill_readings = await self.mongo.fetch_since(last_ts)
+                else:
+                    self.logger.info("Using Nightscout REST API for backfill...")
+                    backfill_readings = await self.client.fetch_since(last_ts)
+                
                 if backfill_readings:
                     self.logger.info(f"Filling {len(backfill_readings)} missing readings...")
                     for r in backfill_readings:
@@ -310,11 +370,22 @@ class Coordinator:
 
         while self.is_running:
             try:
-                readings = await self.client.fetch_recent_glucose(count=1)
+                # Polling Strategy: Try MongoDB first if configured (zero latency), fallback to REST
+                readings = []
+                if self.mongo.entries is not None:
+                    try:
+                        readings = await self.mongo.fetch_recent_glucose(count=1)
+                    except Exception as me:
+                        self.logger.warning(f"MongoDB polling failed, falling back to REST: {me}")
+                
+                if not readings:
+                    readings = await self.client.fetch_recent_glucose(count=1)
+                
                 if readings:
                     await self._process_reading(readings[0])
             except (ValueError, ConnectionError) as e:
-                if "URL" in str(e) or "token" in str(e).lower() or "Unauthorized" in str(e):
+                # Only crash if both backends fail with fatal Auth errors
+                if ("URL" in str(e) or "token" in str(e).lower() or "Unauthorized" in str(e)) and self.mongo.entries is None:
                     self.logger.error(f"FATAL ERROR: {e}. Shutting down.")
                     self.is_running = False
                     raise SystemExit(1)

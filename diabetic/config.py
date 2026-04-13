@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     PATIENT_DIAGNOSIS_YEAR: int = 2020
     PATIENT_ACTIVITY_LEVEL: str = "MODERATE"
     
+    # Regional & Maintenance Logic
+    USER_TIMEZONE: str = Field("Asia/Ho_Chi_Minh", validation_alias="BIO_USER_TIMEZONE")
+    MAINTENANCE_LOCAL_HOUR: int = Field(3, validation_alias="BIO_MAINTENANCE_HOUR")
+    
     # Clinical Lab Results (Personalization 2.2)
     PATIENT_FRUCTOSAMIN: float = 347.6 # High avg sugar sentinel
     PATIENT_MICROALBUMINURIA: bool = True # Based on 0.3g/L Protein

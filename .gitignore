@@ -65,6 +65,7 @@ venv.bak/
 mempalace/
 data/raw/*
 data/processed/*
+data/exports/
 models/*.pkl
 models/*.pt
 models/*.h5
@@ -72,4 +73,5 @@ logs/
 charts/
 scratch/
 storage/
+testsprite_tests/
 *.bak
