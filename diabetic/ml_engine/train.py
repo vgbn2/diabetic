@@ -77,7 +77,7 @@ def train_metabolic_cnn(
     # 5. Save Weights
     weight_dir = Path("diabetic/ml_engine/weights")
     weight_dir.mkdir(parents=True, exist_ok=True)
-    weight_path = weight_dir / "diabetic_cnn.pth"
+    weight_path = weight_dir / "diabetic_cnn_v14.pth"
     torch.save(model.state_dict(), weight_path)
     print(f"\nSUCCESS: Model Weights Saved to {weight_path}")
 

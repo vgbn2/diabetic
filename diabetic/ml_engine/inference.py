@@ -135,18 +135,26 @@ class MetabolicInferenceRunner:
         tensor = torch.tensor([temporal_data], dtype=torch.float32).transpose(1, 2)
         return tensor
 
-    def run_inference_on_window(self, df_window: pd.DataFrame, now: datetime) -> float:
+    def run_inference_on_window(self, df_window: pd.DataFrame, now: datetime) -> dict:
         """
-        Special entry point for simulations where we already have the window.
+        Runs Multi-Task inference. Returns a dict of [glucose, heart_rate].
         """
         temp_x = self._prepare_temporal_tensor(df_window)
         static_y = self._assemble_static_vector(now)
         
         with torch.no_grad():
-            output = self.model(temp_x, static_y)
+            output = self.model(temp_x, static_y)[0] # (2,)
             
-        # Rescale back to mmol/L (trained on g/20)
-        return output.item() * 20.0
+        # Rescale: 
+        # Glucose: val * 20.0
+        # HR: (val * 120.0) + 60.0
+        g_pred = float(output[0]) * 20.0
+        hr_pred = (float(output[1]) * 120.0) + 60.0
+        
+        return {
+            "glucose": g_pred,
+            "heart_rate": hr_pred
+        }
 
     def run_live_inference(self, csv_path: str):
         """
