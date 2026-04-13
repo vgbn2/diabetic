@@ -73,6 +73,7 @@ ENVIRONMENT_TEMP_BASELINE       = 22.0 # °C
 ENVIRONMENT_Q10_COEFFICIENT     = 0.20 # +20% sensitivity per 10°C rise
 ENVIRONMENT_AQI_BASELINE        = 15.0 # WHO PM2.5 baseline (µg/m³)
 ENVIRONMENT_POLLUTION_RESISTANCE = 0.03 # +3% resistance per 10µg/m³ rise
+ENVIRONMENT_INDOOR_DAMPING      = 0.30 # 70% reduction in external forcing when indoors
 
 # ── Hormonal & Circadian Waves ──────────────────────────────────────────────
 MENSTRUAL_CYCLE_DAYS     = 28.0  # standard baseline

@@ -25,6 +25,7 @@ class EnvironmentReading(BaseModel):
     temperature: float
     humidity: float
     aqi: Optional[float] = None
+    is_outdoor: bool = False
 
 class CardiacReading(BaseModel):
     """Represents heart rate and variability data."""
@@ -59,6 +60,13 @@ class HydrationEvent(BaseModel):
     timestamp: datetime
     milliliters: float
     type: str = "WATER"  # "WATER", "ELECTROLYTE", "CAFFEINE"
+
+class ScheduleEvent(BaseModel):
+    """Represents a planned activity or state (Layer 3 - Behavioral Ground Truth)."""
+    name: str
+    type: str  # SLEEP, WORK, WORKOUT, COMMUTE
+    is_outdoor: bool = False
+    sensitivity_mult: float = 1.0  # Multiplier for ISF/CSF
 
 
 # =============================================================================

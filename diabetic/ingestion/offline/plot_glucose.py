@@ -12,6 +12,22 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
     print(f"plotting data from: {csv_path}")
 
     df = pd.read_csv(csv_path)
+    
+    # --- UNIVERSAL COLUMN MAPPING ---
+    # Map forecast/live columns to standard plotting names
+    col_map = {
+        'timestamp_utc': 'timestamp',
+        'glucose_mmol_l': 'glucose',
+        'insulin_units': 'bolus',
+        'meal_carbs': 'meal'
+    }
+    df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+
+    # Ensure standard columns exist, even if empty
+    for col in ['bolus', 'meal', 'basal']:
+        if col not in df.columns:
+            df[col] = 0.0
+
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp')
 
@@ -56,10 +72,10 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
         # ── clean glucose trace ────────────────────────────────────────────────
         data_clean = pd.DataFrame()
         if not data.empty:
+            # Preserve neural columns if present by taking mean during grouping
             data_clean = (
                 data.dropna(subset=['glucose'])
-                    .groupby('timestamp')['glucose']
-                    .mean()
+                    .groupby('timestamp').mean(numeric_only=True)
                     .reset_index()
                     .sort_values('timestamp')
                     .reset_index(drop=True)
@@ -99,7 +115,15 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
 
             ax.plot(seg['timestamp'], seg['glucose'],
                     color='#0984e3', linewidth=2.0, alpha=0.9, zorder=5,
-                    label='Glucose' if start_idx == 0 else "")
+                    label='Glucose (Raw)' if start_idx == 0 else "")
+            
+            # Neural Overlay (if present)
+            if 'glucose_neural' in seg.columns:
+                ax.plot(seg['timestamp'], seg['glucose_neural'],
+                        color='#6c5ce7', linewidth=2.0, linestyle='--',
+                        alpha=0.8, zorder=6,
+                        label='CNN Forecast' if start_idx == 0 else "")
+
             ax.scatter(seg['timestamp'], seg['glucose'],
                        color='#0984e3', s=10, alpha=0.12, edgecolors='none', zorder=6)
             start_idx = gap_idx

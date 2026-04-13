@@ -4,6 +4,7 @@ from typing import List, Tuple, Optional
 from diabetic.registry import MealEvent, InsulinDose, MetabolicSnapshot
 from diabetic import medical_constants as mc
 from diabetic.utils.temporal import temporal_engine
+from diabetic.utils.schedule import schedule_manager
 
 # =============================================================================
 # 🧬 [PHYSIOLOGICAL CORE]
@@ -83,6 +84,12 @@ class DigitalTwin:
         # 4. Temporal Intelligence (Weekends/Holidays)
         temporal_mult = temporal_engine.get_multiplier(timestamp)
         resistance *= temporal_mult
+        
+        # 5. Behavioral Ground Truth (Schedule Overrides)
+        event = schedule_manager.get_event_at(timestamp)
+        if event:
+            # Shift resistance based on event multiplier (e.g., 0.8 for workout)
+            resistance *= event.sensitivity_mult
 
         return np.clip(resistance, 0.7, 1.5)
 
@@ -115,6 +122,12 @@ class DigitalTwin:
         # 3. Humidity Friction (Heat Stress)
         if e.humidity > 85.0 and e.temperature > 28.0:
             multiplier += 0.05 # +5% fixed penalty for high heat index stress
+            
+        # 4. Exposure Awareness (Indoor/Outdoor Damping)
+        if not e.is_outdoor:
+            # If indoors, reduce the entire environmental forcing (forcing = multiplier - 1.0)
+            forcing = multiplier - 1.0
+            multiplier = 1.0 + (forcing * mc.ENVIRONMENT_INDOOR_DAMPING)
             
         return np.clip(multiplier, 0.7, 1.4)
 

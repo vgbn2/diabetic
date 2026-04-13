@@ -42,6 +42,14 @@ class DiabeticCNN(nn.Module):
     2. Static Path (Layer 1-2): Input(B, S) -> Linear -> ReLU -> Linear -> Embedding
     3. Head: Concat(Hidden, Embedding) -> Linear -> Output(B, 1)
     """
+    # --- Metadata for Inference (Phase 15.2) ---
+    STATIC_FEATURE_LABELS = [
+        "age", "weight", "height", "gender", "ethnicity", 
+        "diabetes_type", "diagnosis_year", "activity_level",
+        "fructosamin", "is_inflamed", "is_sick", 
+        "temporal_multiplier", "temp_forcing", "hum_forcing", "aqi_forcing"
+    ]
+
     def __init__(
         self,
         temporal_channels: int = 2,
@@ -91,7 +99,7 @@ class DiabeticCNN(nn.Module):
         self.head = nn.Sequential(
             nn.Linear(c.lstm_hidden_size + c.static_emb_size, c.head_hidden_size),
             nn.ReLU(),
-            nn.Linear(c.head_hidden_size, 1)
+            nn.Linear(c.head_hidden_size, 2) # Output: [Glucose, HeartRate]
         )
 
     def forward(self, temporal_x: torch.Tensor, static_y: torch.Tensor) -> torch.Tensor:

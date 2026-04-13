@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 # =Focus: Nightscout, OpenWeather, and Telegram Credentials
 # =============================================================================
     NIGHTSCOUT_URL: str = ""
-    API_SECRET: str = ""
+    API_SECRET: str = Field("", validation_alias="NIGHTSCOUT_API_SECRET")
     OPENWEATHER_API_KEY: str = ""
     WEATHER_MOCK_MODE: bool = True
     
