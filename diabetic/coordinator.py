@@ -20,6 +20,7 @@ from diabetic.dsp.metabolic_math import MetabolicMath
 from diabetic.dsp.context_classifier import classify_context
 from diabetic.ml_engine.predictor import GlucoseForecaster
 from diabetic.ml_engine.twin import DigitalTwin
+from diabetic.ml_engine.inference import MetabolicInferenceRunner
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert
 from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
 from diabetic.ui.cli_hud import RealTimeHUD
@@ -55,6 +56,7 @@ class Coordinator:
         # no model_path so is_trained was always False and the model was dead code.
         model_path = "models/xgboost_v1.json"
         self.forecaster = GlucoseForecaster(model_path=model_path if os.path.exists(model_path) else None)
+        self.neural_runner = MetabolicInferenceRunner()
 
         self.alert_guard = DecisionMatrix()
         self.circuit_breaker = CircuitBreaker()
@@ -189,8 +191,16 @@ class Coordinator:
         snapshot.atr_14 = MetabolicMath.calculate_atr(self.snapshots + [snapshot], period=14)
 
         # 5. Forecasting
-        prediction_30m, _ = self.forecaster.predict(self.snapshots + [snapshot], horizon_mins=30.0)
-        snapshot.predict_30m = prediction_30m
+        # Strategy: Use Multi-Task Neural Engine as primary, fallback to kinematics if warming up.
+        neural_res = self.neural_runner.run_inference_on_snapshots(self.snapshots + [snapshot])
+        if neural_res:
+            prediction_30m = neural_res["glucose"]
+            snapshot.predict_30m = prediction_30m
+            snapshot.predicted_hr = neural_res["heart_rate"]
+            self.logger.info(f"NEURAL_BRAIN: Pred Glu={prediction_30m:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
+        else:
+            prediction_30m, _ = self.forecaster.predict(self.snapshots + [snapshot], horizon_mins=30.0)
+            snapshot.predict_30m = prediction_30m
 
         # 5b. Context Classification
         snapshot.activity_label = classify_context(snapshot).value

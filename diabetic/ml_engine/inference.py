@@ -157,6 +157,57 @@ class MetabolicInferenceRunner:
             "heart_rate": hr_pred
         }
 
+    def run_inference_on_snapshots(self, snapshots: List[MetabolicSnapshot]) -> Optional[dict]:
+        """
+        Bridges the live Coordinator memory to the Multi-Task Neural Engine.
+        Expects a list of MetabolicSnapshot objects (last 30).
+        """
+        if len(snapshots) < self.seq_len:
+            return None
+            
+        recent = snapshots[-self.seq_len:]
+        temporal_data = []
+        
+        for i, snap in enumerate(recent):
+            g_val = snap.glucose.value
+            
+            # 1. Cardiac Channel: Use real BPM if available, fallback to synthesis
+            if snap.cardiac and snap.cardiac.bpm:
+                hr_val = float(snap.cardiac.bpm)
+            else:
+                # Estimate velocity for synthesis fallback
+                vel = 0.0
+                if i > 0:
+                    # Approximation based on the previous snapshot in the list
+                    vel = (g_val - recent[i-1].glucose.value) / 5.0
+                
+                # Reading object for synthesizer
+                from diabetic.registry import GlucoseReading
+                reading = GlucoseReading(
+                    timestamp=snap.glucose.timestamp,
+                    value=g_val,
+                    trend=snap.glucose.trend
+                )
+                cardiac = cardiac_synthesizer.estimate(reading, velocity=vel)
+                hr_val = float(cardiac.bpm)
+                
+            # 2. Normalize
+            g_scaled = g_val / 20.0
+            hr_scaled = (hr_val - 60.0) / 120.0
+            temporal_data.append([g_scaled, hr_scaled])
+            
+        # Torch expects (Batch, Channels, Time)
+        tensor = torch.tensor([temporal_data], dtype=torch.float32).transpose(1, 2)
+        static_y = self._assemble_static_vector(datetime.now(timezone.utc))
+        
+        with torch.no_grad():
+            output = self.model(tensor, static_y)[0]
+            
+        return {
+            "glucose": float(output[0]) * 20.0,
+            "heart_rate": (float(output[1]) * 120.0) + 60.0
+        }
+
     def run_live_inference(self, csv_path: str):
         """
         Main entry point: Read live file -> Build tensors -> Forward Pass.

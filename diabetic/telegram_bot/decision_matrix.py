@@ -32,10 +32,17 @@ class DecisionMatrix:
         """Runs the bimodal detection logic using centralized medical constants."""
         g = current.filtered_value
         v = current.velocity
-        hr = current.bpm or self.config.PATIENT_BPM_BASELINE
+        
+        # 🔗 [CARDIAC CONSENSUS]
+        # Real-time BPM + Neural Prediction = Total Contextual Awareness
+        hr = current.bpm if current.bpm else current.predicted_hr
+        if not hr:
+            hr = self.config.PATIENT_BPM_BASELINE
+            
         hrv = current.hrv or self.config.PATIENT_HRV_BASELINE
+        is_active = hr > 115 # Exercise Context Buffer
 
-        # 1. CRITICAL HYPO (Current)
+        # 1. CRITICAL HYPO (Current) - Never suppressed
         if g < medical_constants.HYPO_CRITICAL:
             return Alert(
                 timestamp=datetime.now(timezone.utc),
@@ -45,13 +52,16 @@ class DecisionMatrix:
                 glucose_value=g
             )
 
-        # 2. WARNING HYPO (Predicted)
+        # 2. WARNING HYPO (Predicted) - Suppressed if active (exercise drop)
         if prediction_30m < medical_constants.HYPO_WARNING and v < 0:
+            if is_active and g > 4.5:
+                return None # Exercise-induced drop; suppressed to avoid false alarm
+                
             return Alert(
                 timestamp=datetime.now(timezone.utc),
                 type="WARNING_HYPO",
                 severity=AlertSeverity.HIGH,
-                message=f"{self.config.UI_SETTINGS['HIGH']}: Predicted to hit {prediction_30m:.1f} mmol/L in 30 mins. (Vel: {v:.1f})",
+                message=f"{self.config.UI_SETTINGS['HIGH']}: Predicted to hit {prediction_30m:.1f} mmol/L in 30 mins. (Vel: {v:.1f}) | Context: {'ACTIVE' if is_active else 'REST'}",
                 glucose_value=g,
                 prediction_30m=prediction_30m
             )

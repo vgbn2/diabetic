@@ -112,6 +112,7 @@ class MetabolicSnapshot(BaseModel):
     acceleration: float = 0.0
     atr_14: float = 0.0
     predict_30m: float = 0.0
+    predicted_hr: float = 0.0 # Neuromorphic Multi-Task Forecast
     forecast: Optional[ProbabilisticForecast] = None # P5/P95 Range
     residual_error: float = 0.0  # Error from previous forecast
     sensor_health: float = 1.0   # Diagnostic integrity (0.0 - 1.0)

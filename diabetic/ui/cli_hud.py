@@ -43,7 +43,7 @@ class RealTimeHUD:
         )
         return Panel(grid, style="white on blue")
 
-    def _get_metrics_table(self, snapshot: Optional[MetabolicSnapshot], prediction: float) -> Table:
+    def _get_metrics_table(self, snapshot: Optional[MetabolicSnapshot]) -> Table:
         table = Table(title="Live Metabolic Signal", expand=True)
         table.add_column("Metric", style="cyan")
         table.add_column("Value", justify="right")
@@ -53,12 +53,16 @@ class RealTimeHUD:
             unit = "mmol/L" if config.PREFER_MMOL else "mg/dL"
             table.add_row("Glucose", f"{snapshot.filtered_value:.1f}", unit)
             table.add_row("Velocity", f"{snapshot.velocity:+.2f}", f"{unit}/min")
-            table.add_row("Acceleration", f"{snapshot.acceleration:+.3f}", f"{unit}/min²")
-            bpm = snapshot.bpm if snapshot.bpm else "MOCK"
+            
+            bpm = snapshot.bpm if snapshot.bpm else "---"
             hrv = f"{snapshot.hrv:.1f}" if snapshot.hrv else "---"
             table.add_row("Heart Rate", f"{bpm}", "bpm")
             table.add_row("HRV (RMSSD)", hrv, "ms")
-            table.add_row("30m Forecast", f"{prediction:.1f}", style="bold yellow")
+            
+            table.add_section()
+            # 🔮 Neural Layer
+            table.add_row("Pred Glucose (30m)", f"{snapshot.predict_30m:.1f}", style="bold yellow")
+            table.add_row("Pred Heart Rate", f"{snapshot.predicted_hr:.1f}", style="bold magenta")
         else:
             table.add_row("Glucose", "WAITING...", "")
 
@@ -72,30 +76,19 @@ class RealTimeHUD:
             border_style=color
         )
 
-    def generate_display(self, snapshot: Optional[MetabolicSnapshot] = None, prediction: float = 0.0, alert_status: str = "IDLE") -> Layout:
+    def generate_display(self, snapshot: Optional[MetabolicSnapshot] = None, alert_status: str = "IDLE") -> Layout:
         self.layout["header"].update(self._get_header())
-        self.layout["metrics"].update(self._get_metrics_table(snapshot, prediction))
+        self.layout["metrics"].update(self._get_metrics_table(snapshot))
         self.layout["status"].update(self._get_status_panel(alert_status))
-        self.layout["footer"].update(Panel(Text(f"Polling Nightscout every {config.DATA_POLLING_INTERVAL}s...", justify="center", style="dim")))
+        self.layout["footer"].update(Panel(Text(f"Polling Bio-Telemery every {config.DATA_POLLING_INTERVAL}s...", justify="center", style="dim")))
         return self.layout
 
     async def run_live(self, coordinator):
         """Connects to the coordinator and runs the live display."""
-        cached_pred = 0.0
-        last_snap_count = 0
-
         with Live(self.generate_display(), refresh_per_second=1, screen=True) as live:
             while coordinator.is_running:
                 latest_snap = coordinator.snapshots[-1] if coordinator.snapshots else None
-
-                # FIX: only recompute prediction when a new snapshot arrives.
-                # Previously called predict_30m() every second — wasted CPU since
-                # readings only arrive every 2.5 minutes.
-                if latest_snap and len(coordinator.snapshots) != last_snap_count:
-                    cached_pred = coordinator.forecaster.predict_30m(coordinator.snapshots)
-                    last_snap_count = len(coordinator.snapshots)
-
-                live.update(self.generate_display(latest_snap, cached_pred, "IDLE"))
+                live.update(self.generate_display(latest_snap, "IDLE"))
                 await asyncio.sleep(1)
 
 if __name__ == "__main__":
