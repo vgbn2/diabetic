@@ -23,16 +23,17 @@ class MetabolicInferenceRunner:
         self.config = CNNConfig()
         self.model = DiabeticCNN(config=self.config)
         
-        # Load Personalized Weights (Phase 16)
-        weight_path = Path(__file__).parent / "weights" / "diabetic_cnn.pth"
+        # Load Personalized Weights (Phase 14+)
+        # We now use the v14 weights for multi-task support
+        weight_path = Path(__file__).parent / "weights" / "diabetic_cnn_v14.pth"
         if weight_path.exists():
             try:
                 self.model.load_state_dict(torch.load(weight_path, map_location=torch.device('cpu')))
-                print(f"Personalized CNN Weights Loaded: {weight_path}")
+                print(f"Personalized CNN Multi-Task v14 Weights Loaded: {weight_path}")
             except Exception as e:
-                print(f"Warning: Failed to load personalized weights: {e}. Running in Cold Mode.")
+                print(f"Warning: Failed to load multi-task weights: {e}. Running in Cold Mode.")
         else:
-            print("Warning: No weights found. Running in Cold Mode.")
+            print(f"Warning: No weights found at {weight_path}. Running in Cold Mode.")
             
         self.model.eval() # Inference mode
 
