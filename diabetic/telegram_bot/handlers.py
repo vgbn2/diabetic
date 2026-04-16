@@ -5,6 +5,7 @@ from typing import Optional
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from functools import wraps
 
 from diabetic.config import config
 from diabetic.telegram_bot.decision_matrix import Alert
@@ -88,9 +89,30 @@ class TelegramApp:
         self.app.add_handler(CommandHandler("meal", self._meal_cmd))
         self.app.add_handler(CallbackQueryHandler(self._handle_button))
 
+    def authorized_only(func):
+        """Decorator to restrict access to the patient and caregiver only."""
+        @wraps(func)
+        async def wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            user = update.effective_user
+            authorized_ids = [config.USER_ID]
+            if config.CAREGIVER_ID:
+                authorized_ids.append(config.CAREGIVER_ID)
+            
+            if user.id not in authorized_ids:
+                self.logger.warning(f"UNAUTHORIZED ACCESS ATTEMPT: User {user.id} ({user.username}) tried to call {func.__name__}")
+                if update.message:
+                    await update.message.reply_text("⛔ Access Denied. You are not authorized to control this Metabolic Engine.")
+                elif update.callback_query:
+                    await update.callback_query.answer("⛔ Access Denied.", show_alert=True)
+                return
+            return await func(self, update, context)
+        return wrapper
+
+    @authorized_only
     async def _start_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Bio-Quant Predictor Online. Monitoring signals...")
 
+    @authorized_only
     async def _meal_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler for /meal [desc] [grams]"""
         if not context.args or len(context.args) < 1:
@@ -112,6 +134,7 @@ class TelegramApp:
         except ValueError:
             await update.message.reply_text("Please provide grams as a number at the end.")
 
+    @authorized_only
     async def _handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
