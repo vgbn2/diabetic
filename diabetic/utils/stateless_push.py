@@ -42,9 +42,11 @@ class StatelessPush:
                 response = await client.post(self.push_url, json=serialized_data)
                 # We don't block on failure, just log it.
                 if response.status_code != 200:
-                    self.logger.warning(f"Push failed with status {response.status_code}")
+                    self.logger.debug(f"Telemetry sync skipped: status {response.status_code} (Endpoint: {self.push_url})")
+        except (httpx.ConnectError, httpx.TimeoutException) as ce:
+            self.logger.debug(f"Telemetry endpoint unreachable: {ce}. Continuing in headless mode.")
         except Exception as e:
-            self.logger.error(f"Failed to push data to frontend: {e}")
+            self.logger.error(f"Unexpected push failure: {e}")
 
 # =============================================================================
 # 💓 [INFRASTRUCTURE HEARTBEAT]

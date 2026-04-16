@@ -17,11 +17,11 @@ class NightscoutClient:
         self.secret = config.API_SECRET
         self.hashed_secret = hashlib.sha1(self.secret.encode()).hexdigest()
         
-    def _get_headers(self) -> dict:
+    def _get_headers(self, use_plain: bool = False) -> dict:
         """Determines the correct authentication header."""
         headers = {"Accept": "application/json"}
-        # Check if secret is a Bearer token (subject-...) or raw secret
-        if self.secret.startswith("subject-") or len(self.secret) > 32:
+        # If explicitly told to use plain, or if it's already a token
+        if use_plain or self.secret.startswith("subject-") or len(self.secret) > 32:
             headers["Authorization"] = f"Bearer {self.secret}"
         else:
             headers["api-secret"] = self.hashed_secret
@@ -115,9 +115,13 @@ class NightscoutClient:
         
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(endpoint, params=params, headers=headers)
-                response.raise_for_status()
+                response = await client.get(endpoint, params=params, headers=self._get_headers())
                 
+                # C3 Fix: Fallback to plain secret if 401 (Handles Heroku v3+ issues)
+                if response.status_code == 401:
+                    response = await client.get(endpoint, params=params, headers=self._get_headers(use_plain=True))
+                
+                response.raise_for_status()
                 treatments = response.json()
                 now = datetime.now(timezone.utc)
                 

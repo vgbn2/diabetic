@@ -18,7 +18,6 @@ from diabetic.dsp.kalman import GlucoseFilter
 from diabetic.dsp.signal_quality import SignalQuality
 from diabetic.dsp.metabolic_math import MetabolicMath
 from diabetic.dsp.context_classifier import classify_context
-from diabetic.ml_engine.predictor import GlucoseForecaster
 from diabetic.ml_engine.twin import DigitalTwin
 from diabetic.ml_engine.inference import MetabolicInferenceRunner
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert
@@ -52,10 +51,6 @@ class Coordinator:
         self.weather_client = WeatherIngestor()
         self.filter = GlucoseFilter()
 
-        # FIX: load XGBoost model if the file exists — previously always passed
-        # no model_path so is_trained was always False and the model was dead code.
-        model_path = "models/xgboost_v1.json"
-        self.forecaster = GlucoseForecaster(model_path=model_path if os.path.exists(model_path) else None)
         self.neural_runner = MetabolicInferenceRunner()
 
         self.alert_guard = DecisionMatrix()
@@ -199,7 +194,8 @@ class Coordinator:
             snapshot.predicted_hr = neural_res["heart_rate"]
             self.logger.info(f"NEURAL_BRAIN: Pred Glu={prediction_30m:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
         else:
-            prediction_30m, _ = self.forecaster.predict(self.snapshots + [snapshot], horizon_mins=30.0)
+            self.logger.warning("NEURAL_BRAIN: Inference failed. Kinetic context limited.")
+            prediction_30m = snapshot.glucose.value
             snapshot.predict_30m = prediction_30m
 
         # 5b. Context Classification
