@@ -70,7 +70,7 @@ async def handle_admin_commands(cmd: str):
         print(f"\n[ADMIN] Initiating 15-day sensor period export...")
         await audit.log_admin_action("EXPORT_START", {"scope": "all_sensor_periods"})
         await mongo.export_sensor_periods()
-        print("[ADMIN] Export complete. files saved to data/exports/")
+        print("[ADMIN] Export complete. files saved to storage/exports/")
         await audit.log_admin_action("EXPORT_COMPLETE", {"scope": "all_sensor_periods"})
         
     elif cmd == "cleanup":
@@ -106,7 +106,7 @@ async def main():
             await handle_admin_commands(cmd)
         else:
             print(f"Unknown command: {cmd}")
-            print("Usage: python main.py [crash|faint|simulation|live|export|cleanup]")
+            print("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup]")
     else:
         # Default to regular simulation
         await run_simulation("simulation")

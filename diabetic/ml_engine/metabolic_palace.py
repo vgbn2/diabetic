@@ -8,9 +8,12 @@ from typing import List, Dict, Any, Optional
 try:
     import chromadb
     from mempalace.searcher import search_memories
+    # Local configuration detection for relocated mempalace.yaml
+    LOCAL_PALACE_CONFIG = Path(__file__).parent.parent / "utils" / "mempalace" / "mempalace.yaml"
 except ImportError:
     # Fallback for environment verification
     chromadb = None
+    LOCAL_PALACE_CONFIG = None
 
 logger = logging.getLogger("diabetic.memory")
 

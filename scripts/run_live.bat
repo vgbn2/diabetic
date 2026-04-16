@@ -7,10 +7,12 @@ setlocal
 :: it will automatically wait 10 seconds and restart.
 
 :RESTART
-echo [%date% %time%] Starting BIO-QUANT Predictive Engine (LIVE MODE)...
+echo [%date% %time%] Starting BIO-QUANT Predictive Engine (LIVE MODULE MODE)...
 
-:: Run the engine
-python main.py live
+:: Step up from scripts/ to project root
+cd ..
+:: Run the engine as a module
+python -m diabetic.main live
 
 :: If python exits with error code (nonzero)
 if errorlevel 1 (

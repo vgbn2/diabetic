@@ -93,7 +93,7 @@ class MongoDBClient:
 # 📊 [CLINICAL REPORTING & MAINTENANCE]
 # =Focus: CSV Exports, Regional Sync, and Retention Cleanup Logic
 # =============================================================================
-    async def export_sensor_periods(self, output_dir: str = "data/exports", scrub_pii: bool = True):
+    async def export_sensor_periods(self, output_dir: str = "storage/exports", scrub_pii: bool = True):
         """
         Segments the entire history into 15-day sensor chapters and exports as CSV.
         Implements Task II core logic.
@@ -133,7 +133,7 @@ class MongoDBClient:
         except Exception as e:
             self.logger.error(f"Critical error during sensor period export: {e}")
 
-    async def sync_current_period(self, output_dir: str = "data/exports", scrub_pii: bool = True):
+    async def sync_current_period(self, output_dir: str = "storage/exports", scrub_pii: bool = True):
         """
         Calculates the active 15-day sensor window and synchronizes only that file.
         Task II Implementation.

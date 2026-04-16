@@ -1,7 +1,7 @@
 import sqlite3
 import json
 
-db_path = r"C:\Users\Lenovo\Desktop\VGBN\.vscode\CODEPTIT\hyperglycemia-faint-predictor\audit.db"
+db_path = r"C:\Users\Lenovo\Desktop\VGBN\.vscode\CODEPTIT\hyperglycemia-faint-predictor\storage\audit.db"
 try:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()

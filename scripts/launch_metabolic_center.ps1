@@ -6,8 +6,8 @@ $Tabs = @(
     @{Title="[SENSOR] L1/L2 - Ingestion & DSP"; Dir="."; Cmd="python -m diabetic.ingestion.nightscout"},
     @{Title="[BRAIN] L3 - ML Engine"; Dir="."; Cmd="python -m diabetic.ml_engine.predictor"},
     @{Title="[INTERFACE] L5 - HUD & Bot"; Dir="."; Cmd="python -m diabetic.ui.cli_hud"},
-    @{Title="[FORENSICS] L4 - Audit & Memory"; Dir="."; Cmd="python check_audit_db.py"},
-    @{Title="[COORDINATOR] Core - Master Loop"; Dir="."; Cmd="python main.py live"}
+    @{Title="[FORENSICS] L4 - Audit & Memory"; Dir="."; Cmd="python scripts/check_audit_db.py"},
+    @{Title="[COORDINATOR] Core - Master Loop"; Dir="."; Cmd="python -m diabetic.main live"}
 )
 
 # Check for Windows Terminal (wt.exe)
