@@ -106,7 +106,13 @@ async def main():
         await run_simulation("simulation")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nSystem stopped by user.")
+    while True:
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            print("\nSystem stopped by user.")
+            break
+        except Exception as e:
+            logging.error(f"FATAL SYSTEM CRASH: {e}. Attempting automated recovery in 30s...")
+            import time
+            time.sleep(30) # Cool-down to prevent rapid looping on fatal config errors
