@@ -13,6 +13,7 @@ from diabetic.ml_engine.synthetic_cardiac import cardiac_synthesizer
 from diabetic.utils.temporal import temporal_engine
 from diabetic.utils.schedule import schedule_manager
 from diabetic.registry import GlucoseReading
+from diabetic.utils.scaling_engine import scaling_engine
 
 class MetabolicInferenceRunner:
     """
@@ -56,35 +57,19 @@ class MetabolicInferenceRunner:
 
     def _assemble_static_vector(self, now: datetime) -> torch.Tensor:
         """
-        Maps the 15 bio-basal and environmental traits defined in ML_SPEC.
-        Includes exposure-aware damping.
+        Maps the 15 bio-basal and environmental traits via the ScalingEngine.
+        Includes exposure-aware damping for environmental forcing.
         """
         is_outdoor = self._infer_exposure(now)
+        vector = scaling_engine.assemble_static_vector(now).tolist()
         
-        # Layer 1: Static Traits
-        vector = [
-            config.PATIENT_AGE / 100.0,
-            config.PATIENT_WEIGHT_KG / 100.0,
-            config.PATIENT_HEIGHT_CM / 200.0,
-            1.0 if config.PATIENT_GENDER == "FEMALE" else 0.0,
-            1.0 if config.PATIENT_ETHNICITY == "ASIAN" else 0.0,
-            1.0 if config.PATIENT_DIABETES_TYPE == "T1D" else 0.0,
-            (now.year - config.PATIENT_DIAGNOSIS_YEAR) / 30.0,
-            0.5, # Activity label (Placeholder: Moderate)
-            config.PATIENT_FRUCTOSAMIN / 500.0,
-            1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
-            0.0, # is_sick (Placeholder)
+        # Override environmental forcing bits (indices 12, 13, 14 in the 15-feature vector)
+        # Based on Layer 2 Climatology logic.
+        if not is_outdoor:
+            vector[12] = 0.0 # Heat
+            vector[13] = 0.0 # Humidity
+            vector[14] = 0.0 # AQI
             
-            # Layer 2: Regime Forcing
-            temporal_engine.get_multiplier(now),
-            
-            # --- Environmental Forcing ---
-            # These are normalized by the DigitalTwin's exposure logic internally 
-            # for simulation, but here we provide them as raw model inputs.
-            0.0 if not is_outdoor else 1.0, # MOCK: Heat forcing impact simplified for CNN entry
-            0.0 if not is_outdoor else 1.0, # MOCK: Humidity forcing 
-            0.0 if not is_outdoor else 1.0  # MOCK: AQI forcing
-        ]
         return torch.tensor([vector], dtype=torch.float32)
 
     def _prepare_temporal_tensor(self, df: pd.DataFrame) -> torch.Tensor:
@@ -130,8 +115,9 @@ class MetabolicInferenceRunner:
             
             # Normalize for CNN: Glucose/20, BPM (60-180 range normalized to 0-1)
             # Matches MetabolicDataset: (hr - 60) / 120.0
-            g_scaled = g_val / 20.0
-            hr_scaled = (cardiac.bpm - 60) / 120.0
+            # Normalize for CNN via ScalingEngine
+            g_scaled = scaling_engine.scale_glucose(g_val)
+            hr_scaled = scaling_engine.scale_heart_rate(cardiac.bpm)
             temporal_data.append([g_scaled, hr_scaled])
 
         # Torch expects (Batch, Channels, Time)
@@ -194,8 +180,9 @@ class MetabolicInferenceRunner:
                 hr_val = float(cardiac.bpm)
                 
             # 2. Normalize
-            g_scaled = g_val / 20.0
-            hr_scaled = (hr_val - 60.0) / 120.0
+            # 2. Normalize via ScalingEngine
+            g_scaled = scaling_engine.scale_glucose(g_val)
+            hr_scaled = scaling_engine.scale_heart_rate(hr_val)
             temporal_data.append([g_scaled, hr_scaled])
             
         # Torch expects (Batch, Channels, Time)
