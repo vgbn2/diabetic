@@ -85,7 +85,13 @@ async def handle_admin_commands(cmd: str):
 # =Focus: CLI Argument Parsing and Live/Offline Mode Bootstrapping
 # =============================================================================
 async def main():
-    # 0. Cold Boot Database Warm-up (Wave 1)
+    # 0. Global Hygiene & Bootstrapping (Wave 1/3)
+    logging.basicConfig(
+        level=config.LOG_LEVEL,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    
     await db_manager.ensure_indices()
 
     if len(sys.argv) > 1:

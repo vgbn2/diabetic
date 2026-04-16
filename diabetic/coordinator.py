@@ -40,7 +40,6 @@ class Coordinator:
     The Orchestrator. Connects ingestion, smoothing, prediction, and alerting.
     """
     def __init__(self, audit_logger: Optional[AuditLogger] = None):
-        logging.basicConfig(level=config.LOG_LEVEL)
         self.logger = logging.getLogger("Bio-Quant.Coordinator")
 
         self.background_tasks = set()
