@@ -23,7 +23,7 @@ class MongoDBClient:
         self.entries = self.db_manager.entries
         self.treatments = self.db_manager.treatments
         
-        if not self.db_manager.entries:
+        if self.db_manager.entries is None:
             self.logger.warning("MongoDB Singleton not initialized or entries collection missing. Ingestion limited.")
 
 # =============================================================================
