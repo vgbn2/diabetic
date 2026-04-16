@@ -62,7 +62,9 @@ venv.bak/
 
 # Project specific
 .gsd/
+.agent/
 mempalace/
+mempalace.yaml
 data/raw/*
 data/processed/*
 data/exports/
@@ -73,5 +75,9 @@ logs/
 charts/
 scratch/
 storage/
+artifacts/
+tmp/
 testsprite_tests/
 *.bak
+audit.db
+entities.json
