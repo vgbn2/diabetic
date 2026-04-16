@@ -30,6 +30,7 @@ class HeartRateIngestor:
         # Aggregate statistics since last 5-min poll (Task 8.4.1)
         self.bpm_aggregate: List[int] = []
         self._last_reading_Snapshot: Optional[CardiacReading] = None
+        self.is_running = True
 
         self.address = getattr(config, "HEART_RATE_SENSOR_ADDRESS", None)
         self.is_mock = not self.address or self.address.upper() == "MOCK"
@@ -110,43 +111,60 @@ class HeartRateIngestor:
         HR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
         def notification_handler(sender, data):
-            # Ported from scripts/test_hr_input.py
-            
-            flags = data[0]
-            hr_format_16bit = flags & 0x01
-            hr = int.from_bytes(data[1:3], "little") if hr_format_16bit else data[1]
-            
-            # Parse RR intervals
-            offset = 3 if hr_format_16bit else 2
-            if flags & 0x08: offset += 2 # energy expended
-            
-            while offset + 1 < len(data):
-                raw = int.from_bytes(data[offset:offset+2], "little")
-                rr_ms = raw / 1024.0 * 1000.0
-                self.rr_buffer.append(rr_ms)
-                offset += 2
-            
-            # Rolling buffer (Wave 5: Centralized window)
-            if len(self.rr_buffer) > CARDIAC_WINDOW_SAMPLES:
-                self.rr_buffer = self.rr_buffer[-CARDIAC_WINDOW_SAMPLES:]
- 
-            rmssd=self.calculate_rmssd(self.rr_buffer)
-            self.bpm_aggregate.append(int(hr)) # Track for 5-min summary
-            
-            self._last_reading_Snapshot = CardiacReading(
-                timestamp=datetime.now(timezone.utc),
-                bpm=int(hr),
-                hrv=round(rmssd, 2)
-            )
+            """Processes BLE GATT notifications for Heart Rate & RR-Intervals."""
+            try:
+                flags = data[0]
+                hr_format_16bit = flags & 0x01
+                hr = int.from_bytes(data[1:3], "little") if hr_format_16bit else data[1]
+                
+                # Health Check: Filter out physiological impossibilities
+                if hr < 30 or hr > 220:
+                    return
+
+                # Parse RR intervals (Task 8.4.1)
+                offset = 3 if hr_format_16bit else 2
+                if flags & 0x08: offset += 2 # energy expended
+                
+                new_rr = []
+                while offset + 1 < len(data):
+                    raw = int.from_bytes(data[offset:offset+2], "little")
+                    rr_ms = raw / 1024.0 * 1000.0
+                    
+                    # BIOLOGICAL FILTER: RR intervals > 300ms (200 BPM) and < 2000ms (30 BPM)
+                    if 300 < rr_ms < 2000:
+                        new_rr.append(rr_ms)
+                    offset += 2
+                
+                self.rr_buffer.extend(new_rr)
+                
+                # Rolling circular buffer management
+                if len(self.rr_buffer) > CARDIAC_WINDOW_SAMPLES:
+                    self.rr_buffer = self.rr_buffer[-CARDIAC_WINDOW_SAMPLES:]
+    
+                rmssd = self.calculate_rmssd(self.rr_buffer)
+                self.bpm_aggregate.append(int(hr)) # Track for 5-min summary
+                
+                self._last_reading_Snapshot = CardiacReading(
+                    timestamp=datetime.now(timezone.utc),
+                    bpm=int(hr),
+                    hrv=round(rmssd, 2)
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to parse Heart Rate GATT data: {e}")
 
         while True:
+            if not self.is_running: break
             try:
-                self.logger.info(f"Connecting to BLE sensor {self.address}...")
-                async with BleakClient(self.address) as client:
-                    self.logger.info("BLE Connected.")
+                self.logger.info(f"Attempting BLE Connection: {self.address}...")
+                async with BleakClient(self.address, timeout=20.0) as client:
+                    self.logger.info(f"BLE Success: Connected to {self.address}")
                     await client.start_notify(HR_UUID, notification_handler)
-                    while client.is_connected:
+                    
+                    while client.is_connected and self.is_running:
                         await asyncio.sleep(5)
+                    
+                    self.logger.warning("BLE Disconnected gracefully.")
             except Exception as e:
-                self.logger.error(f"BLE Connection lost/failed: {e}. Retrying in {config.BLE_RECONNECT_SECS}s...")
+                # RECONNECTION BACKOFF: prevent CPU thrashing
+                self.logger.error(f"BLE Connection failed: {e}. Retry in {config.BLE_RECONNECT_SECS}s")
                 await asyncio.sleep(config.BLE_RECONNECT_SECS)
