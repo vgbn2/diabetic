@@ -2,9 +2,9 @@ from matplotlib.path import Path
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
-from motor.motor_asyncio import AsyncIOMotorClient
 from diabetic.config import config
 from diabetic.registry import GlucoseReading, InsulinDose, MealEvent
+from diabetic.utils.db import db_manager
 
 # =============================================================================
 # 🔌 [DATABASE CONNECTIVITY]
@@ -16,28 +16,15 @@ class MongoDBClient:
     Bypasses REST API for high-performance historical backfills and live polling.
     """
     def __init__(self):
-        self.uri = config.MONGO_URI
         self.logger = logging.getLogger("Bio-Quant.Ingestion.Mongo")
-        self.client: Optional[AsyncIOMotorClient] = None
-        self.db = None
-        self.entries = None
-        self.treatments = None
+        self.db_manager = db_manager
         
-        if not self.uri:
-            self.logger.warning("MONGO_URI not configured. MongoDB ingestion disabled.")
-            return
-
-        try:
-            # TLS/SSL is required for Atlas; serverSelectionTimeout ensures we don't hang
-            self.client = AsyncIOMotorClient(self.uri, serverSelectionTimeoutMS=5000)
-            # Nightscout default DB name is usually part of URI, but we'll ensure 'nightscout' fallback
-            db_name = self.uri.split('/')[-1].split('?')[0] or "nightscout"
-            self.db = self.client[db_name]
-            self.entries = self.db["entries"]
-            self.treatments = self.db["treatments"]
-            self.logger.info(f"MongoDB client initialized for database: {db_name}")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize MongoDB client: {e}")
+        # Reference collections from singleton
+        self.entries = self.db_manager.entries
+        self.treatments = self.db_manager.treatments
+        
+        if not self.db_manager.entries:
+            self.logger.warning("MongoDB Singleton not initialized or entries collection missing. Ingestion limited.")
 
 # =============================================================================
 # 📥 [INGESTION & DATA RETRIEVAL]
@@ -182,14 +169,30 @@ class MongoDBClient:
             self.logger.error(f"Incremental sync failed: {e}")
 
     async def _export_period_to_csv(self, start: datetime, end: datetime, path: "Path", scrub_pii: bool):
-        """Internal helper to write a specific time-slice to CSV."""
+        """Internal helper to write a specific time-slice to CSV using optimized native queries."""
         import csv
         
-        readings = await self.fetch_since(start)
-        # Filter to ensure we don't go past the 'end' of this specific chunk
-        period_readings = [r for r in readings if r.timestamp <= end]
+        if self.entries is None: return
         
-        if not period_readings:
+        start_ms = start.timestamp() * 1000
+        end_ms = end.timestamp() * 1000
+        
+        readings = []
+        try:
+            # OPTIMIZED: pass date range to MongoDB query instead of Python filtering
+            cursor = self.entries.find({
+                "date": {"$gte": start_ms, "$lte": end_ms}
+            }).sort("date", 1)
+            
+            async for doc in cursor:
+                reading = self._map_entry_to_reading(doc)
+                if reading:
+                    readings.append(reading)
+        except Exception as e:
+            self.logger.error(f"Query optimization failure unexpectedly in export: {e}")
+            return
+        
+        if not readings:
             return
 
         with open(path, 'w', newline='') as f:
@@ -197,7 +200,7 @@ class MongoDBClient:
             # Header: PII scrubbing means we only keep strictly relevant metabolic signals
             writer.writerow(["timestamp_utc", "glucose_mmol_l", "trend", "source"])
             
-            for r in period_readings:
+            for r in readings:
                 writer.writerow([
                     r.timestamp.isoformat(),
                     round(r.value, 2),
@@ -205,7 +208,7 @@ class MongoDBClient:
                     "clinical_scrubbed" if scrub_pii else r.source
                 ])
         
-        self.logger.info(f"  Generated: {path.name} ({len(period_readings)} readings)")
+        self.logger.info(f"  Generated: {path.name} ({len(readings)} readings)")
 
     async def run_retention_cleanup(self, days: int = 180):
         """

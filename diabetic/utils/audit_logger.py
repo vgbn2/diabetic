@@ -4,9 +4,9 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional, List
-from motor.motor_asyncio import AsyncIOMotorClient
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
+from diabetic.utils.db import db_manager
 try:
     from diabetic.ml_engine.metabolic_palace import MetabolicPalace
     PALACE_ENABLED = True
@@ -23,12 +23,16 @@ class AuditLogger:
     Tracks all alerts, system status changes, and user feedback.
     """
     def __init__(self):
-        self.uri = config.MONGO_URI
+        self.db_manager = db_manager
         self.local_db_path = config.LOCAL_DB_PATH
-        self.client: Optional[AsyncIOMotorClient] = None
-        self.db = None
-        self.collection = None
         self.logger = logging.getLogger("Bio-Quant.Audit")
+        
+        # Initialize Collections from Singleton
+        self.collection = self.db_manager.audit_logs
+        if self.collection is not None:
+             self.logger.info("MongoDB Audit Logging enabled via shared singleton.")
+        else:
+             self.logger.warning("MongoDB URI missing; audit logging restricted to local SQLite.")
         
         self.palace = None
         if PALACE_ENABLED:
@@ -37,16 +41,6 @@ class AuditLogger:
             except Exception as e:
                 self.logger.warning(f"Failed to initialize Metabolic Palace: {e}")
                 self.palace = None
-
-        # Initialize MongoDB (connect if URI provided)
-        if self.uri:
-            try:
-                self.client = AsyncIOMotorClient(self.uri, serverSelectionTimeoutMS=5000)
-                self.db = self.client["bio_quant"]
-                self.collection = self.db["audit_logs"]
-                self.logger.info("MongoDB client initialised.")
-            except Exception as e:
-                self.logger.warning(f"MongoDB connection failed (cloud logging disabled): {e}")
 
         # Initialize SQLite (Task 8.1.2)
         try:

@@ -7,6 +7,7 @@ from diabetic.coordinator import Coordinator
 from diabetic.registry import GlucoseReading
 from diabetic.ingestion.mongo import MongoDBClient
 from diabetic.utils.audit_logger import AuditLogger
+from diabetic.utils.db import db_manager
 
 # Core orchestration logic relocated to diabetic/main.py
 
@@ -84,6 +85,9 @@ async def handle_admin_commands(cmd: str):
 # =Focus: CLI Argument Parsing and Live/Offline Mode Bootstrapping
 # =============================================================================
 async def main():
+    # 0. Cold Boot Database Warm-up (Wave 1)
+    await db_manager.ensure_indices()
+
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
         if cmd in ["crash", "faint", "simulation", "normal"]:
