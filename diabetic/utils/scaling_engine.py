@@ -1,0 +1,59 @@
+import numpy as np
+from datetime import datetime, timezone
+from typing import Optional
+from diabetic.config import config
+from diabetic.utils.temporal import temporal_engine
+
+class ScalingEngine:
+    """
+    Centralized scaling and normalization engine for the Metabolic Intelligence Suite.
+    Ensures 1:1 parity between training data (MetabolicDataset) and live inference.
+    """
+    
+    # ── Static Mapping Rules (Tier 1 Metadata) ────────────────────────────────
+    GENDER_MAP = {"FEMALE": 0.0, "MALE": 1.0, "OTHER": 0.5}
+    ETHNICITY_MAP = {
+        "ASIAN": 0.1, 
+        "CAUCASIAN": 0.2, 
+        "AFRICAN": 0.3, 
+        "HISPANIC": 0.4,
+        "UNKNOWN": 0.0  # Safe fallback to prevent collision
+    }
+    DIABETES_TYPE_MAP = {"T1D": 1.0, "T2D": 0.5, "PRE": 0.2}
+
+    @classmethod
+    def assemble_static_vector(cls, now: Optional[datetime] = None) -> np.ndarray:
+        """
+        Assembles the 15-feature static trait vector exactly as used in training.
+        """
+        if now is None:
+            now = datetime.now(timezone.utc)
+            
+        vector = [
+            config.PATIENT_AGE / 100.0,
+            config.PATIENT_WEIGHT_KG / 150.0,
+            config.PATIENT_HEIGHT_CM / 250.0,
+            cls.GENDER_MAP.get(config.PATIENT_GENDER, 0.0),
+            cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),
+            cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),
+            (2026 - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
+            0.5, # Default activity level (Layer 3 anchor)
+            config.PATIENT_FRUCTOSAMIN / 500.0,
+            1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
+            0.0, # is_sick (Dynamic state flag)
+            temporal_engine.get_multiplier(now),
+            1.0, 1.0, 1.0 # Climatology defaults (Temp, AQI, UV)
+        ]
+        return np.array(vector, dtype=np.float32)
+
+    @staticmethod
+    def scale_glucose(value: float) -> float:
+        """Normalized to [0.0 - 1.0] range (baseline 20.0 mmol/L)."""
+        return value / 20.0
+
+    @staticmethod
+    def scale_heart_rate(bpm: float) -> float:
+        """Normalized to [0.0 - 1.0] range (baseline 60-180 BPM)."""
+        return (bpm - 60.0) / 120.0
+
+scaling_engine = ScalingEngine()
