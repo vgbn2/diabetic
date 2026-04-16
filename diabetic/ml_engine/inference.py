@@ -31,7 +31,7 @@ class MetabolicInferenceRunner:
         weight_path = Path(__file__).parent / "weights" / "diabetic_cnn_v14.pth"
         if weight_path.exists():
             try:
-                self.model.load_state_dict(torch.load(weight_path, map_location=torch.device('cpu')))
+                self.model.load_state_dict(torch.load(weight_path, map_location=torch.device('cpu'), weights_only=True))
                 print(f"Personalized CNN Multi-Task v14 Weights Loaded: {weight_path}")
             except Exception as e:
                 print(f"Warning: Failed to load multi-task weights: {e}. Running in Cold Mode.")

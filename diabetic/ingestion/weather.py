@@ -10,9 +10,9 @@ class WeatherIngestor:
     Ingests environmental data (Layer 2 - The Conditions).
     Fetches Temperature, Humidity, and PM2.5 (AQI) from OpenWeatherMap.
     """
-    BASE_URL = "http://api.openweathermap.org/data/2.5/weather"
-    AIR_POLLUTION_URL = "http://api.openweathermap.org/data/2.5/air_pollution"
-    FORECAST_URL = "http://api.openweathermap.org/data/2.5/forecast"
+    BASE_URL = "https://api.openweathermap.org/data/2.5/weather"
+    AIR_POLLUTION_URL = "https://api.openweathermap.org/data/2.5/air_pollution"
+    FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or config.OPENWEATHER_API_KEY
