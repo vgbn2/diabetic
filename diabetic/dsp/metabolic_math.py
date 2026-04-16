@@ -43,11 +43,7 @@ class MetabolicMath:
 
         velocity = curr.velocity
         acceleration = curr.acceleration
-
-        # FIX: do NOT override Kalman's acceleration based on a zero-value check.
-        # Zero is a valid acceleration result. The old code did finite-difference
-        # whenever acceleration == 0.0, silently replacing the Kalman estimate.
-        # Only fall back on the very first snapshot where Kalman has no prior state.
+        
         if len(snapshots) == 1:
             acceleration = 0.0
 

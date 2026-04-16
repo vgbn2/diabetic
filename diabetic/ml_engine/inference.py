@@ -1,3 +1,5 @@
+from typing import Optional
+from diabetic.registry import MetabolicSnapshot
 import torch
 import pandas as pd
 import numpy as np

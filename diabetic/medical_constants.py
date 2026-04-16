@@ -21,13 +21,13 @@ MGDL_TO_MMOL = 1 / 18.018
 
 # ── Hardware & Sampling ──────────────────────────────────────────────────────
 SAMPLING_INTERVAL_MINS   = 2.5
-STALE_DATA_TIMEOUT_SECS  = 900    # 15 minutes — beyond this, data is unreliable
+STALE_DATA_TIMEOUT_SECS  = 900    # 15 minutes — beyond this, data is unreliable, harder to predict
 KALMAN_MEASUREMENT_NOISE = 0.25   # R = σ² = 0.5² (Ottai M8 base accuracy)
 MIN_DT_FLOOR             = 0.5    # minutes — prevents division by zero / filter explosion
 
 # ── Cardiac Telemetry (HR & HRV) ─────────────────────────────────────────────
 # Source: Clinical telemetry defaults for T1D activity detection.
-CARDIAC_WINDOW_SAMPLES  = 24      # 1 hour window at 2.5 min sampling
+CARDIAC_WINDOW_SAMPLES  = 12      # 1 hour window at 5 min sampling
 CARDIAC_QUALITY_DIVISOR = 4.0     # Threshold for signal-to-noise validation
 BPM_MOCK_CEILING        = 120.0   # Upper bound for internal logic testing
 BPM_MOCK_FLOOR          = 60.0    # Lower bound for internal logic testing
@@ -39,8 +39,8 @@ HRV_MOCK_FLOOR          = 20.0
 PHYSIO_FLOOR     = 2.2    # ~40 mg/dL  — absolute survivable minimum
 HYPO_CRITICAL    = 2.5    # <56 mg/dL  — EMERGENCY, impaired cognition
 HYPO_WARNING     = 3.9    # <70 mg/dL  — WARNING, intervention needed
-HYPER_CRITICAL   = 14.0   # >350 mg/dL — CRITICAL, ketoacidosis risk
-FAINT_GLUCOSE    = 17.0   # >300 mg/dL — faint risk threshold
+HYPER_CRITICAL   = 16.0   # >350 mg/dL — CRITICAL, ketoacidosis risk
+FAINT_GLUCOSE    = 22.0   # >300 mg/dL — faint risk threshold
 TOP_TARGET       = 8.4    # Ideal clinical midpoint
 
 # ── Fatal Limits (Rate of Change) ────────────────────────────────────────────
@@ -81,13 +81,13 @@ LUTEAL_RESISTANCE_MULT   = 1.30  # +30% resistance peak during luteal phase
 REGIME_SENSITIVITY_MULT  = 1.25  # +25% resistance during sick/dawn phenomenon
 
 # ── Temporal Intelligence (Layer 2) ──────────────────────────────────────────
-WEEKEND_RESISTANCE_MULT  = 1.05  # +5% resistance context
+WEEKEND_RESISTANCE_MULT  = 1.05  # +5% resistance context(placeholder for now)
 HOLIDAY_RESISTANCE_MULT  = 1.10  # +10% resistance context
 FESTIVAL_RESISTANCE_MULT = 1.20  # +20% resistance context (e.g. Tet, Social Eating)
 
 # ── Metabolic Braking (Spillover & Defense) ──────────────────────────────────
 # RENAL_THRESHOLD: above this, kidneys spill glucose into urine.
-RENAL_THRESHOLD       = 10.0   # mmol/L
+RENAL_THRESHOLD       = 12.0   # mmol/L
 RENAL_CLEARANCE_SLOPE = 0.025  # 2.5% brake per mmol/L over threshold
 METABOLIC_BRAKE_FLOOR = 0.70   # maximum 30% reduction
 

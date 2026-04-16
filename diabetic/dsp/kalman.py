@@ -8,11 +8,11 @@ from diabetic.dsp.metabolic_math import MetabolicMath
 
 class GlucoseFilter:
     """
-    2D Kalman Filter for glucose tracking.
+    3D Kalman Filter for glucose tracking.
     State vector [x, v]:
     x = glucose concentration (mmol/L)
     v = velocity (mmol/L per minute)
-    
+    a= acceleration (mmol/l^2 per minute)
     Handles variable dt and uses innovation-based clamping for outlier rejection.
     """
     def __init__(self, dt: float = None):

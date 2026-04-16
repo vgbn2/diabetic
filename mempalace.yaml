@@ -1,5 +1,15 @@
 wing: hyperglycemia_faint_predictor
 rooms:
+- name: artifacts
+  description: Files from artifacts/
+  keywords:
+  - artifacts
+  - artifacts
+- name: charts
+  description: Files from charts/
+  keywords:
+  - charts
+  - charts
 - name: data
   description: Files from data/
   keywords:
@@ -20,6 +30,11 @@ rooms:
   keywords:
   - ops
   - ops
+- name: scratch
+  description: Files from scratch/
+  keywords:
+  - scratch
+  - scratch
 - name: scripts
   description: Files from scripts/
   keywords:
@@ -30,6 +45,11 @@ rooms:
   keywords:
   - storage
   - storage
+- name: testsprite_tests
+  description: Files from testsprite_tests/
+  keywords:
+  - testsprite_tests
+  - testsprite_tests
 - name: tmp
   description: Files from tmp/
   keywords:
@@ -40,6 +60,11 @@ rooms:
   keywords:
   - documentation
   - docs
+- name: planning
+  description: Files from roadmap/
+  keywords:
+  - planning
+  - roadmap
 - name: testing
   description: Files from test/
   keywords:
@@ -55,11 +80,6 @@ rooms:
   keywords:
   - design
   - assets
-- name: backend
-  description: Files from models/
-  keywords:
-  - backend
-  - models
 - name: general
   description: Files that don't fit other rooms
   keywords: []

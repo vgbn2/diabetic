@@ -34,9 +34,6 @@ async def run_simulation(scenario: str):
         print("SIMULATION: Initiating Rapid Hypoglycemic Crash...")
         for i in range(10):
             val = 110 - (i * 10) # dropping fast (mg/dL internally for logic? No, registry says mmol/L)
-            # Wait, 110 mmol/L is huge. Registry says mmol/L. 
-            # If 110 is mg/dL, it's ~6.1 mmol/L. Let's use mmol/L directly.
-            # Normal: 5.0. Crash: 3.0.
             val_mmol = 6.1 - (i * 0.5) 
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="DoubleDown"))
     elif scenario == "faint":
