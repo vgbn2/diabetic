@@ -32,16 +32,16 @@ class Settings(BaseSettings):
 # 🧬 [PHYSIOLOGICAL BASELINE PROFILE]
 # =Focus: Layer 1 Hardware/Biological Static Markers
 # =============================================================================
-    PATIENT_AGE: int = 30
-    PATIENT_WEIGHT_KG: float = 75.0
-    PATIENT_HEIGHT_CM: float = 175.0
-    PATIENT_ETHNICITY: str = "ASIAN" 
-    PATIENT_NATIONALITY: str="VIETNAMESE"
-    PATIENT_RELIGION: str = "NON_RELIGIOUS" 
-    PATIENT_GENDER: str = "FEMALE"  
-    PATIENT_DIABETES_TYPE: str = "T1D" 
-    PATIENT_DIAGNOSIS_YEAR: int = 2020
-    PATIENT_ACTIVITY_LEVEL: str = "MODERATE"
+    PATIENT_AGE: int = Field(30, validation_alias="PATIENT_AGE")
+    PATIENT_WEIGHT_KG: float = Field(75.0, validation_alias="PATIENT_WEIGHT_KG")
+    PATIENT_HEIGHT_CM: float = Field(175.0, validation_alias="PATIENT_HEIGHT_CM")
+    PATIENT_ETHNICITY: str = Field("UNKNOWN", validation_alias="PATIENT_ETHNICITY")
+    PATIENT_NATIONALITY: str = Field("UNKNOWN", validation_alias="PATIENT_NATIONALITY")
+    PATIENT_RELIGION: str = Field("NON_RELIGIOUS", validation_alias="PATIENT_RELIGION")
+    PATIENT_GENDER: str = Field("FEMALE", validation_alias="PATIENT_GENDER")
+    PATIENT_DIABETES_TYPE: str = Field("T1D", validation_alias="PATIENT_DIABETES_TYPE")
+    PATIENT_DIAGNOSIS_YEAR: int = Field(2020, validation_alias="PATIENT_DIAGNOSIS_YEAR")
+    PATIENT_ACTIVITY_LEVEL: str = Field("MODERATE", validation_alias="PATIENT_ACTIVITY_LEVEL")
     
 # =============================================================================
 # 🌍 [REGIONAL & MAINTENANCE LOGIC]
@@ -50,11 +50,11 @@ class Settings(BaseSettings):
     USER_TIMEZONE: str = Field("Asia/Ho_Chi_Minh", validation_alias="BIO_USER_TIMEZONE")
     MAINTENANCE_LOCAL_HOUR: int = Field(3, validation_alias="BIO_MAINTENANCE_HOUR")
     
-    # Clinical Lab Results (Personalization 2.2)
-    PATIENT_FRUCTOSAMIN: float = 347.6 # High avg sugar sentinel
-    PATIENT_MICROALBUMINURIA: bool = True # Based on 0.3g/L Protein
-    PATIENT_INFLAMMATORY_MARKER: bool = True # Based on 70 LEU
-    PATIENT_CYCLE_START: str = "2026-04-01" # Anchor for 28-day hormonal cycle (if Female)
+    # Clinical Lab Results (Personalization 2.2) - MUST BE SET IN .ENV
+    PATIENT_FRUCTOSAMIN: float = Field(300.0, validation_alias="PATIENT_FRUCTOSAMIN")
+    PATIENT_MICROALBUMINURIA: bool = Field(False, validation_alias="PATIENT_MICROALBUMINURIA")
+    PATIENT_INFLAMMATORY_MARKER: bool = Field(False, validation_alias="PATIENT_INFLAMMATORY_MARKER")
+    PATIENT_CYCLE_START: str = Field("2026-01-01", validation_alias="PATIENT_CYCLE_START")
     
     PATIENT_GB_MMOL: float = 8.4
     PATIENT_HRV_BASELINE: float = 50.0
