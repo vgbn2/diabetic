@@ -92,13 +92,36 @@ class Settings(BaseSettings):
     PUSH_TIMEOUT_SECS: float = 5.0
     POLLING_INTERVAL_SECS: int = 300
     
-    FRONTEND_PUSH_URL: str = "http://localhost:10000/api/push"
+    FRONTEND_PUSH_URL: str = ""
     
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    def validate_config(self):
+        """
+        Wave 1 Hardening: Verifies required metadata and connectivity secrets at boot.
+        Prevents silent degraded operation in production.
+        """
+        critical_keys = {
+            "NIGHTSCOUT_URL": self.NIGHTSCOUT_URL,
+            "API_SECRET": self.API_SECRET,
+            "TELEGRAM_TOKEN": self.TELEGRAM_TOKEN,
+            "USER_ID": self.USER_ID,
+            "MONGO_URI": self.MONGO_URI
+        }
+        
+        missing = [k for k, v in critical_keys.items() if not v or v == "0"]
+        if missing:
+            raise ValueError(f"CRITICAL BOOT FAILURE: Missing required environment variables: {', '.join(missing)}")
+            
+        # Ensure writable storage
+        os.makedirs("storage", exist_ok=True)
+        os.makedirs("storage/exports", exist_ok=True)
+        
+        print("✅ Environment Validation Complete: All systems operational.")
 
 # Singleton instance
 config = Settings()
