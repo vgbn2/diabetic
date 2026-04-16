@@ -193,9 +193,13 @@ class Coordinator:
             snapshot.predicted_hr = neural_res["heart_rate"]
             self.logger.info(f"NEURAL_BRAIN: Pred Glu={prediction_30m:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
         else:
-            self.logger.warning("NEURAL_BRAIN: Inference failed. Kinetic context limited.")
-            prediction_30m = snapshot.glucose.value
+            # Wave 2 Hardening: Kinematic Fallback
+            # Instead of a flat current value, we project using current velocity over 30m.
+            # prediction = current + (velocity * 30)
+            velocity, _ = MetabolicMath.extract_kinematics(self.snapshots + [snapshot])
+            prediction_30m = snapshot.glucose.value + (velocity * 30.0)
             snapshot.predict_30m = prediction_30m
+            self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
 
         # 5b. Context Classification
         snapshot.activity_label = classify_context(snapshot).value

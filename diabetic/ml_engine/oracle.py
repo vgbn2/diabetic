@@ -42,8 +42,15 @@ class BasalOracle:
 
         # Initial guess: Amp=1.5, Phase=0, Offset=mean
         guess = [1.5, 0, np.mean(values)]
+        
+        # Wave 2 Hardening: Strict Bounds to prevent sinusoidal runaways on noisy data
+        # Amp: [0.1, 8.0] mmol/L
+        # Phase: [-pi, pi]
+        # Offset: [3.0, 15.0] mmol/L
+        bounds = ([0.1, -np.pi, 3.0], [8.0, np.pi, 15.0])
+        
         try:
-            popt, _ = curve_fit(self._harmonic_model, times, values, p0=guess)
+            popt, _ = curve_fit(self._harmonic_model, times, values, p0=guess, bounds=bounds)
             self.params = popt
             self.last_fit_time = datetime.now(timezone.utc)
         except Exception:

@@ -36,7 +36,7 @@ class ScalingEngine:
             cls.GENDER_MAP.get(config.PATIENT_GENDER, 0.0),
             cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),
             cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),
-            (2026 - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
+            (datetime.now().year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
             0.5, # Default activity level (Layer 3 anchor)
             config.PATIENT_FRUCTOSAMIN / 500.0,
             1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
