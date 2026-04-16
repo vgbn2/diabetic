@@ -22,6 +22,7 @@ class ActivityType(Enum):
     FOOD = "FOOD"
     EXERCISE = "EXERCISE"
     STRESS_STUDYING = "STRESS_STUDYING"
+    STRESS_ANOMALY = "STRESS_ANOMALY"  # Glucose/HR Decoupling
     RELAXED_STUDYING = "RELAXED_STUDYING"
     SLEEP = "SLEEP"
     RANDOM_SPIKE = "RANDOM_SPIKE"
@@ -35,23 +36,30 @@ def classify_context(snapshot: MetabolicSnapshot) -> ActivityType:
     Priority order (highest to lowest):
     1. FOOD — if a meal event exists in the snapshot, food dominates.
     2. EXERCISE — high cardiac output overrides other labels.
-    3. STRESS_STUDYING — elevated HR with low HRV.
-    4. SLEEP — low HR with high HRV.
-    5. RANDOM_SPIKE — glucose rising without a known cause.
-    6. RELAXED_STUDYING — baseline state (fallback when awake).
-    7. UNKNOWN — no cardiac data available.
+    3. STRESS_ANOMALY — high velocity but LOW heart rate (Decoupling).
+    4. STRESS_STUDYING — elevated HR with low HRV.
+    5. SLEEP — low HR with high HRV.
+    6. RANDOM_SPIKE — glucose rising without a known cause.
+    7. RELAXED_STUDYING — baseline state (fallback when awake).
+    8. UNKNOWN — no cardiac data available.
     """
     # 1. Food (highest priority — if meal logged, that's the cause)
     if snapshot.last_meal is not None:
         return ActivityType.FOOD
 
-    # Require cardiac data for all remaining classifications
+    # 1b. Anomaly: High speed but low HR (Decoupling)
+    # We check this early because it represents a potential emergency or stress event
+    # that is explicitly NOT exercise.
+    is_rising_fast = snapshot.velocity > mc.FAINT_VELOCITY_LIMIT_PER_MIN
     bpm = snapshot.bpm
     hrv = snapshot.hrv
 
+    if bpm is not None and is_rising_fast and bpm < mc.BPM_STRESS_THRESHOLD:
+        return ActivityType.STRESS_ANOMALY
+
+    # Require cardiac data for remaining complex classifications
     if bpm is None or hrv is None:
-        # No cardiac data — check if glucose is rising without context
-        if snapshot.velocity > mc.FAINT_VELOCITY_LIMIT_PER_MIN:
+        if is_rising_fast:
             return ActivityType.RANDOM_SPIKE
         return ActivityType.UNKNOWN
 
@@ -68,7 +76,7 @@ def classify_context(snapshot: MetabolicSnapshot) -> ActivityType:
         return ActivityType.SLEEP
 
     # 5. Random Spike: glucose climbing without identified trigger
-    if snapshot.velocity > mc.FAINT_VELOCITY_LIMIT_PER_MIN:
+    if is_rising_fast:
         return ActivityType.RANDOM_SPIKE
 
     # 6. Fallback: Relaxed Studying / baseline awake state
@@ -89,7 +97,7 @@ if __name__ == "__main__":
     ))
     result = classify_context(snap)
     assert result == ActivityType.FOOD, f"Expected FOOD, got {result}"
-    print(f"[TEST 1] Meal present  → {result.value} ✅")
+    print(f"[TEST 1] Meal present  -> {result.value} [OK]")
 
     # Test 2: Exercise
     snap = MetabolicSnapshot(glucose=base_glucose, cardiac=CardiacReading(
@@ -97,7 +105,7 @@ if __name__ == "__main__":
     ))
     result = classify_context(snap)
     assert result == ActivityType.EXERCISE, f"Expected EXERCISE, got {result}"
-    print(f"[TEST 2] High HR/Low HRV → {result.value} ✅")
+    print(f"[TEST 2] High HR/Low HRV -> {result.value} [OK]")
 
     # Test 3: Stress Studying
     snap = MetabolicSnapshot(glucose=base_glucose, cardiac=CardiacReading(
@@ -105,7 +113,7 @@ if __name__ == "__main__":
     ))
     result = classify_context(snap)
     assert result == ActivityType.STRESS_STUDYING, f"Expected STRESS_STUDYING, got {result}"
-    print(f"[TEST 3] Med HR/Low HRV → {result.value} ✅")
+    print(f"[TEST 3] Med HR/Low HRV -> {result.value} [OK]")
 
     # Test 4: Sleep
     snap = MetabolicSnapshot(glucose=base_glucose, cardiac=CardiacReading(
@@ -113,22 +121,29 @@ if __name__ == "__main__":
     ))
     result = classify_context(snap)
     assert result == ActivityType.SLEEP, f"Expected SLEEP, got {result}"
-    print(f"[TEST 4] Low HR/High HRV → {result.value} ✅")
+    print(f"[TEST 4] Low HR/High HRV -> {result.value} [OK]")
 
-    # Test 5: Random Spike
+    # Test 5: Stress Anomaly (Decoupling)
+    # High velocity (0.15) but baseline HR (72)
     snap = MetabolicSnapshot(glucose=base_glucose, velocity=0.15, cardiac=CardiacReading(
         timestamp=datetime.now(timezone.utc), bpm=72, hrv=45.0
     ))
     result = classify_context(snap)
-    assert result == ActivityType.RANDOM_SPIKE, f"Expected RANDOM_SPIKE, got {result}"
-    print(f"[TEST 5] Rising w/no trigger → {result.value} ✅")
+    assert result == ActivityType.STRESS_ANOMALY, f"Expected STRESS_ANOMALY, got {result}"
+    print(f"[TEST 5] Decoupling detected -> {result.value} [OK]")
 
-    # Test 6: Relaxed baseline
-    snap = MetabolicSnapshot(glucose=base_glucose, cardiac=CardiacReading(
+    # Test 6: Random Spike (No cardiac data)
+    snap = MetabolicSnapshot(glucose=base_glucose, velocity=0.15, cardiac=None)
+    result = classify_context(snap)
+    assert result == ActivityType.RANDOM_SPIKE, f"Expected RANDOM_SPIKE, got {result}"
+    print(f"[TEST 6] Rising w/no HR data -> {result.value} [OK]")
+
+    # Test 7: Relaxed baseline
+    snap = MetabolicSnapshot(glucose=base_glucose, velocity=0.01, cardiac=CardiacReading(
         timestamp=datetime.now(timezone.utc), bpm=72, hrv=45.0
     ))
     result = classify_context(snap)
     assert result == ActivityType.RELAXED_STUDYING, f"Expected RELAXED_STUDYING, got {result}"
-    print(f"[TEST 6] Baseline awake → {result.value} ✅")
+    print(f"[TEST 7] Baseline awake -> {result.value} [OK]")
 
     print("\nALL CONTEXT CLASSIFIER TESTS PASSED.")

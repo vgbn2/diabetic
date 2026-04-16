@@ -60,6 +60,17 @@ class RealTimeHUD:
             table.add_row("HRV (RMSSD)", hrv, "ms")
             
             table.add_section()
+            
+            # 🕵️ Context Layer
+            context = snapshot.activity_label
+            context_style = "bold white"
+            if context == "EXERCISE": context_style = "bold green"
+            elif "STRESS" in context: context_style = "bold red"
+            elif context == "SLEEP": context_style = "bold blue"
+            
+            table.add_row("Context", f"[{context_style}]{context}[/]")
+            table.add_section()
+
             # 🔮 Neural Layer
             table.add_row("Pred Glucose (30m)", f"{snapshot.predict_30m:.1f}", style="bold yellow")
             table.add_row("Pred Heart Rate", f"{snapshot.predicted_hr:.1f}", style="bold magenta")
@@ -80,7 +91,7 @@ class RealTimeHUD:
         self.layout["header"].update(self._get_header())
         self.layout["metrics"].update(self._get_metrics_table(snapshot))
         self.layout["status"].update(self._get_status_panel(alert_status))
-        self.layout["footer"].update(Panel(Text(f"Polling Bio-Telemery every {config.DATA_POLLING_INTERVAL}s...", justify="center", style="dim")))
+        self.layout["footer"].update(Panel(Text(f"Polling Bio-Telemetry every {config.DATA_POLLING_INTERVAL}s...", justify="center", style="dim")))
         return self.layout
 
     async def run_live(self, coordinator):
@@ -88,7 +99,12 @@ class RealTimeHUD:
         with Live(self.generate_display(), refresh_per_second=1, screen=True) as live:
             while coordinator.is_running:
                 latest_snap = coordinator.snapshots[-1] if coordinator.snapshots else None
-                live.update(self.generate_display(latest_snap, "IDLE"))
+                # Simple alert status heuristic for HUD
+                status = "IDLE"
+                if latest_snap and latest_snap.activity_label == "STRESS_ANOMALY":
+                    status = "⚠️ ANOMALY"
+                
+                live.update(self.generate_display(latest_snap, status))
                 await asyncio.sleep(1)
 
 if __name__ == "__main__":

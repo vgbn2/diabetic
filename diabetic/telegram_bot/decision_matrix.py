@@ -66,6 +66,17 @@ class DecisionMatrix:
                 prediction_30m=prediction_30m
             )
 
+        # 2b. STRESS ANOMALY (Decoupling)
+        if current.activity_label == "STRESS_ANOMALY":
+             return Alert(
+                    timestamp=datetime.now(timezone.utc),
+                    type="FAINT_RISK",
+                    severity=AlertSeverity.HIGH,
+                    message=f"{self.config.UI_SETTINGS['FAINT_RISK']}: Biological Decoupling! Rapid velocity ({v:+1f}) while HR is baseline ({hr:.0f}). Potential faint risk.",
+                    glucose_value=g,
+                    prediction_30m=prediction_30m
+                )
+
         # 3. FAINT RISK (Hyper + Rapid climb + Cardiac stress)
         if g > medical_constants.FAINT_GLUCOSE:
             is_faint_risk = v > medical_constants.FAINT_VELOCITY_LIMIT_PER_MIN

@@ -84,23 +84,30 @@ class AuditLogger:
         """Stores an event in the database and local logger."""
         timestamp = datetime.now(timezone.utc)
 
-        def _default(o):
-            if isinstance(o, datetime):
-                return o.isoformat()
-            if hasattr(o, "model_dump"):
-                return o.model_dump(mode='json')
-            if hasattr(o, "dict"):
-                return o.dict()
-            return str(o)
+        def _json_serializable(obj):
+            """Helper to sanitize nested dicts for BSON/JSON."""
+            if isinstance(obj, dict):
+                return {k: _json_serializable(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_json_serializable(i) for i in obj]
+            if hasattr(obj, "value"): # Enum fallback
+                return obj.value
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump(mode='json')
+            return obj
 
+        sanitized_data = _json_serializable(data)
+        
         log_entry = {
             "timestamp": timestamp,
             "event_type": event_type,
-            "level": level,
-            "data": data
+            "level": str(level.value if hasattr(level, "value") else level),
+            "data": sanitized_data
         }
 
-        log_msg = f"[{event_type}] {data}"
+        log_msg = f"[{event_type}] {sanitized_data}"
         if level == "ERROR":
             self.logger.error(log_msg)
         elif level == "WARNING":
@@ -110,6 +117,7 @@ class AuditLogger:
 
         if self.collection is not None:
             try:
+                # MongoDB handles datetime objects directly, but nested enums fail
                 await self.collection.insert_one(log_entry)
             except Exception as e:
                 self.logger.error(f"Failed to persist log to MongoDB: {e}")
@@ -120,7 +128,7 @@ class AuditLogger:
                     cursor = self.local_conn.cursor()
                     cursor.execute(
                         "INSERT INTO audit_logs (timestamp, event_type, level, data) VALUES (?, ?, ?, ?)",
-                        (timestamp.isoformat(), event_type, level, json.dumps(data, default=_default))
+                        (timestamp.isoformat(), event_type, str(level), json.dumps(sanitized_data))
                     )
                     self.local_conn.commit()
 
@@ -131,12 +139,13 @@ class AuditLogger:
         # Semantic Indexing (Layer 4/5 Trigger)
         if self.palace and (level in ["WARNING", "ERROR"] or event_type in ["USER_FEEDBACK", "REGIME_SHIFT"]):
             try:
+                # Palace expect flat/simple dicts
                 task = asyncio.create_task(asyncio.to_thread(
                     self.palace.remember_snapshot, {
                         "event_type": event_type,
                         "timestamp": timestamp.isoformat(),
-                        "level": level,
-                        **data
+                        "level": str(level),
+                        **sanitized_data
                     }, 
                     room="l4_anomaly_audit" if level != "INFO" else "l5_user_feedback"
                 ))
