@@ -16,6 +16,14 @@ from diabetic.medical_constants import (
     HRV_MOCK_FLOOR
 )
 
+try:
+    from bleak import BleakClient, BleakError
+    BLE_AVAILABLE = True
+except ImportError:
+    BLE_AVAILABLE = False
+    BleakClient = None
+    BleakError = Exception
+
 class HeartRateIngestor:
     """
     Asynchronous ingestor for cardiac data (BPM/HRV).
@@ -102,12 +110,6 @@ class HeartRateIngestor:
         if self.is_mock:
             return
 
-        try:
-            from bleak import BleakClient, BleakError
-        except ImportError:
-            self.logger.error("Bleak not installed. Heart rate BLE ingestion unavailable.")
-            return
-
         HR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
         def notification_handler(sender, data):
@@ -152,12 +154,20 @@ class HeartRateIngestor:
             except Exception as e:
                 self.logger.error(f"Failed to parse Heart Rate GATT data: {e}")
 
+        retry_delay = config.BLE_RECONNECT_SECS
+        max_delay = 300 # 5 minutes cap
+        
         while True:
             if not self.is_running: break
+            if not BLE_AVAILABLE:
+                self.logger.error("Bleak not installed. BLE ingestion aborted.")
+                break
+
             try:
-                self.logger.info(f"Attempting BLE Connection: {self.address}...")
+                self.logger.info(f"Attempting BLE Connection: {self.address} (Retrying in {retry_delay}s if fails)...")
                 async with BleakClient(self.address, timeout=20.0) as client:
                     self.logger.info(f"BLE Success: Connected to {self.address}")
+                    retry_delay = config.BLE_RECONNECT_SECS # Reset on success
                     await client.start_notify(HR_UUID, notification_handler)
                     
                     while client.is_connected and self.is_running:
@@ -165,6 +175,7 @@ class HeartRateIngestor:
                     
                     self.logger.warning("BLE Disconnected gracefully.")
             except Exception as e:
-                # RECONNECTION BACKOFF: prevent CPU thrashing
-                self.logger.error(f"BLE Connection failed: {e}. Retry in {config.BLE_RECONNECT_SECS}s")
-                await asyncio.sleep(config.BLE_RECONNECT_SECS)
+                # RECONNECTION EXPONENTIAL BACKOFF (Wave 3 Hardening)
+                self.logger.error(f"BLE Connection failed: {e}. Next retry in {retry_delay}s")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(max_delay, retry_delay * 2) # Exponential backoff

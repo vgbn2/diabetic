@@ -121,7 +121,8 @@ class TelegramApp:
 
         try:
             grams = float(context.args[-1])
-            desc = " ".join(context.args[:-1]).lower()
+            import re
+            desc = re.sub(r'[^a-zA-Z0-9\s]', '', " ".join(context.args[:-1])).strip().lower()[:100]
 
             fast_keywords = ["honey", "sugar", "juice", "liquid", "soda", "gel"]
             gi_type = "LIQUID" if any(k in desc for k in fast_keywords) else "STARCH"
