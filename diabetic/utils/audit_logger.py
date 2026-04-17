@@ -41,6 +41,9 @@ class AuditLogger:
             except Exception as e:
                 self.logger.warning(f"Failed to initialize Metabolic Palace: {e}")
                 self.palace = None
+        
+        # GC Protection for background tasks (Phase 0.5 Remediation)
+        self.background_tasks = set()
 
         # Initialize SQLite (Task 8.1.2)
         try:
@@ -143,6 +146,8 @@ class AuditLogger:
                     }, 
                     room="l4_anomaly_audit" if level != "INFO" else "l5_user_feedback"
                 ))
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
             except Exception as e:
                 self.logger.error(f"Failed to semantically index event: {e}")
 
