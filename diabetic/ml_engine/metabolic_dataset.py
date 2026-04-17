@@ -43,7 +43,8 @@ class MetabolicDataset(Dataset):
             # Calculate velocity if possible
             vel = 0
             if i > 0:
-                vel = g_val - df.iloc[i-1]['glucose']
+                # Divide by 5.0 to get per-minute velocity (Wave 5 Protocol)
+                vel = (g_val - df.iloc[i-1]['glucose']) / 5.0
             
             g_reading = GlucoseReading(timestamp=df.index[i], value=g_val, trend="NONE")
             cardiac = cardiac_synthesizer.estimate(g_reading, velocity=vel)
@@ -74,7 +75,7 @@ class MetabolicDataset(Dataset):
             gender_map.get(config.PATIENT_GENDER, 0.0),
             eth_map.get(config.PATIENT_ETHNICITY, 0.0),
             type_map.get(config.PATIENT_DIABETES_TYPE, 0.0),
-            (2026 - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
+            (datetime.now().year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
             0.5, # Default activity level
             config.PATIENT_FRUCTOSAMIN / 500.0,
             1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
