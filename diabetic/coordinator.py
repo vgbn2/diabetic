@@ -483,9 +483,13 @@ class Coordinator:
 
         if self.bot_app:
             self.logger.info("Stopping Telegram Bot...")
-            await self.bot_app.app.updater.stop()
-            await self.bot_app.app.stop()
-            await self.bot_app.app.shutdown()
+            try:
+                if self.bot_app.app.updater and self.bot_app.app.updater.running:
+                    await self.bot_app.app.updater.stop()
+                await self.bot_app.app.stop()
+                await self.bot_app.app.shutdown()
+            except Exception as e:
+                self.logger.debug(f"Bot shutdown warning: {e}")
 
         if self.background_tasks:
             self.logger.info(f"Awaiting {len(self.background_tasks)} background tasks before shutdown...")
