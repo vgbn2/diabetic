@@ -17,6 +17,9 @@ class NightscoutClient:
         self.secret = config.API_SECRET
         self.hashed_secret = hashlib.sha1(self.secret.encode()).hexdigest()
         
+        # Wave 3 Hardening: Persistent AsyncClient to prevent connection exhaustion
+        self.client = httpx.AsyncClient(timeout=15.0)
+        
     def _get_headers(self, use_plain: bool = False) -> dict:
         """Determines the correct authentication header."""
         headers = {"Accept": "application/json"}
@@ -35,10 +38,9 @@ class NightscoutClient:
         
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.get(endpoint, params=params, headers=headers)
-                    response.raise_for_status()
-                    return self._parse_entries(response.json())
+                response = await self.client.get(endpoint, params=params, headers=headers)
+                response.raise_for_status()
+                return self._parse_entries(response.json())
             except Exception as e:
                 if attempt == 2:
                     raise
@@ -56,13 +58,12 @@ class NightscoutClient:
         headers = self._get_headers()
         
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(endpoint, params=params, headers=headers)
-                response.raise_for_status()
-                # Nightscout returns most recent first, we reverse to process chronologically
-                readings = self._parse_entries(response.json())
-                readings.reverse() 
-                return readings
+            response = await self.client.get(endpoint, params=params, headers=headers)
+            response.raise_for_status()
+            # Nightscout returns most recent first, we reverse to process chronologically
+            readings = self._parse_entries(response.json())
+            readings.reverse() 
+            return readings
         except Exception as e:
             # Task 8.2.1: Non-fatal, live polling will take over.
             print(f"Backfill fetch failed: {e}")
@@ -114,61 +115,60 @@ class NightscoutClient:
         headers = self._get_headers()
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(endpoint, params=params, headers=self._get_headers())
+            response = await self.client.get(endpoint, params=params, headers=self._get_headers())
+            
+            # C3 Fix: Fallback to plain secret if 401 (Handles Heroku v3+ issues)
+            if response.status_code == 401:
+                response = await self.client.get(endpoint, params=params, headers=self._get_headers(use_plain=True))
+            
+            response.raise_for_status()
+            treatments = response.json()
+            now = datetime.now(timezone.utc)
+            
+            latest_insulin: Optional[InsulinDose] = None
+            latest_meal: Optional[MealEvent] = None
+            
+            for t in treatments:
+                # Parse timestamp (created_at is standard for treatments)
+                if 'created_at' not in t:
+                    continue
                 
-                # C3 Fix: Fallback to plain secret if 401 (Handles Heroku v3+ issues)
-                if response.status_code == 401:
-                    response = await client.get(endpoint, params=params, headers=self._get_headers(use_plain=True))
+                try:
+                    ts = datetime.fromisoformat(t['created_at'].replace('Z', '+00:00'))
+                except ValueError:
+                    continue
                 
-                response.raise_for_status()
-                treatments = response.json()
-                now = datetime.now(timezone.utc)
-                
-                latest_insulin: Optional[InsulinDose] = None
-                latest_meal: Optional[MealEvent] = None
-                
-                for t in treatments:
-                    # Parse timestamp (created_at is standard for treatments)
-                    if 'created_at' not in t:
-                        continue
-                    
-                    try:
-                        ts = datetime.fromisoformat(t['created_at'].replace('Z', '+00:00'))
-                    except ValueError:
-                        continue
-                    
-                    # C3 Fix: Verify treatment is within 4-hour metabolic window
-                    if (now - ts).total_seconds() > medical_constants.MEAL_WINDOW_MINS * 60:
-                        continue
+                # C3 Fix: Verify treatment is within 4-hour metabolic window
+                if (now - ts).total_seconds() > medical_constants.MEAL_WINDOW_MINS * 60:
+                    continue
 
-                    # Parse Insulin
-                    if 'insulin' in t and not latest_insulin:
-                        ev_type = t.get('eventType', 'correction').lower()
-                        # Map Nightscout types to Twin types (RAPID/LONG)
-                        # Rule: Most Nightscout events are rapid (Bolus, correction).
-                        # Basal/Long tags are long-acting.
-                        insulin_type = "RAPID"
-                        if any(x in ev_type for x in ["long", "basal", "levermir", "lantus", "tresiba"]):
-                            insulin_type = "LONG"
+                # Parse Insulin
+                if 'insulin' in t and not latest_insulin:
+                    ev_type = t.get('eventType', 'correction').lower()
+                    # Map Nightscout types to Twin types (RAPID/LONG)
+                    # Rule: Most Nightscout events are rapid (Bolus, correction).
+                    # Basal/Long tags are long-acting.
+                    insulin_type = "RAPID"
+                    if any(x in ev_type for x in ["long", "basal", "levermir", "lantus", "tresiba"]):
+                        insulin_type = "LONG"
 
-                        latest_insulin = InsulinDose(
-                            timestamp=ts,
-                            units=float(t['insulin']),
-                            type=insulin_type
-                        )
+                    latest_insulin = InsulinDose(
+                        timestamp=ts,
+                        units=float(t['insulin']),
+                        type=insulin_type
+                    )
+                
+                # Parse Carbs
+                if 'carbs' in t and not latest_meal:
+                    latest_meal = MealEvent(
+                        timestamp=ts,
+                        carbs=float(t['carbs'])
+                    )
                     
-                    # Parse Carbs
-                    if 'carbs' in t and not latest_meal:
-                        latest_meal = MealEvent(
-                            timestamp=ts,
-                            carbs=float(t['carbs'])
-                        )
-                        
-                    if latest_insulin and latest_meal:
-                        break
-                        
-                return latest_insulin, latest_meal
+                if latest_insulin and latest_meal:
+                    break
+                    
+            return latest_insulin, latest_meal
                 
         except Exception:
             # Treatments are non-critical for the core smoothed loop
