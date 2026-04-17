@@ -1,21 +1,19 @@
 ## Current Position
-- **Phase**: 0 - Stability Hardening (Metabolic Remediation)
-- **Task**: Phase 0 Complete. Transitioning to Phase 1: The Data Factory.
-- **Status**: Completed (2026-04-17 17:58)
+- **Phase**: 0.5 - Audit Remediation (Bio-Quant v16)
+- **Wave**: 1 Complete. Transitioning to Wave 2: Architectural Coupling.
+- **Status**: Paused at 2026-04-17 18:34
 
-## Last Session Summary
-- **Vision Maturation**: Fully detailed the **Telegram Web App (TWA)** multi-tenant roadmap.
-- **Unified 5-Layer Spec**: Locked the **"Big JSON"** state architecture.
-- **Deep Audit Verification**: Verified 7 critical bugs identified in the user-led audit:
-    - aiohttp/httpx socket leaks in WeatherIngestor and StatelessPush.
-    - Missing shutdown hooks for Nightscout/HR clients.
-    - Null-pointer risk in MetabolicPalace background threads.
-    - Silent weather mock defaults.
-- **Baseline Integrity**: Confirmed clinical extraction (1,364 readings) and CNN inference (Glu: 9.95, HR: 82.1) are operational.
+## Last Session Summary (Wave 1)
+- **Startup Crash Resolvation**: Removed erroneous `await` from synchronous `validate_config()` in `main.py`.
+- **Inference Hardening**: Replaced hardcoded intervals with `config.SAMPLING_INTERVAL_MINS` and implemented physiological output clamping for Glucose [2.2, 27.0] and HR [40, 200] in `inference.py`.
+- **Training Integrity**: Patched `MetabolicDataset` for per-minute velocity normalization and switched `train.py` to sequential splitting (`Subset`) to eliminate temporal leakage.
+- **GC Protection**: Instrumented `AuditLogger` with a persistent `background_tasks` set to protect asynchronous semantic indexing from garbage collection.
+- **Dependency Repair**: Fixed a critical import error in `mongo.py` that was loading `Path` from `matplotlib`.
 
 ## In-Progress Work
-- Implementation Plan updated with **Phase 0: Stability Partition**.
-- Files modified (this turn): `ROADMAP.md`, `VISION.md`, `SPEC.md`.
+- WAVE 1 REMEDIATION: 100% Verified.
+- WAVE 2 PLANNING: Initial plans created (0.5.3, 0.5.4).
+- Files modified (this turn): `main.py`, `inference.py`, `metabolic_dataset.py`, `mongo.py`, `train.py`, `audit_logger.py`.
 
 ## Blockers
 - None.
@@ -33,11 +31,12 @@
 - Remediation of the socket leaks and null-checks in Phase 0 will resolve the 'silent instability' observed in the background telemetry loops.
 
 ### Files of Interest
-- `diabetic/ingestion/weather.py`: aiohttp leak point.
-- `diabetic/utils/stateless_push.py`: httpx leak point.
-- `diabetic/coordinator.py`: Shutdown and Palace logic.
+- `diabetic/main.py`: Boot sequence (Patched).
+- `diabetic/ml_engine/inference.py`: Clamping logic (Patched).
+- `diabetic/ml_engine/twin.py`: EMA Decay target.
+- `diabetic/coordinator.py`: Orphan integration target.
 
 ## Next Steps
-1. **Task 0.1**: Refactor `WeatherIngestor` and `StatelessPush` to use persistent clients.
-2. **Task 0.2**: Implement graceful `aclose()` in `Coordinator.stop()`.
-3. **Task 1.1**: Proceed to Multi-Tenant SQL Registry.
+1. **Plan 0.5.3**: Wire `BasalOracle` and `GlucoseForecaster` (XGBoost) into the `Coordinator`.
+2. **Task 0.5.3.1**: Implement EMA forgetting (72-hour half-life) in `DigitalTwin.auto_tune`.
+3. **Plan 0.5.4**: Resolve `FAINT_RISK` alert collisions and implement gender-aware scaling.
