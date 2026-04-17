@@ -19,6 +19,10 @@ class NightscoutClient:
         
         # Wave 3 Hardening: Persistent AsyncClient to prevent connection exhaustion
         self.client = httpx.AsyncClient(timeout=15.0)
+
+    async def close(self):
+        """Closes the underlying HTTP client."""
+        await self.client.aclose()
         
     def _get_headers(self, use_plain: bool = False) -> dict:
         """Determines the correct authentication header."""
