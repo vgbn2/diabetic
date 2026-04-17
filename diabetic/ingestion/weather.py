@@ -1,4 +1,4 @@
-import aiohttp
+import httpx
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
@@ -18,6 +18,16 @@ class WeatherIngestor:
         self.api_key = api_key or config.OPENWEATHER_API_KEY
         self.logger = logging.getLogger("Bio-Quant.Weather")
         self.mock_mode = not bool(self.api_key) or getattr(config, 'WEATHER_MOCK_MODE', True)
+        
+        # Wave 0 Hardening: Persistent client to prevent socket leaks
+        self.client = httpx.AsyncClient(timeout=10.0)
+        
+        if self.mock_mode:
+            self.logger.warning("WEATHER_MOCK_MODE is active. Using regional baseline (Hanoi) for environmental factors.")
+
+    async def close(self):
+        """Closes the underlying HTTP client."""
+        await self.client.aclose()
 
     async def fetch_current(self, lat: float, lon: float) -> Optional[EnvironmentReading]:
         """Fetches current weather and AQI."""
@@ -25,33 +35,32 @@ class WeatherIngestor:
             return self._get_mock_reading()
 
         try:
-            async with aiohttp.ClientSession() as session:
-                # 1. Fetch Weather
-                weather_params = {
-                    "lat": lat, "lon": lon, 
-                    "appid": self.api_key, "units": "metric"
-                }
-                async with session.get(self.BASE_URL, params=weather_params) as resp:
-                    if resp.status != 200:
-                        self.logger.error(f"Weather API Error: {resp.status}")
-                        return self._get_mock_reading()
-                    w_data = await resp.json()
+            # 1. Fetch Weather
+            weather_params = {
+                "lat": lat, "lon": lon, 
+                "appid": self.api_key, "units": "metric"
+            }
+            resp = await self.client.get(self.BASE_URL, params=weather_params)
+            if resp.status_code != 200:
+                self.logger.error(f"Weather API Error: {resp.status_code}")
+                return self._get_mock_reading()
+            w_data = resp.json()
 
-                # 2. Fetch Air Quality
-                aqi_params = {"lat": lat, "lon": lon, "appid": self.api_key}
-                async with session.get(self.AIR_POLLUTION_URL, params=aqi_params) as resp:
-                    aqi_val = None
-                    if resp.status == 200:
-                        a_data = await resp.json()
-                        # OpenWeather AQI is 1-5. PM2.5 is more granular for metabolic stress.
-                        aqi_val = a_data['list'][0]['components']['pm2_5']
+            # 2. Fetch Air Quality
+            aqi_params = {"lat": lat, "lon": lon, "appid": self.api_key}
+            resp_aqi = await self.client.get(self.AIR_POLLUTION_URL, params=aqi_params)
+            aqi_val = None
+            if resp_aqi.status_code == 200:
+                a_data = resp_aqi.json()
+                # OpenWeather AQI is 1-5. PM2.5 is more granular for metabolic stress.
+                aqi_val = a_data['list'][0]['components']['pm2_5']
 
-                return EnvironmentReading(
-                    timestamp=datetime.now(timezone.utc),
-                    temperature=w_data['main']['temp'],
-                    humidity=w_data['main']['humidity'],
-                    aqi=aqi_val
-                )
+            return EnvironmentReading(
+                timestamp=datetime.now(timezone.utc),
+                temperature=w_data['main']['temp'],
+                humidity=w_data['main']['humidity'],
+                aqi=aqi_val
+            )
 
         except Exception as e:
             self.logger.error(f"Weather fetch failed: {e}")
