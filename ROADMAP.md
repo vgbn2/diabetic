@@ -1,29 +1,99 @@
-# Diabetic: Project Roadmap
+# Bio-Quant: The Comprehensive Metabolic Roadmap
 
-This roadmap tracks the evolution from forensic data parsing to an integrated, 5-layer artificial intelligence suite.
-
-## 🔴 Phase 1: Automation & Integration (The "Perfect Core")
-- [ ] **One-Click Pipeline**: Create a master runner that automates Ingestion -> Cleaning -> Training -> Analysis.
-- [ ] **5-Layer SQL Registry**: Multi-tenant schema supporting Vessel, Regime, Agency, Audit, and RLHF layers.
-- [ ] **Data Factory (Perfect CSV)**: Export 5-layer training sets for the CNN.
-- [ ] **PDF Parser Persistence**: Refactor using JSON templates for 100% stability.
-
-## 🟡 Phase 2: Multi-Layer ML (Hybrid Ensemble)
-- [ ] **Signal Layer (CNN)**: 1D-CNN + LSTM for Tier 1 & 2 patterns.
-- [ ] **Behavioral Layer (XGBoost)**: Personalized Tier 3 modeling.
-- [ ] **Correction Module (Tier 4)**: Systemic residual audit and sensor health.
-- [ ] **Reinforcement Feed (Tier 5)**: Interactive user-feedback loop implementation.
-
-## 🔵 Phase 3: Platform & Environment (Cloud API)
-- [ ] **Cloud API Deployment**: Docker-based scalable service.
-- [ ] **Platform Deployment**: Cross-device Dashboards.
-- [ ] **Nightscout Sync**: Real-time API integration.
+This document serves as the granular engineering blueprint for the transformation of the Diabetic Engine into a multi-tenant, neural-first **Telegram Web App (TWA)**.
 
 ---
 
-## 🏗️ Technical Clarifications (DECISIONS MADE)
-*   **Intelligence Model**: [x] **5-Layer Hierarchical (Vessel, Environment, Agency, Audit, RLHF)**
-*   **ML Framework**: [x] **PyTorch**
-*   **Target Device**: [x] **Cloud API**
-*   **Alert Sensitivity**: [x] **Conservative (Noise-Resistant)**
-*   **Data Structure**: [x] **Multi-Tenant SQL Database**
+## 🔴 PHASE 1: THE DATA FACTORY (Ingestion & Stability)
+**Goal**: Establish a zero-loss, 5-layer state assembly pipeline.
+
+### Task 1.1: Multi-Tenant SQL Registry (The Vessel Layer)
+- **Deployment**: `diabetic/storage/vessel_registry.db` (SQLite/PostgreSQL).
+- **Schema Design**:
+    - `users`: Telegram ID (PK), Name, CreatedAt.
+    - `bio_traits`: Age, Height, Weight, BMI, DiabetesType, DiagnosisYear.
+    - `cultural_markers`: Nationality (ISO), Religion, FastingProtocols (Bool).
+    - `medical_states`: SickMode (Active/Expiry), DawnPhenomenon (Active).
+- **Logic**: Migration of hardcoded `.env` settings into persistent, per-user records.
+
+### Task 1.2: The "Big JSON" State Synthesizer (The Audit Layer)
+- **Service**: `diabetic/utils/data_factory.py`.
+- **Function**: `assemble_snapshot(user_id) -> MetabolicSnapshot`.
+- **Logic**: 
+    - Poll **Atmospheric Data**: Merge OpenWeather (Temp/Humidity) and OpenAQ (PM2.5).
+    - Poll **Biometric Data**: Fetch latest Nightscout `entries` (Glucose) and `treatments` (Insulin/Carbs).
+    - Integrated **Audit Log**: Every snapshot is saved as a JSON blob in `storage/audit/` for extreme transparency.
+
+### Task 1.3: BSON-to-JSON Forensic Transformer
+- **Tool**: `scripts/utils/transform_bson_history.py`.
+- **Action**: Bulk convert historical MongoDB collections (Clinical Ottai logs) into the "Big JSON" format.
+- **Goal**: Ensure the CNN training set exactly matches the live inference data structure.
+
+---
+
+## 🟡 PHASE 2: THE COMMAND CENTER (TWA Platform)
+**Goal**: Transition from CLI to a premium, user-controlled interface.
+
+### Task 2.1: FastAPI Backend & Telegram Auth
+- **Infrastructure**: `diabetic/api/main.py`.
+- **Auth**: Implement `initData` validation using the Telegram Bot Token.
+- **Endpoints**:
+    - `GET /api/v1/snapshot`: Return the current 5-layer state.
+    - `POST /api/v1/config`: Update Bio-Cultural traits.
+    - `POST /api/v1/log`: Manual entry for insulin/hydration/exercise.
+
+### Task 2.2: Premium TWA Frontend (The User Experience)
+- **Stack**: Vanilla JS / HTML / CSS (Glassmorphism design).
+- **Components**:
+    - **Vessel Setup**: Interactive sliders for Bio-traits.
+    - **Cultural Selector**: Searchable flag picker for Nationality; Radio buttons for Religion.
+    - **Health Dashboard**: Real-time status indicators for "Sick Mode" and "Sensor Health."
+
+### Task 2.3: Heart Rate (HR/HRV) Webhook Bridge
+- **Action**: Expose a secure endpoint `/api/v1/telemetry/hr` to receive data from external sensors (e.g., Apple Health, Garmin).
+- **Layer 1 Sync**: Integrate real-time HR/HRV into the Big JSON assembly loop.
+
+---
+
+## 🟢 PHASE 3: NEURAL-FIRST EXECUTION (The Predictive Brain)
+**Goal**: Deploy $P > \alpha$ predictive logic.
+
+### Task 3.1: CNN Inference Integration (Tier 4)
+- **Engine**: `diabetic/ml_engine/predictor_cnn.py`.
+- **Model**: Personalized 1D-CNN + LSTM (v14 architecture).
+- **Execution**: Run inference every 5 minutes on the last 30 readings (1.25 hours of data).
+
+### Task 3.2: Alpha-Gating & Decision Matrix
+- **Logic**: Implement `alpha_threshold` check in the `DecisionMatrix`.
+- **Rule**: If `pred_prob < alpha`, suppress the alert (Low Certainty).
+- **Visuals**: Show the **Probabilistic Range (P5–P95)** on the TWA chart.
+
+### Task 3.3: Reliability & Confidence Index
+- **Metric**: Calculate $R_{score}$ based on data density (missing readings reduce reliability).
+- **Visual**: A 0–100% "Health Meter" in the TWA HUD.
+
+---
+
+## 🟣 PHASE 4: REINFORCED FEEDBACK (The RLHF Loop)
+**Goal**: Use interaction to minimize alert fatigue.
+
+### Task 4.1: 30m Post-Alert Binary Verification
+- **Bot Logic**: After a risk alert, set a 30m `asyncio` callback.
+- **Interaction**: Send a message: *"Was that prediction correct?"* with `[CORRECT]` and `[FALSE ALARM]` buttons.
+
+### Task 4.2: Dynamic Alpha Calibration (Tier 5)
+- **Reinforcement**: If a user marks an alert as "False Alarm," increase the $\alpha$ threshold (becoming more conservative).
+- **Audit**: Log all feedback into the SQL Registry to audit model drift over months.
+
+---
+
+## 🔵 PHASE 5: NIGHTSCOUT-LITE (Portability & Scale)
+**Goal**: Decoupling from active sensors.
+
+### Task 5.1: Heuristic "Lite" Mode
+- **Action**: Enable the system to run on **Regime & Vessel** data only (simulated glucose based on known insulin/carbs).
+- **Constraint**: Reliability score is capped at 35%; alerts are informative only.
+
+### Task 5.2: Dockerized Multi-Tenant Deployment
+- **Packaging**: Containerize the FastAPI + TWA + Worker loops.
+- **Scale**: Ready for production deployment on Cloud Run or VPS with multiple users.
