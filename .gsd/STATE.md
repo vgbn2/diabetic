@@ -1,43 +1,42 @@
 ## Current Position
-- **Phase**: 19 - High-Fidelity Data Acquisition Hardening (Forensic Stabilization)
-- **Task**: Wave 3 Infrastructure Hardening & Validation
-- **Status**: Paused at 2026-04-17 13:55 (Hanoi Time)
+- **Phase**: 20 - Neural-First Execution (Transitioning to TWA Vision)
+- **Task**: Finalizing Vision and Implementation Plan for Phase 1.
+- **Status**: Paused at 2026-04-17 15:04 (Hanoi Time)
 
 ## Last Session Summary
-- **Neural Security Patch**: Upgraded `torch.load` to `weights_only=True` to eliminate RCE risks.
-- **Boot Integrity**: Implemented `validate_config()` to enforce mandatory env vars and storage readiness at startup.
-- **Wave 3 Hardening**: Standardized Nightscout/Weather to persistent HTTPS/HTTPX clients to prevent connection exhaustion.
-- **Temporal Drift Correction**: Refactored `ScalingEngine` and `TemporalEngine` to dynamically calculate diagnosis duration and holidays using the current system year (eliminating the 2026 hardcoded drift).
-- **Concurrency Safety**: Enforced SQLite WAL mode and increased timeouts for robust multi-task logging.
-- **Verification**: Executed [Phase 19.1.C] "Gold Run" assembly, confirming successful multi-task inference (Glu: 10.00, HR: 82.2).
+- **Infrastructure Hardening**: Committed Tier 1 stability patches (Neural Security, Boot Integrity, Persistent Clients).
+- **Vision Pivot**: Re-calibrated the project as a multi-tenant **Telegram Web App (TWA)**.
+- **Data Architecture**: Defined the **Unified 5-Layer "Big JSON"** State Frame for CNN consistency.
+- **Medical Depth**: Re-integrated forgotten Layer 2/3 traits (Hydration, Bio-Cycles, Sick Mode, HRV).
+- **Phase 1 Planning**: mapped the SQL Vessel Registry and Data Factory synthesizer.
 
 ## In-Progress Work
-- Ready for Phase 20: Neural-First Execution.
-- Files modified: `diabetic/config.py`, `diabetic/utils/scaling_engine.py`, `diabetic/utils/temporal.py`, `diabetic/ingestion/nightscout.py`, `diabetic/utils/audit_logger.py`, `diabetic/ml_engine/inference.py`.
-- Tests status: ✅ Phase 19.1.C Gold Run PASSING.
+- Ready for Phase 1 (Bio-Quant Edition): Database Migration.
+- Files modified: `SPEC.md`, `ROADMAP.md`, `VISION.md`.
+- Tests status: ✅ Infrastructure baseline verified.
 
 ## Blockers
-- None at acquisition tier.
-- Future dependency: Requires 30 readings (1.25 hours) for CNN warm-up in live mode.
+- None.
 
 ## Context Dump
 ### Decisions Made
-- **Fail-Fast Boot**: System will now crash immediately if `API_SECRET` or `MONGO_URI` are missing, rather than performing silent, useless operations.
-- **Persistent HTTPX**: Moved to a shared `AsyncClient` to avoid socket overhead.
-- **Dynamic Traits**: Decoupled patient metadata from specific years to ensure longevity.
+- **TWA Host**: Use FastAPI to serve both the bot webhooks and the TWA dashboard.
+- **Relational Frames**: "Big JSON" will store references to static layers (Vessel/Environment) to manage density.
+- **Alpha-Gating**: Alerts only trigger on 30m CNN prediction with $P > \alpha$.
+- **Binary RLHF**: 30m post-alert feedback loop for dynamic sensitivity calibration.
 
 ### Approaches Tried
-- **Validation Scripting**: Used `verify_cnn_acquisition.py` to prove that trait normalization matches weights expected by v14.
+- **CLI-Only**: Deprecated in favor of the TWA vision for better user agency.
 
 ### Current Hypothesis
-- The system is now chemically and digitally stable. The "Gold Run" success proves the model is ready for live interpretation.
+- A unified "Big JSON" Audit Frame will bridge the gap between historical training data and live sensor results, significantly reducing neural drift.
 
 ### Files of Interest
-- `diabetic/config.py`: Hardened boot sequence.
-- `diabetic/ingestion/nightscout.py`: Persistent connection bridge.
-- `diabetic/utils/audit_logger.py`: WAL-enabled persistence.
+- `VISION.md`: The "semantic soul" of the new TWA architecture.
+- `SPEC.md`: Technical constraints for the 30m feedback loop.
+- `diabetic/medical_constants.py`: Source of clinical truth for the 5 layers.
 
 ## Next Steps
-1. **Live Deployment**: Launch `scripts/run_live.bat`.
-2. **Buffer Warm-up**: Monitor acquisition for 1.25 hours (30 readings).
-3. **Alert Tier Feedback**: Verify Telegram "Faint Risk" alerts trigger on neural certainty thresholds.
+1. **Task 1.1**: Implement the `VesselRegistry` (SQL multi-tenant profile storage).
+2. **Task 1.2**: Build the `StateSynthesizer` (The Big JSON Data Factory).
+3. **Phase 2**: Launch the FastAPI TWA backend.
