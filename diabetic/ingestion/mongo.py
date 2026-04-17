@@ -1,4 +1,4 @@
-from matplotlib.path import Path
+from pathlib import Path
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
