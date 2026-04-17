@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Subset
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -22,11 +22,11 @@ def train_metabolic_cnn(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # 2. Data Loading
+    # 2. Data Loading & Sequential Splitting (Wave 5 Protocol)
     dataset = MetabolicDataset(csv_path)
     train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_set, val_set = random_split(dataset, [train_size, val_size])
+    train_set = Subset(dataset, range(train_size))
+    val_set = Subset(dataset, range(train_size, len(dataset)))
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
