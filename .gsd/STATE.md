@@ -1,42 +1,43 @@
 ## Current Position
-- **Phase**: 20 - Neural-First Execution (Transitioning to TWA Vision)
-- **Task**: Finalizing Vision and Implementation Plan for Phase 1.
-- **Status**: Paused at 2026-04-17 15:04 (Hanoi Time)
+- **Phase**: 0 - Stability Hardening (Metabolic Remediation)
+- **Task**: Addressing critical resource leaks and systemic failures identified in the v14 audit.
+- **Status**: Paused at 2026-04-17 15:28 (Hanoi Time)
 
 ## Last Session Summary
-- **Infrastructure Hardening**: Committed Tier 1 stability patches (Neural Security, Boot Integrity, Persistent Clients).
-- **Vision Pivot**: Re-calibrated the project as a multi-tenant **Telegram Web App (TWA)**.
-- **Data Architecture**: Defined the **Unified 5-Layer "Big JSON"** State Frame for CNN consistency.
-- **Medical Depth**: Re-integrated forgotten Layer 2/3 traits (Hydration, Bio-Cycles, Sick Mode, HRV).
-- **Phase 1 Planning**: mapped the SQL Vessel Registry and Data Factory synthesizer.
+- **Vision Maturation**: Fully detailed the **Telegram Web App (TWA)** multi-tenant roadmap.
+- **Unified 5-Layer Spec**: Locked the **"Big JSON"** state architecture.
+- **Deep Audit Verification**: Verified 7 critical bugs identified in the user-led audit:
+    - aiohttp/httpx socket leaks in WeatherIngestor and StatelessPush.
+    - Missing shutdown hooks for Nightscout/HR clients.
+    - Null-pointer risk in MetabolicPalace background threads.
+    - Silent weather mock defaults.
+- **Baseline Integrity**: Confirmed clinical extraction (1,364 readings) and CNN inference (Glu: 9.95, HR: 82.1) are operational.
 
 ## In-Progress Work
-- Ready for Phase 1 (Bio-Quant Edition): Database Migration.
-- Files modified: `SPEC.md`, `ROADMAP.md`, `VISION.md`.
-- Tests status: ✅ Infrastructure baseline verified.
+- Implementation Plan updated with **Phase 0: Stability Partition**.
+- Files modified (this turn): `ROADMAP.md`, `VISION.md`, `SPEC.md`.
 
 ## Blockers
 - None.
 
 ## Context Dump
 ### Decisions Made
-- **TWA Host**: Use FastAPI to serve both the bot webhooks and the TWA dashboard.
-- **Relational Frames**: "Big JSON" will store references to static layers (Vessel/Environment) to manage density.
-- **Alpha-Gating**: Alerts only trigger on 30m CNN prediction with $P > \alpha$.
-- **Binary RLHF**: 30m post-alert feedback loop for dynamic sensitivity calibration.
+- **Shared Persistent HTTP**: Transition all ingestors to a class-level or coordinator-managed `httpx.AsyncClient` to end the file descriptor leaks.
+- **Physiological Shift**: Tentative plan to move from linear IOB decay to biexponential curves for clinical parity.
+- **Warning Infrastructure**: Implement proactive warnings for 'Weather Mock' and 'Neural Warmup' states.
 
 ### Approaches Tried
-- **CLI-Only**: Deprecated in favor of the TWA vision for better user agency.
+- **Relational Frames**: Decided to use pointers for static layers in the Big JSON to prevent database bloat.
 
 ### Current Hypothesis
-- A unified "Big JSON" Audit Frame will bridge the gap between historical training data and live sensor results, significantly reducing neural drift.
+- Remediation of the socket leaks and null-checks in Phase 0 will resolve the 'silent instability' observed in the background telemetry loops.
 
 ### Files of Interest
-- `VISION.md`: The "semantic soul" of the new TWA architecture.
-- `SPEC.md`: Technical constraints for the 30m feedback loop.
-- `diabetic/medical_constants.py`: Source of clinical truth for the 5 layers.
+- `diabetic/ingestion/weather.py`: aiohttp leak point.
+- `diabetic/utils/stateless_push.py`: httpx leak point.
+- `diabetic/coordinator.py`: Shutdown and Palace logic.
 
 ## Next Steps
-1. **Task 1.1**: Implement the `VesselRegistry` (SQL multi-tenant profile storage).
-2. **Task 1.2**: Build the `StateSynthesizer` (The Big JSON Data Factory).
-3. **Phase 2**: Launch the FastAPI TWA backend.
+1. **Task 0.1**: Refactor `WeatherIngestor` and `StatelessPush` to use persistent clients.
+2. **Task 0.2**: Implement graceful `aclose()` in `Coordinator.stop()`.
+3. **Task 1.1**: Proceed to Multi-Tenant SQL Registry.
