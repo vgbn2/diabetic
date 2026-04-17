@@ -14,7 +14,6 @@ from diabetic.utils.temporal import temporal_engine
 from diabetic.utils.schedule import schedule_manager
 from diabetic.registry import GlucoseReading
 from diabetic.utils.scaling_engine import scaling_engine
-
 class MetabolicInferenceRunner:
     """
     Production-ready bridge to feed live data into the 5-layer CNN engine.
@@ -87,7 +86,7 @@ class MetabolicInferenceRunner:
         g_col = 'glucose_mmol_l' if 'glucose_mmol_l' in window.columns else 'glucose'
         
         # Velocity logic
-        window['velocity'] = window[g_col].diff() / 2.5 # assume 2.5m interval
+        window['velocity'] = window[g_col].diff() / config.SAMPLING_INTERVAL_MINS
         window['velocity'] = window['velocity'].fillna(0)
         
         # Scaling
@@ -135,10 +134,14 @@ class MetabolicInferenceRunner:
             output = self.model(temp_x, static_y)[0] # (2,)
             
         # Rescale: 
-        # Glucose: val * 20.0
-        # HR: (val * 120.0) + 60.0
+        # Glucose: val * 20.0 (clamp to [2.2, 27.0])
+        from diabetic.medical_constants import PHYSIO_FLOOR, FAINT_GLUCOSE
         g_pred = float(output[0]) * 20.0
+        g_pred = max(PHYSIO_FLOOR, min(g_pred, FAINT_GLUCOSE + 5.0))
+        
+        # HR: (val * 120.0) + 60.0 (clamp to [40, 200])
         hr_pred = (float(output[1]) * 120.0) + 60.0
+        hr_pred = max(40.0, min(hr_pred, 200.0))
         
         return {
             "glucose": g_pred,
@@ -167,7 +170,7 @@ class MetabolicInferenceRunner:
                 vel = 0.0
                 if i > 0:
                     # Approximation based on the previous snapshot in the list
-                    vel = (g_val - recent[i-1].glucose.value) / 5.0
+                    vel = (g_val - recent[i-1].glucose.value) / config.SAMPLING_INTERVAL_MINS
                 
                 # Reading object for synthesizer
                 from diabetic.registry import GlucoseReading
@@ -192,9 +195,17 @@ class MetabolicInferenceRunner:
         with torch.no_grad():
             output = self.model(tensor, static_y)[0]
             
+        # Rescale and Clamp logic (Layer 4 Safety)
+        from diabetic.medical_constants import PHYSIO_FLOOR, FAINT_GLUCOSE 
+        g_pred = float(output[0]) * 20.0
+        g_pred = max(PHYSIO_FLOOR, min(g_pred, FAINT_GLUCOSE + 5.0))
+        
+        hr_pred = (float(output[1]) * 120.0) + 60.0
+        hr_pred = max(40.0, min(hr_pred, 200.0))
+        
         return {
-            "glucose": float(output[0]) * 20.0,
-            "heart_rate": (float(output[1]) * 120.0) + 60.0
+            "glucose": g_pred,
+            "heart_rate": hr_pred
         }
 
     def run_live_inference(self, csv_path: str):
