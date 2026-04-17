@@ -77,5 +77,11 @@ class DatabaseSingleton:
         except Exception as e:
             self.logger.error(f"Failed to create database indices: {e}")
 
+    async def close(self):
+        """Closes the underlying MongoDB connection pool."""
+        if self.client:
+            self.client.close()
+            self.logger.info("MongoDB Singleton shut down.")
+
 # Global Accessor
 db_manager = DatabaseSingleton()

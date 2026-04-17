@@ -219,11 +219,12 @@ class Coordinator:
         # Trapping anomalies: e.g., high prediction, high value, or HR distress
         if not is_backfill:
             if prediction_30m > 16.0 or reading.value > 16.0 or (snapshot.bpm and snapshot.bpm > 110):
-                task = asyncio.create_task(asyncio.to_thread(
-                    self.palace.remember_snapshot, snapshot.model_dump(), room="l4_anomaly_audit"
-                ))
-                self.background_tasks.add(task)
-                task.add_done_callback(self.background_tasks.discard)
+                if self.palace is not None:
+                    task = asyncio.create_task(asyncio.to_thread(
+                        self.palace.remember_snapshot, snapshot.model_dump(), room="l4_anomaly_audit"
+                    ))
+                    self.background_tasks.add(task)
+                    task.add_done_callback(self.background_tasks.discard)
 
         if len(self.snapshots) > medical_constants.SNAPSHOT_CAP:
             self.snapshots.pop(0)
@@ -489,6 +490,17 @@ class Coordinator:
         if self.background_tasks:
             self.logger.info(f"Awaiting {len(self.background_tasks)} background tasks before shutdown...")
             await asyncio.wait(self.background_tasks, timeout=5.0)
+
+        # Wave 0 Hardening: Close persistent clients
+        self.logger.info("Closing persistent network and database resources...")
+        await self.client.close()
+        await self.weather_client.close()
+        await self.pusher.close()
+        
+        from diabetic.utils.db import db_manager
+        await db_manager.close()
+        
+        self.logger.info("Bio-Quant Orchestrator stopped.")
 
 if __name__ == "__main__":
     c = Coordinator()
