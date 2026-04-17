@@ -92,7 +92,7 @@ async def main():
         handlers=[logging.StreamHandler(sys.stdout)]
     )
     
-    await config.validate_config()
+    config.validate_config()
     await db_manager.ensure_indices()
 
     if len(sys.argv) > 1:
