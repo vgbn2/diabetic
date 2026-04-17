@@ -17,6 +17,13 @@ class StatelessPush:
     def __init__(self):
         self.push_url = config.FRONTEND_PUSH_URL
         self.logger = logging.getLogger("Bio-Quant.Push")
+        
+        # Wave 0 Hardening: Persistent client to prevent socket leaks
+        self.client = httpx.AsyncClient(timeout=10.0)
+
+    async def close(self):
+        """Closes the underlying HTTP client."""
+        await self.client.aclose()
 
     async def push_update(self, data: Dict[str, Any]):
         """Sends a metabolic update or alert to the frontend."""
@@ -24,25 +31,24 @@ class StatelessPush:
             return
 
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                # Task 7.1.8: Custom JSON encoder or model_dump for Pydantic/datetime
-                import json
-                from diabetic.registry import MetabolicSnapshot
-                
-                def default_converter(o):
-                    if isinstance(o, datetime):
-                        return o.isoformat()
-                    if hasattr(o, "model_dump"):        # ← this first
-                        return o.model_dump(mode='json')
-                    if hasattr(o, "dict"):              # ← fallback for pydantic v1
-                        return o.dict()
-                
-                # We serialize manually to handle datetimes in the payload
-                serialized_data = json.loads(json.dumps(data, default=default_converter))
-                response = await client.post(self.push_url, json=serialized_data)
-                # We don't block on failure, just log it.
-                if response.status_code != 200:
-                    self.logger.debug(f"Telemetry sync skipped: status {response.status_code} (Endpoint: {self.push_url})")
+            # Task 7.1.8: Custom JSON encoder or model_dump for Pydantic/datetime
+            import json
+            from diabetic.registry import MetabolicSnapshot
+            
+            def default_converter(o):
+                if isinstance(o, datetime):
+                    return o.isoformat()
+                if hasattr(o, "model_dump"):        # ← this first
+                    return o.model_dump(mode='json')
+                if hasattr(o, "dict"):              # ← fallback for pydantic v1
+                    return o.dict()
+            
+            # We serialize manually to handle datetimes in the payload
+            serialized_data = json.loads(json.dumps(data, default=default_converter))
+            response = await self.client.post(self.push_url, json=serialized_data)
+            # We don't block on failure, just log it.
+            if response.status_code != 200:
+                self.logger.debug(f"Telemetry sync skipped: status {response.status_code} (Endpoint: {self.push_url})")
         except (httpx.ConnectError, httpx.TimeoutException) as ce:
             self.logger.debug(f"Telemetry endpoint unreachable: {ce}. Continuing in headless mode.")
         except Exception as e:
@@ -61,8 +67,7 @@ class StatelessPush:
             try:
                 # Ping the base URL (Render root) to prevent sleeping
                 base_url = "/".join(self.push_url.split("/")[:3])
-                async with httpx.AsyncClient(timeout=config.PUSH_TIMEOUT_SECS) as client:
-                    await client.get(base_url)
+                await self.client.get(base_url)
             except Exception:
                 pass
             # Ping on metabolic interval (Wave 5)
