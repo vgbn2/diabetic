@@ -3,6 +3,7 @@ from datetime import datetime, time, date
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from diabetic.registry import ScheduleEvent
+# at some point , the user should be able to write their schedule into here, so for now this is a fall back
 
 class ScheduleManager:
     """

@@ -119,7 +119,11 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("\nSystem stopped by user.")
             break
+        except ValueError as e:
+            logging.error(f"FATAL CONFIGURATION ERROR: {e}")
+            logging.error("Check your .env file or Heroku Config Vars. System exiting.")
+            sys.exit(1)
         except Exception as e:
             logging.error(f"FATAL SYSTEM CRASH: {e}. Attempting automated recovery in 30s...")
             import time
-            time.sleep(30) # Cool-down to prevent rapid looping on fatal config errors
+            time.sleep(30) # Cool-down for recoverable network or transient errors

@@ -4,6 +4,29 @@ This document serves as the granular engineering blueprint for the transformatio
 
 ---
 
+## 🟠 PHASE 0.5: AUDIT REMEDIATION (Bio-Quant v16)
+**Goal**: Resolve 16 critical bugs and architectural gaps identified in the v16 audit.
+
+### Task 0.5.1: Core Engine Safety
+- Fix `main.py` startup crash (sync `validate_config`).
+- Replace hardcoded 2.5/5.0 intervals in `inference.py` with dynamic config.
+- Implement prediction clamping for glucose (2.2–30.0) and HR.
+- Fix background task references in `audit_logger.py` to prevent GC.
+
+### Task 0.5.2: Data & Training Integrity
+- Normalize velocity units in `metabolic_dataset.py` (per-minute vs per-5min).
+- Fix `train.py` temporal leakage (sequential split instead of `random_split`).
+- Implement EMA decay in `DigitalTwin.auto_tune` to prevent parameter drift.
+- Fix `ingestion/mongo.py` path import error.
+
+### Task 0.5.3: Architectural Coupling
+- Integrate `BasalOracle` harmonic models into the 4h trajectory pipeline.
+- Wire `GlucoseForecaster` (XGBoost) into the `Coordinator` voting logic.
+- Implement `SignalQuality.check_data_gap` to pause smoothing during long outages.
+- Resolve alert type collisions in `DecisionMatrix` (STRESS_ANOMALY vs FAINT_RISK).
+
+---
+
 ## 🔴 PHASE 1: THE DATA FACTORY (Ingestion & Stability)
 **Goal**: Establish a zero-loss, 5-layer state assembly pipeline.
 

@@ -11,7 +11,7 @@ class ScalingEngine:
     """
     
     # ── Static Mapping Rules (Tier 1 Metadata) ────────────────────────────────
-    GENDER_MAP = {"FEMALE": 0.0, "MALE": 1.0, "OTHER": 0.5}
+    GENDER_MAP = {"FEMALE": 0.0, "MALE": 1.0, "OTHER": 0.5}#bruh
     ETHNICITY_MAP = {
         "ASIAN": 0.1, 
         "CAUCASIAN": 0.2, 
@@ -28,14 +28,14 @@ class ScalingEngine:
         """
         if now is None:
             now = datetime.now(timezone.utc)
-            
+
         vector = [
             config.PATIENT_AGE / 100.0,
-            config.PATIENT_WEIGHT_KG / 150.0,
-            config.PATIENT_HEIGHT_CM / 250.0,
-            cls.GENDER_MAP.get(config.PATIENT_GENDER, 0.0),
-            cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),
-            cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),
+            config.PATIENT_WEIGHT_KG / 150.0,#why?
+            config.PATIENT_HEIGHT_CM / 250.0,#why?
+            cls.GENDER_MAP.get(config.PATIENT_GENDER, 0.0),#is there a mapping for this?
+            cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),#is there a mapping for this?
+            cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),#is there a mapping for this?
             (datetime.now().year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
             0.5, # Default activity level (Layer 3 anchor)
             config.PATIENT_FRUCTOSAMIN / 500.0,

@@ -16,10 +16,10 @@ class MetabolicDataset(Dataset):
     Performs feature scaling and cardiac synthesis for training.
     """
     
-    def __init__(self, csv_path: str, seq_len: int = 30, pred_offset: int = 6):
+    def __init__(self, csv_path: str, seq_len: int = 30, prediction_offset: int = 6):
         self.csv_path = csv_path
         self.seq_len = seq_len
-        self.pred_offset = pred_offset # e.g. 6 ticks = 30 mins
+        self.prediction_offset = prediction_offset # e.g. 6 ticks = 30 mins
         
         self.data, self.static_vector = self._preprocess()
         self.X, self.y = self._create_windows()
@@ -93,13 +93,13 @@ class MetabolicDataset(Dataset):
         glucose_vals = self.data['glucose_scaled'].values
         hr_vals = self.data['hr_scaled'].values
 
-        for i in range(len(data_vals) - self.seq_len - self.pred_offset):
+        for i in range(len(data_vals) - self.seq_len - self.prediction_offset):
             # Input sequence (Temporal Channels x SeqLen)
             window = data_vals[i : i + self.seq_len].T 
             X_list.append(window)
             
             # Multi-Target: [Glucose_Scaled, HR_Scaled] at target_t
-            target_t = i + self.seq_len + self.pred_offset - 1
+            target_t = i + self.seq_len + self.prediction_offset - 1
             y_sample = [
                 glucose_vals[target_t],
                 hr_vals[target_t]

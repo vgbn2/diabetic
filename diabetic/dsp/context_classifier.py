@@ -43,6 +43,8 @@ def classify_context(snapshot: MetabolicSnapshot) -> ActivityType:
     7. RELAXED_STUDYING — baseline state (fallback when awake).
     8. UNKNOWN — no cardiac data available.
     """
+
+    # why is there a fuck tone of if else statement
     # 1. Food (highest priority — if meal logged, that's the cause)
     if snapshot.last_meal is not None:
         return ActivityType.FOOD
@@ -147,3 +149,4 @@ if __name__ == "__main__":
     print(f"[TEST 7] Baseline awake -> {result.value} [OK]")
 
     print("\nALL CONTEXT CLASSIFIER TESTS PASSED.")
+#is this a testing file or is it a functional file?

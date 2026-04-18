@@ -29,13 +29,14 @@ class TemporalEngine:
                 self.logger.error(f"Failed to initialize holidays library: {e}")
 
         # High-Social Eating Festivals (Tier 4: +20%)
-        # Note: These are substrings of names usually returned by the library
+        #is there a library for these type of festivals, at somepoint other countries festivals is needed in here also
         self.festivals = [
             "Tết", "Tet", "Hung Kings", "Liberation Day", "Chiến thắng", "Quốc khánh", "National Day"
         ]
         
         # Sugar-Aggressive Events (Tier 4 overrides)
         # Mid-Autumn 2026: Sept 25. High Mooncake sugar load.
+        #add tet and other food related festival also
         self.sugar_events = {
             (9, 25): "Mid-Autumn Festival"
         }

@@ -6,7 +6,6 @@ import numpy as np
 from datetime import datetime, timezone
 from typing import List, Tuple
 from pathlib import Path
-
 from diabetic.config import config
 from diabetic.ml_engine.convolutional_layer import DiabeticCNN, CNNConfig
 from diabetic.ml_engine.synthetic_cardiac import cardiac_synthesizer

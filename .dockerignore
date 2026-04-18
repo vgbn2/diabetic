@@ -1,0 +1,30 @@
+# 🛑 SECRETS & DATA
+.env
+storage/
+data/
+*.db
+*.sqlite3
+
+# 🐍 PYTHON HYGIENE
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 🎓 PRACTICE & SCRATCH
+practice/
+scratch/
+testsprite_tests/
+
+# ☁️ CLOUD & GIT
+.git
+.gitignore
+.dockerignore
+Dockerfile
+Procfile
+runtime.txt
+.gsd/
+.vscode/

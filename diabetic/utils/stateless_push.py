@@ -56,7 +56,7 @@ class StatelessPush:
 
 # =============================================================================
 # 💓 [INFRASTRUCTURE HEARTBEAT]
-# =Focus: Render Service Persistence and Stay-Alive Pings
+# =Focus: heroku service Persistence and Stay-Alive Pings (eco plan on heroku needs data polling every 30minutes)
 # =============================================================================
     async def heartbeat(self):
         """Self-pinging mechanism to keep the Render server alive."""
