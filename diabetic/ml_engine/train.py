@@ -24,9 +24,13 @@ def train_metabolic_cnn(
 
     # 2. Data Loading & Sequential Splitting (Wave 5 Protocol)
     dataset = MetabolicDataset(csv_path)
-    train_size = int(0.8 * len(dataset))
+    
+    # Introduce gap to prevent temporal window overlap (Leakage Fix)
+    gap = dataset.seq_len + dataset.prediction_offset
+    train_size = int(0.8 * len(dataset)) - gap
+    
     train_set = Subset(dataset, range(train_size))
-    val_set = Subset(dataset, range(train_size, len(dataset)))
+    val_set = Subset(dataset, range(train_size + gap, len(dataset)))
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
