@@ -30,26 +30,6 @@ class MetabolicMath:
         return max(dt, mc.MIN_DT_FLOOR)
 
     @staticmethod
-    def extract_kinematics(snapshots: List[MetabolicSnapshot], dt: float = None) -> Tuple[float, float]:
-        """
-        Extracts Velocity and Acceleration from the 3D Kalman state vector.
-        """
-        if not snapshots:
-            return 0.0, 0.0
-
-        curr = snapshots[-1]
-        if len(snapshots) < 2:
-            return curr.velocity, curr.acceleration
-
-        velocity = curr.velocity
-        acceleration = curr.acceleration
-        
-        if len(snapshots) == 1:
-            acceleration = 0.0
-
-        return velocity, acceleration
-
-    @staticmethod
     def calculate_atr(snapshots: List[MetabolicSnapshot], period: int = 14) -> float:
         """
         Calculates the Time-Normalized Average True Range of glucose variations.

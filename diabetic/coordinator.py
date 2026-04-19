@@ -184,8 +184,6 @@ class Coordinator:
             snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * (1.0 - dt_i / 240.0))
 
         # 4. Feature Extraction
-        _, acceleration = MetabolicMath.extract_kinematics(self.snapshots + [snapshot])
-        snapshot.acceleration = acceleration
         snapshot.atr_14 = MetabolicMath.calculate_atr(self.snapshots + [snapshot], period=14)
 
         # 5. Forecasting
