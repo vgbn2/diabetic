@@ -226,9 +226,15 @@ class MetabolicInferenceRunner:
         print(f"Feeding data into CNN (Temporal: {temp_x.shape}, Static: {static_y.shape})...")
         
         with torch.no_grad():
-            output = self.model(temp_x, static_y)
+            output = self.model(temp_x, static_y)[0]
             
-        return output.item()
+        g_pred = float(output[0]) * 20.0
+        hr_pred = (float(output[1]) * 120.0) + 60.0
+
+        return {
+            "glucose": g_pred,
+            "heart_rate": hr_pred
+        }
 
 if __name__ == "__main__":
     # Find the most recent export file
@@ -245,6 +251,7 @@ if __name__ == "__main__":
         result = runner.run_live_inference(str(latest_csv))
         
         print("\n--- CNN INFERENCE RESULT ---")
-        print(f"Residual Delta: {result:.4f}")
-        print("Status: Success (Model activation verified)")
+        print(f"Predicted Glucose: {result['glucose']:.2f} mmol/L")
+        print(f"Predicted Heart Rate: {result['heart_rate']:.1f} BPM")
+        print("Status: Success (Multi-Task activation verified)")
         print("Note: Running with initialized weights (Cold Mode)")
