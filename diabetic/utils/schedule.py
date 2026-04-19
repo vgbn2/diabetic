@@ -3,7 +3,8 @@ from datetime import datetime, time, date
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from diabetic.registry import ScheduleEvent
-# at some point , the user should be able to write their schedule into here, so for now this is a fall back
+# NOTE: Future versions will allow dynamic schedule configuration via user interface. 
+# Currently defaults to the JSON-based truth source managed by ScheduleManager.
 
 class ScheduleManager:
     """

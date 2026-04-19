@@ -1,4 +1,14 @@
 import torch
+import numpy as np
+import random
+
+# Global seeding for reproducible training (L3)
+torch.manual_seed(42)
+np.random.seed(42)
+random.seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(42)
+
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
