@@ -81,10 +81,12 @@ class Coordinator:
             self.palace = None
 
         self.snapshots: List[MetabolicSnapshot] = []
+        self.regime_step_count = 0  # FIX C1: Persistent counter independent of buffer length
 
         self.last_meal: Optional[MealEvent] = None
         self.meal_window_start: Optional[datetime] = None
         self.meal_tune_pending: bool = False
+        self.actual_meal_peak: float = 0.0  # FIX C2: Tracks Highest Observed Glucose value during meal window
 
         # FIX L1: store the twin's predicted peak at meal-log time so auto_tune
         # compares actual glucose against the real 4h meal prediction, not
@@ -99,6 +101,8 @@ class Coordinator:
 # =============================================================================
     async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
         """Standard processing pipeline for a single reading."""
+        self.regime_step_count += 1
+        
         task = asyncio.create_task(self.audit.log_reading(reading))
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
@@ -236,25 +240,30 @@ class Coordinator:
 
         # 7. Digital Twin Regime Detection (every 6 hours)
         regime_trigger = int(360 / medical_constants.SAMPLING_INTERVAL_MINS)
-        if len(self.snapshots) % regime_trigger == 0:
+        if self.regime_step_count % regime_trigger == 0:
             regime = self.twin.detect_regime(self.snapshots)
-            self.logger.info(f"Metabolic Regime Detected: {regime}")
+            self.logger.info(f"Metabolic Regime Detected: {regime} (Step: {self.regime_step_count})")
 
         # 8. Meal Window Auto-Tune
-        # FIX L1: use pending_meal_forecast_peak (stored at meal-log time) not
-        # snapshot.predict_30m (short-horizon kinematic — wrong comparison target).
+        # FIX C2: track actual peak and compare against predicted forecast peak.
         if self.last_meal and self.meal_window_start and self.meal_tune_pending:
+            self.actual_meal_peak = max(self.actual_meal_peak, reading.value)
+            
             dt_meal = (reading.timestamp - self.meal_window_start).total_seconds() / 60.0
             if dt_meal >= 230:
-                self.logger.info("Meal window closed. Triggering Twin Auto-Tune via meal residual...")
+                self.logger.info(f"Meal window closed (dt={dt_meal:.1f}m). Triggering Twin Auto-Tune via observed peak: {self.actual_meal_peak:.1f}...")
                 if self.pending_meal_forecast_peak and self.pending_meal_forecast_peak > 0.1:
-                    self.twin.auto_tune(reading.value, self.pending_meal_forecast_peak)
+                    # Logic: use the ACTUAL Highest glucose reached vs the PREDICTED Highest glucose.
+                    self.twin.auto_tune(self.actual_meal_peak, self.pending_meal_forecast_peak)
                 else:
                     self.logger.warning("No stored meal forecast peak — auto_tune skipped.")
+                
+                # Reset window
                 self.last_meal = None
                 self.meal_window_start = None
                 self.meal_tune_pending = False
                 self.pending_meal_forecast_peak = None
+                self.actual_meal_peak = 0.0
 
         # 9. Push to Frontend
         if not is_backfill:
