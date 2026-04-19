@@ -150,7 +150,10 @@ class TelegramApp:
         action, alert_type = parts
 
         if self.audit_logger:
-            asyncio.create_task(self.audit_logger.log_feedback(alert_type, action))
+            task = asyncio.create_task(self.audit_logger.log_feedback(alert_type, action))
+            if self.coordinator and hasattr(self.coordinator, 'background_tasks'):
+                self.coordinator.background_tasks.add(task)
+                task.add_done_callback(self.coordinator.background_tasks.discard)
 
         if action == "confirm":
             await query.edit_message_text(text=f"✅ Alert {alert_type} acknowledged. Stay safe.")

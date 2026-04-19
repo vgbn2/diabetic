@@ -16,7 +16,8 @@ class DigitalTwin:
     Uses adaptive physiological baselines that auto-tune based on user CGM data.
     Tracks both Carb Sensitivity (CSF) and Insulin Sensitivity (ISF).
     """
-    def __init__(self, csf: float = mc.CARB_SENSITIVITY_DEFAULT,
+    def __init__(self, 
+                 csf: float = mc.CARB_SENSITIVITY_DEFAULT,
                  isf: float = mc.INSULIN_SENSITIVITY_DEFAULT,
                  gender: str = "FEMALE",
                  age: int = 30,
@@ -58,40 +59,50 @@ class DigitalTwin:
     def get_hormonal_multiplier(self, timestamp: datetime) -> float:
         """
         Calculates insulin resistance multiplier based on clinical, biological, and circadian states.
+        Multiplicative model to avoid ISF bias.
         """
         # 1. Base Multiplier & Clinical Bias
-        # Fructosamin > 285 indicates persistent historic hyperglycemia (resistance)
-        clinical_bias = 1.0
+        resistance = 1.0
         if self.fructosamin > 285:
-            clinical_bias += 0.10 # +10% base resistance from metabolic memory
+            resistance *= 1.10 # +10% base resistance from metabolic memory
         
         if self.is_inflamed:
-            clinical_bias += 0.15 # +15% resistance from LEU/infection stress
+            resistance *= 1.15 # +15% resistance from LEU/infection stress
             
-        resistance = clinical_bias
-        
-        # 2. Circadian Logic (24h Oscillation)
+        # 2. Circadian Logic (24h Multiplicative Oscillation)
         hour_pos = (timestamp.hour + timestamp.minute / 60.0) / 24.0
-        circadian_resistance = 0.05 * np.sin(2 * np.pi * (hour_pos - 0.375)) 
-        resistance += circadian_resistance
-
+        circadian_mult = 1.0 + 0.05 * np.sin(2 * np.pi * (hour_pos - 0.375)) 
+        resistance *= circadian_mult
+        
         # 3. Macro-Cycle Logic
         if self.gender == "FEMALE":
             days_since = (timestamp - self.cycle_start).total_seconds() / (3600 * 24)
             cycle_pos = (2 * np.pi * (days_since % mc.MENSTRUAL_CYCLE_DAYS) / mc.MENSTRUAL_CYCLE_DAYS)
-            resistance += (mc.LUTEAL_RESISTANCE_MULT - 1.0) * (0.5 * (1 + np.sin(cycle_pos - np.pi/2)))
+            luteal_factor = 0.5 * (1 + np.sin(cycle_pos - np.pi/2))
+            resistance *= (1.0 + (mc.LUTEAL_RESISTANCE_MULT - 1.0) * luteal_factor)
             
         # 4. Temporal Intelligence (Weekends/Holidays)
-        temporal_mult = temporal_engine.get_multiplier(timestamp)
-        resistance *= temporal_mult
+        resistance *= temporal_engine.get_multiplier(timestamp)
         
         # 5. Behavioral Ground Truth (Schedule Overrides)
         event = schedule_manager.get_event_at(timestamp)
         if event:
-            # Shift resistance based on event multiplier (e.g., 0.8 for workout)
             resistance *= event.sensitivity_mult
 
         return np.clip(resistance, 0.7, 1.5)
+
+    def get_iob_fraction(self, minutes_ago: float) -> float:
+        """
+        Calculates remaining Insulin On Board fraction using an S-curve (Physiological Decay).
+        """
+        if minutes_ago < 0: return 1.0
+        if minutes_ago >= mc.INSULIN_ACTION_WINDOW_MINS: return 0.0
+        
+        # S-curve approximation: IOB(t) = 1 - (t^2 / (t^2 + K))
+        # Where K = peak_time^2 (roughly)
+        peak = mc.INSULIN_PEAK_TAU_RAPID
+        curve = 1.0 - (minutes_ago**3) / (minutes_ago**3 + peak**3)
+        return max(0.0, curve)
 
     def get_environmental_multiplier(self, env: Optional[MetabolicSnapshot]) -> float:
         """
@@ -135,7 +146,8 @@ class DigitalTwin:
 # 🧪 [PHARMACODYNAMIC ENGINE]
 # =Focus: Carb Absorption (GI-Tuning) and Insulin Depletion (PK/PD)
 # =============================================================================
-    def simulate_carb_impact(self, carbs_g: float, gi_type: str = "STARCH", 
+    def simulate_carb_impact(self,
+                             carbs_g: float, gi_type: str = "STARCH", 
                             resolution_mins: Optional[float] = None,
                             stochastic: bool = False,
                             snapshot: Optional[MetabolicSnapshot] = None,

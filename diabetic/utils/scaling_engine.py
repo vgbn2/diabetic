@@ -20,6 +20,14 @@ class ScalingEngine:
         "UNKNOWN": 0.0  # Safe fallback to prevent collision
     }
     DIABETES_TYPE_MAP = {"T1D": 1.0, "T2D": 0.5, "PRE": 0.2}
+    ACTIVITY_LEVEL_MAP = {
+        "SEDENTARY": 0.3, 
+        "MODERATE": 0.5, 
+        "ACTIVE": 0.7, 
+        "ACTIVE": 0.8, 
+        "ATHLETE": 1.2, 
+        "UNKNOWN": 0.5
+    }
 
     @classmethod
     def assemble_static_vector(cls, now: Optional[datetime] = None) -> np.ndarray:
@@ -31,13 +39,13 @@ class ScalingEngine:
 
         vector = [
             config.PATIENT_AGE / 100.0,
-            config.PATIENT_WEIGHT_KG / 150.0,#why?
-            config.PATIENT_HEIGHT_CM / 250.0,#why?
-            cls.GENDER_MAP.get(config.PATIENT_GENDER, 0.0),#is there a mapping for this?
-            cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),#is there a mapping for this?
-            cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),#is there a mapping for this?
-            (datetime.now().year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
-            0.5, # Default activity level (Layer 3 anchor)
+            config.PATIENT_WEIGHT_KG / 150.0,
+            config.PATIENT_HEIGHT_CM / 250.0,
+            cls.GENDER_MAP.get(config.PATIENT_GENDER, 0.0),
+            cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),
+            cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),
+            (datetime.now(timezone.utc).year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
+            cls.ACTIVITY_LEVEL_MAP.get(config.PATIENT_ACTIVITY_LEVEL, 0.5),
             config.PATIENT_FRUCTOSAMIN / 500.0,
             1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
             0.0, # is_sick (Dynamic state flag)

@@ -115,6 +115,7 @@ class CircuitBreaker:
     def can_alert(self, alert_type: str, severity: AlertSeverity = AlertSeverity.MEDIUM) -> bool:
         """Determines if enough time has passed. EMERGENCY severity bypasses cooldown."""
         if severity == AlertSeverity.EMERGENCY:
+            self.last_alerts[alert_type] = datetime.now(timezone.utc)
             return True
 
         now = datetime.now(timezone.utc)

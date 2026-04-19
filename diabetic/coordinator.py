@@ -93,6 +93,7 @@ class Coordinator:
         # snapshot.predict_30m which is a short-horizon kinematic value.
         self.pending_meal_forecast_peak: Optional[float] = None
 
+        self.background_tasks = set() # Task tracking for async safety (H4)
         self.is_running = False
 
 # =============================================================================
@@ -181,7 +182,7 @@ class Coordinator:
         
         if snapshot.last_insulin and snapshot.last_insulin.units is not None:
             dt_i = (now - snapshot.last_insulin.timestamp).total_seconds() / 60.0
-            snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * (1.0 - dt_i / 240.0))
+            snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i))
 
         # 4. Feature Extraction
         snapshot.atr_14 = MetabolicMath.calculate_atr(self.snapshots + [snapshot], period=14)
