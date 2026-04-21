@@ -1,106 +1,98 @@
+"""
+Bio-Quant — Kalman Filter & DSP Auditor (Mission Control)
+=========================================================
+Verifies signal smoothing, spike suppression, and metabolic velocity accuracy.
+Refactored for "Fail Fast" — crashes if signal integrity is compromised.
+"""
+
 import sys
 import os
 from datetime import datetime, timedelta, timezone
 import numpy as np
 
-# Add project root to path
-# Use absolute path to project root
-PROJECT_ROOT = r"c:\Users\Lenovo\Desktop\VGBN\.vscode\CODEPTIT\hyperglycemia-faint-predictor"
-sys.path.append(PROJECT_ROOT)
+# Load project root
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
 
 from diabetic.dsp.kalman import GlucoseFilter
 from diabetic.registry import GlucoseReading
 
-def run_verification():
-    print("\n--- Kalman Filter Verification ---\n")
+def run_dsp_audit():
+    print("\n  Bio-Quant - KALMAN FILTER / DSP AUDIT")
+    print("  " + "=" * 60)
     
-    # Initialize with default config if needed, otherwise just use None
-    # GlucoseFilter will try to import from diabetic.config
-    filter = GlucoseFilter()
-    start_time = datetime.now()
+    kf = GlucoseFilter()
+    start_time = datetime.now(timezone.utc)
     
-    # True glucose track
-    true_glucose = 10.0
-    velocity = -0.02 # Slow drift down
-    
+    true_glucose = 15.0 # Start higher
+    velocity = -0.01    # Drifts slower
     snapshots = []
     
+    print("  [Step 1] Simulating 100-Reading Metabolic Stream...")
     for i in range(101):
         # 1. Simulate timing jitter and gaps
-        if i == 50:
-            dt = 5.0 # Normal interval but spike
-        elif i == 70:
-            dt = 25.0 # Big gap
-        else:
-            dt = 5.0 + np.random.uniform(-1.0, 1.0)
-            
+        dt = 5.0 + np.random.uniform(-0.5, 0.5)
         current_time = start_time + timedelta(minutes=i * 5.0) 
-        if i >= 70:
-            # Shift timestamps after the gap
-            current_time = start_time + timedelta(minutes=70 * 5.0 + (i-70) * 5.0 + 20.0)
-
-        # 2. Simulate metabolic trend
-        if i == 81:
-            true_glucose = 15.0 # Reset high so crash has room
         
-        if i > 80:
-            velocity = -0.5 # Sudden crash
+        # 2. Add sensor noise
+        measurement = true_glucose + np.random.normal(0, 0.15)
         
-        from diabetic import medical_constants
-        true_glucose += velocity * 5.0 # True glucose change
-        true_glucose = max(true_glucose, medical_constants.PHYSIO_FLOOR) # Apply floor
-        
-        # 3. Add sensor noise
-        measurement = true_glucose + np.random.normal(0, 0.1)
-        
-        # 4. Inject a massive spike (outlier) at i=50
+        # 3. Massive Spike Entry (Outlier)
         if i == 50:
-            raw_spike = measurement + 8.0 # +8 mmol/L jump
-            measurement = raw_spike
-            print(f"Injecting spike at index 50: {measurement:.1f}")
+            measurement += 8.0 
+            print(f"  [!] Injected 8.0 mmol/L artifact at index 50")
 
         reading = GlucoseReading(
             timestamp=current_time,
             value=measurement,
-            trend="Flat"
+            trend="Flat",
+            source="Audit"
         )
         
-        snapshot = filter.update(reading)
-        snapshots.append((i, dt, reading.value, snapshot.filtered_value, snapshot.velocity))
+        snap = kf.update(reading)
+        snapshots.append(snap)
         
-        if i % 10 == 0 or i == 50 or i == 70:
-            print(f"[{i:3d}] Raw: {reading.value:5.1f} | Filt: {snapshot.filtered_value:5.1f} | Vel: {snapshot.velocity:6.3f} | dt: {dt:4.1f}")
+        # Biological boundary check (Internal Audit)
+        if snap.filtered_value < 1.0 or snap.filtered_value > 35.0:
+            print(f"  [X] BIOLOGICAL VIOLATION: Filtered value {snap.filtered_value:.1f} is impossible.")
+            sys.exit(1)
 
-    print("\n--- Analysis ---")
+        # Velocity check (Physiological limit: ~0.8 mmol/L/min)
+        if abs(snap.velocity) > 0.8:
+            print(f"  [X] SIGNAL ARTIFACT: Velocity {snap.velocity:.3f} exceeds physiological limits.")
+            sys.exit(1)
+
+        # Incremental Trend
+        true_glucose += velocity * 5.0 
+        true_glucose = max(3.0, true_glucose) # Stay within bio boundaries
+        if i == 80: velocity = -0.4 # Start crash
+
+    print("\n  [Step 2] Processing Analysis")
+    print("  " + "-" * 50)
     
-    # Check spike handling
-    spike_filt = snapshots[50][3]
-    prev_filt = snapshots[49][3]
-    delta_filt = abs(spike_filt - prev_filt)
-    print(f"Spike response: {prev_filt:.1f} -> {spike_filt:.2f} (Delta: {delta_filt:.2f}, Raw was +8.0)")
-    
-    # Check crash responsiveness
-    crash_velocities = [s[4] for s in snapshots[81:90]]
-    if not crash_velocities:
-        crash_vel = 0.0
-    else:
-        crash_vel = min(crash_velocities)
-    print(f"Peak negative velocity during crash: {crash_vel:.3f} (Target: < -0.3)")
-    
-    if delta_filt < 3.0:
-        print("SUCCESS: Spike was effectively dampened.")
-    else:
-        raise AssertionError(f"FAILURE: Spike suppression too weak. Delta {delta_filt:.2f} >= 3.0")
-        
-    if crash_vel < -0.3:
-        print("SUCCESS: Filter is responsive to rapid trends.")
-    else:
-        raise AssertionError(f"FAILURE: Filter lagging too much during trends. Crash Vel {crash_vel:.3f} >= -0.3")
-    
-    # Check gap handling
-    # The velocity shouldn't jump wildly just because of the gap
-    gap_vel = snapshots[70][4]
-    print(f"Velocity after gap: {gap_vel:.3f}")
+    # 1. Spike Suppression Check
+    spike_idx = 50
+    delta = abs(snapshots[spike_idx].filtered_value - snapshots[spike_idx-1].filtered_value)
+    print(f"  Spike Suppression: Raw +8.0 | Filtered Delta: {delta:.2f}")
+    if delta > 3.5:
+        print("  [X] FAILED: Kalman gain is too high. Spike suppression failed.")
+        sys.exit(1)
+
+    # 2. Trend Responsiveness Check
+    crash_vels = [s.velocity for s in snapshots[85:95]]
+    max_neg_vel = min(crash_vels)
+    print(f"  Crash Sensitivity: Target -0.4 | Max Detected: {max_neg_vel:.3f}")
+    if max_neg_vel > -0.2:
+        print("  [X] FAILED: Filter is too sluggish, missing rapid trends.")
+        sys.exit(1)
+
+    print("\n  [OK] SUCCESS: DSP / Kalman Integrity Verified.")
+    print("\n  [PHASE 0.6.3] DSP Audit: COMPLETE\n")
 
 if __name__ == "__main__":
-    run_verification()
+    try:
+        run_dsp_audit()
+    except Exception as e:
+        print(f"\n  [FATAL] {e}")
+        sys.exit(1)

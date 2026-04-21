@@ -1,52 +1,92 @@
+"""
+Bio-Quant — Safety Logic Auditor (Mission Control)
+==================================================
+Verifies that the Coordinator correctly identifies Hyper/Hypo emergencies.
+Refactored for "Fail Fast" — crashes if safety thresholds are NOT reached.
+"""
+
 import asyncio
 import sys
 import os
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
-# Add project root to sys.path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(PROJECT_ROOT)
+# Load project root
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
 
 from diabetic.registry import GlucoseReading
 from diabetic.coordinator import Coordinator
 from diabetic.config import config
 
-async def test_scenarios():
+async def run_safety_audit():
     coordinator = Coordinator()
-    start_time = datetime.now()
-    
-    print("\n" + "="*60)
-    print("  VERIFYING SAFETY FIXES: CRASH & FAINT SCENARIOS  ")
-    print("="*60 + "\n")
+    start_time = datetime.now(timezone.utc)
+    captured_alerts = []
 
-    # Scenario 1: HYPO CRASH (Emergency Bypass Verification)
-    print("TEST 1: Hypoglycemic Crash (Expect EMERGENCY / No Cooldown)...")
-    crash_readings = [
-        6.5, 6.0, 5.0, 4.0, 3.2, 3.0, 2.8, 2.5
-    ]
-    for i, val in enumerate(crash_readings):
-        r = GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val, trend="DoubleDown")
-        await coordinator._process_reading(r)
+    # Patch dispatch to capture outcomes
+    async def mock_dispatch(alert):
+        print(f"  [DISPATCH] {alert.type} | {alert.severity} | {alert.message}")
+        captured_alerts.append(alert)
+
+    coordinator._dispatch_alert = mock_dispatch
+
+    print("\n  Bio-Quant - SAFETY THRESHOLD AUDIT")
+    print("  " + "=" * 60)
+
+    # ── Test 1: Hypoglycemic Crash ────────────────────────────
+    print("\n  TEST 1: Hypoglycemic Crash (Expected: HYPO/CRASH Alert)")
+    print("  " + "-" * 50)
     
-    print("\nTEST 2: Faint Risk (High + Rise + Heart Stress)...")
-    # Scenario 2: FAINT RISK (Cardiac Integration Verification)
-    # We'll simulate a rise while high
-    faint_readings = [
-        15.5, 16.0, 16.8, 17.5, 18.2, 19.0
-    ]
-    for i, val in enumerate(faint_readings):
-        r = GlucoseReading(timestamp=start_time + timedelta(minutes=60 + i*5), value=val, trend="FortyFiveUp")
-        # Note: We aren't injecting HR/HRV here yet, so it will use baselines
+    captured_alerts.clear()
+    crash_values = [6.5, 5.0, 4.0, 3.2, 2.8, 2.4] # Rapid descent
+    
+    for i, val in enumerate(crash_values):
+        r = GlucoseReading(
+            timestamp=start_time + timedelta(minutes=i*5), 
+            value=val, 
+            trend="DoubleDown",
+            source="Audit"
+        )
         await coordinator._process_reading(r)
 
-    print("\n" + "="*60)
-    print("  VERIFICATION COMPLETE  ")
-    print("="*60 + "\n")
+    if not captured_alerts:
+        print("  [X] FAILED: No emergency alerts triggered during crash scenario.")
+        sys.exit(1)
+    
+    print(f"  [OK] Success: {len(captured_alerts)} alert(s) triggered during hypo crash.")
+
+    # ── Test 2: Faint Risk (Hyper + Rise) ─────────────────────
+    print("\n  TEST 2: Faint Risk (Expected: HYPER/FAINT Alert)")
+    print("  " + "-" * 50)
+    
+    captured_alerts.clear()
+    # Reset coordinator state for clean hyper test
+    coordinator.snapshots.clear()
+    
+    faint_values = [15.0, 16.5, 18.0, 19.5, 21.0] # Rapid ascent while high
+    for i, val in enumerate(faint_values):
+        r = GlucoseReading(
+            timestamp=start_time + timedelta(hours=1, minutes=i*5), 
+            value=val, 
+            trend="DoubleUp",
+            source="Audit"
+        )
+        await coordinator._process_reading(r)
+
+    if not any(a.severity in ["WARNING", "CRITICAL"] for a in captured_alerts):
+        print("  [X] FAILED: No high-severity alerts triggered for faint risk.")
+        sys.exit(1)
+
+    print(f"  [OK] Success: Severe alerts triggered correctly.")
+    print("\n  [PHASE 0.6.2] Safety Audit: SUCCESS\n")
 
 if __name__ == "__main__":
-    # If the socket error persists even here, we might need a different approach.
-    # But often standalone scripts in different contexts work better.
     try:
-        asyncio.run(test_scenarios())
+        asyncio.run(run_safety_audit())
+    except KeyboardInterrupt:
+        pass
     except Exception as e:
-        print(f"Bypass failed: {e}")
+        print(f"\n  [FATAL] Audit Crash: {e}")
+        sys.exit(1)

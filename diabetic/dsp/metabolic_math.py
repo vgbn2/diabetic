@@ -48,3 +48,28 @@ class MetabolicMath:
             normalized_ranges.append(delta * (mc.SAMPLING_INTERVAL_MINS / dt))
 
         return sum(normalized_ranges) / len(normalized_ranges)
+
+    @staticmethod
+    def extract_kinematics(snapshots: List[MetabolicSnapshot]) -> Tuple[float, float]:
+        """
+        Extracts current velocity (bg/min) and acceleration from available history.
+        """
+        if len(snapshots) < 2:
+            return 0.0, 0.0
+
+        curr = snapshots[-1]
+        prev = snapshots[-2]
+
+        dt = MetabolicMath.get_dt(curr.glucose.timestamp, prev.glucose.timestamp)
+        velocity = (curr.glucose.value - prev.glucose.value) / dt
+        
+        # Acceleration logic (if 3 pts available)
+        if len(snapshots) < 3:
+            return velocity, 0.0
+            
+        pre_prev = snapshots[-3]
+        dt_prev = MetabolicMath.get_dt(prev.glucose.timestamp, pre_prev.glucose.timestamp)
+        prev_vel = (prev.glucose.value - pre_prev.glucose.value) / dt_prev
+        acceleration = (velocity - prev_vel) / dt
+        
+        return velocity, acceleration

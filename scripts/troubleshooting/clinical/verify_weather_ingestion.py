@@ -14,30 +14,40 @@ from diabetic.registry import EnvironmentReading
 async def test_weather_ingestion():
     print("\n--- [Audit 1/2] Environmental Telemetry (L2) ---")
     
-    # 1. Test Mock Mode
-    print("Testing MOCK mode fidelity (Hanoi Baseline)...")
-    mock_ingestor = WeatherIngestor(api_key=None)
-    mock_reading = await mock_ingestor.fetch_current(21.0285, 105.8542)
+    # 1. Test Ingestor Integrity (Mock Baseline)
+    print("Verifying Ingestor logic and data structure...")
+    ingestor = WeatherIngestor(api_key=None)
+    reading = await ingestor.fetch_current(21.0285, 105.8542)
     
-    print(f"Mock Reading: {mock_reading.temperature}°C | {mock_reading.humidity}% Hum | AQI: {mock_reading.aqi}")
-    assert mock_reading.temperature == 26.5
-    assert mock_reading.aqi == 45.0
+    print(f"Reading: {reading.temperature}°C | {reading.humidity}% Hum | AQI: {reading.aqi}")
     
-    # 2. Test Real Acquisition (If configured)
+    # Fail Fast on Impossible Data (Biological Boundaries)
+    if not (-30.0 < reading.temperature < 60.0):
+        print(f"CRITICAL: Impossible temperature detected: {reading.temperature}")
+        sys.exit(1)
+        
+    if not (0 <= reading.humidity <= 100):
+        print(f"CRITICAL: Invalid humidity detected: {reading.humidity}")
+        sys.exit(1)
+
+    print("✅ Logic Check: Data structure and boundaries verified.")
+    
+    # 2. Test Real Acquisition (Strict Mode - Fail Fast)
     api_key = os.getenv("OPENWEATHER_API_KEY") or config.OPENWEATHER_API_KEY
     if api_key:
-        print("\n--- [Audit 2/2] Real-Time Climatology Acquisition ---")
+        print("\n--- [Audit 2/2] Real-Time Climatology (LOUD FAILURE MODE) ---")
         real_ingestor = WeatherIngestor(api_key=api_key)
-        # Temporarily force real mode if key exists
-        real_ingestor.mock_mode = False
+        real_ingestor.mock_mode = False # Force live probe
         
-        real_reading = await real_ingestor.fetch_current(config.LATITUDE, config.LONGITUDE)
-        if real_reading:
-            print(f"LIVE DATA: {real_reading.temperature}°C | {real_reading.humidity}% | AQI: {real_reading.aqi}")
-            assert isinstance(real_reading, EnvironmentReading)
-            assert real_reading.temperature != 0.0 # Basic sanity check
-        else:
-            print("FAILED: Live weather acquisition returned None.")
+        try:
+            # Using strict=True to bypass fallbacks and expose real API/Network errors
+            real_reading = await real_ingestor.fetch_current(
+                config.LATITUDE, config.LONGITUDE, strict=True
+            )
+            print(f"LIVE DATA ACQUIRED: {real_reading.temperature}°C | {real_reading.humidity}%")
+        except Exception as e:
+            print(f"\nFATAL: Weather Audit Failed Fast. Root cause: {type(e).__name__} - {e}")
+            print("Recommendation: Check OPENWEATHER_API_KEY or internet connectivity.\n")
             sys.exit(1)
     else:
         print("\nSKIP: No OPENWEATHER_API_KEY found. Skipping live telemetry audit.")

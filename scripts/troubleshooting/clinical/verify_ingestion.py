@@ -32,7 +32,7 @@ async def test_live_connectivity():
         readings = await client.fetch_recent_glucose(1)
         if readings:
             r = readings[0]
-            print(f"[√] SUCCESS: Received reading: {r.value} {r.unit} at {r.timestamp}")
+            print(f"[OK] SUCCESS: Received reading: {r.value} {r.unit} at {r.timestamp}")
             
             # Biological Boundary Audit
             if r.value < 2.2 or r.value > 33.3:
@@ -72,7 +72,7 @@ async def test_smart_unit_detection():
         print(f"Prefer MMOL (Input 10.0 mmol/L)  -> Result: {readings[0].value} {readings[0].unit}")
         assert readings[0].value == 10.0
 
-    print("[√] SUCCESS: Smart unit detection verified.")
+    print("[OK] SUCCESS: Smart unit detection verified.")
     await client.close()
 
 async def test_retry_logic():
@@ -96,7 +96,7 @@ async def test_retry_logic():
             print(f"Retry Count: {mock_get.call_count}")
             assert mock_get.call_count == 3
             
-    print("[√] SUCCESS: Exponential backoff verified.")
+    print("[OK] SUCCESS: Exponential backoff verified.")
     await client.close()
 
 if __name__ == "__main__":
