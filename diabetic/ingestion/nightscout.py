@@ -24,11 +24,27 @@ class NightscoutClient:
         """Closes the underlying HTTP client."""
         await self.client.aclose()
         
-    def _get_headers(self, use_plain: bool = False) -> dict:
-        """Determines the correct authentication header."""
+    def _get_headers(self) -> dict:
+        """Returns base Accept headers (no auth — auth injected via params or header below)."""
+        return {"Accept": "application/json"}
+
+    def _get_auth_params(self) -> dict:
+        """
+        Returns auth as query params for Heroku-hosted Nightscout instances.
+        Uses token= param when secret looks like an access token (not a raw password).
+        This is the preferred method for instances returning 401 on Authorization headers.
+        """
+        # Heuristic: access tokens are typically long (>24 chars) or contain dashes
+        # Plain API secrets are typically short passwords that get SHA1 hashed.
+        if len(self.secret) > 24 or '-' in self.secret or self.secret.startswith("subject-"):
+            return {"token": self.secret}
+        # Otherwise use the hashed secret via header — return no extra params
+        return {}
+
+    def _get_auth_headers(self) -> dict:
+        """Returns auth headers for instances that support header-based auth."""
         headers = {"Accept": "application/json"}
-        # If explicitly told to use plain, or if it's already a token
-        if use_plain or self.secret.startswith("subject-") or len(self.secret) > 32:
+        if len(self.secret) > 24 or '-' in self.secret or self.secret.startswith("subject-"):
             headers["Authorization"] = f"Bearer {self.secret}"
         else:
             headers["api-secret"] = self.hashed_secret
@@ -37,9 +53,9 @@ class NightscoutClient:
     async def fetch_recent_glucose(self, count: int = 20) -> List[GlucoseReading]:
         """Fetches the last N glucose entries from Nightscout with exponential backoff."""
         endpoint = f"{self.url}/api/v1/entries.json"
-        params = {"count": count}
-        headers = self._get_headers()
-        
+        params = {"count": count, **self._get_auth_params()}
+        headers = self._get_auth_headers()
+
         for attempt in range(3):
             try:
                 response = await self.client.get(endpoint, params=params, headers=headers)
@@ -56,10 +72,9 @@ class NightscoutClient:
         Uses Nightscout find query syntax.
         """
         endpoint = f"{self.url}/api/v1/entries.json"
-        # Format: find[dateString][$gt]=2026-03-29T00:00:00.000Z
         iso_str = since_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        params = {"find[dateString][$gt]": iso_str, "count": 1000} # High count to capture the gap
-        headers = self._get_headers()
+        params = {"find[dateString][$gt]": iso_str, "count": 1000, **self._get_auth_params()}
+        headers = self._get_auth_headers()
         
         try:
             response = await self.client.get(endpoint, params=params, headers=headers)
@@ -115,16 +130,11 @@ class NightscoutClient:
     async def fetch_recent_treatments(self, count: int = 10) -> Tuple[Optional[InsulinDose], Optional[MealEvent]]:
         """Fetches the latest insulin and carb events from Nightscout."""
         endpoint = f"{self.url}/api/v1/treatments.json"
-        params = {"count": count}
-        headers = self._get_headers()
-        
+        params = {"count": count, **self._get_auth_params()}
+        headers = self._get_auth_headers()
+
         try:
-            response = await self.client.get(endpoint, params=params, headers=self._get_headers())
-            
-            # C3 Fix: Fallback to plain secret if 401 (Handles Heroku v3+ issues)
-            if response.status_code == 401:
-                response = await self.client.get(endpoint, params=params, headers=self._get_headers(use_plain=True))
-            
+            response = await self.client.get(endpoint, params=params, headers=headers)
             response.raise_for_status()
             treatments = response.json()
             now = datetime.now(timezone.utc)

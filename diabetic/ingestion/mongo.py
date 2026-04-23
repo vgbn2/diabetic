@@ -215,7 +215,8 @@ class MongoDBClient:
         Enforces the 180-day retention policy (Task III). 
         DELETES data strictly older than the specified threshold.
         """
-        if self.db is None: return
+        # Fix C1: self.db does not exist; guard against actual collection references.
+        if self.entries is None or self.treatments is None: return
         
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         cutoff_ms = cutoff_date.timestamp() * 1000
