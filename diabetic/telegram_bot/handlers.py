@@ -121,6 +121,12 @@ class TelegramApp:
 
         try:
             grams = float(context.args[-1])
+            # Fix H8: Physiological input bounds — reject implausible carb values
+            if grams <= 0 or grams > 500:
+                await update.message.reply_text(
+                    f"Invalid portion size: {grams}g. Please enter a value between 1 and 500 grams."
+                )
+                return
             import re
             desc = re.sub(r'[^a-zA-Z0-9\s]', '', " ".join(context.args[:-1])).strip().lower()[:100]
 

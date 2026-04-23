@@ -107,12 +107,9 @@ class MetabolicVisualizer:
         snap_copy = list(snapshots)
         
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Task 8.3.1: Run in executor to prevent blocking the async polling loop
-                loop.run_in_executor(None, self._save_continuous_sync, snap_copy)
-            else:
-                self._save_continuous_sync(snap_copy)
+            loop = asyncio.get_running_loop()  # Fix H5: get_running_loop raises RuntimeError outside loop
+            # Task 8.3.1: Run in executor to prevent blocking the async polling loop
+            loop.run_in_executor(None, self._save_continuous_sync, snap_copy)
         except RuntimeError:
             self._save_continuous_sync(snap_copy)
 
