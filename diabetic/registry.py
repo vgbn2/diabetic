@@ -35,6 +35,7 @@ class CardiacReading(BaseModel):
     mean_bpm: Optional[int] = None
     max_bpm: Optional[int] = None
     signal_quality: float = 1.0
+    source: str = "ble"  # Fix H1: data source tag (e.g. 'ble', 'mock', 'synthetic_v1')
 # =============================================================================
 # 💊 [LAYER 3: BEHAVIORAL INPUT EVENTS]
 # =Focus: User Agency and Pharmacodynamic Events

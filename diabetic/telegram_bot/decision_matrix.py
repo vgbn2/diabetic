@@ -70,9 +70,9 @@ class DecisionMatrix:
         if current.activity_label == "STRESS_ANOMALY":
              return Alert(
                     timestamp=datetime.now(timezone.utc),
-                    type="FAINT_RISK",
+                    type="STRESS_ANOMALY",  # Fix H4: distinct type prevents CircuitBreaker collision with FAINT_RISK
                     severity=AlertSeverity.HIGH,
-                    message=f"{self.config.UI_SETTINGS['FAINT_RISK']}: Biological Decoupling! Rapid velocity ({v:+1f}) while HR is baseline ({hr:.0f}). Potential faint risk.",
+                    message=f"{self.config.UI_SETTINGS['STRESS_ANOMALY']}: Biological Decoupling! Rapid velocity ({v:+1f}) while HR is baseline ({hr:.0f}). Potential faint risk.",
                     glucose_value=g,
                     prediction_30m=prediction_30m
                 )

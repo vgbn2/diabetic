@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict
@@ -73,11 +74,13 @@ class Settings(BaseSettings):
         "HIGH": "⚠️ WARNING",
         "CRITICAL_HYPER": "🔺 CRITICAL HYPER",
         "FAINT_RISK": "💫 FAINT RISK",
+        "STRESS_ANOMALY": "🫀 STRESS ANOMALY",  # Fix H4: distinct key for decoupling events
         "INFO": "ℹ️ INFO"
     }
     
     # Infrastructure
     MONGO_URI: str = ""
+    MONGODB_URI: str = "" # Heroku Add-on standard
     RENDER_EXTERNAL_URL: str = ""
     HEART_RATE_SENSOR_ADDRESS: str = "MOCK" # Set to XX:XX... for BLE
     
@@ -94,8 +97,12 @@ class Settings(BaseSettings):
     
     FRONTEND_PUSH_URL: str = ""
     
+    # Locate the .env file in the project root (one level up from diabetic/ folder)
+    _BASE_DIR = Path(__file__).resolve().parent.parent
+    _DOT_ENV = _BASE_DIR / ".env"
+
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_DOT_ENV) if _DOT_ENV.exists() else ".env",
         env_file_encoding="utf-8",
         extra="ignore"
     )
@@ -105,12 +112,15 @@ class Settings(BaseSettings):
         Wave 1 Hardening: Verifies required metadata and connectivity secrets at boot.
         Prevents silent degraded operation in production.
         """
+        # Prioritize MONGODB_URI (Heroku Addons) over MONGO_URI (Local/Manual)
+        active_mongo = self.MONGODB_URI or self.MONGO_URI
+        
         critical_keys = {
             "NIGHTSCOUT_URL": self.NIGHTSCOUT_URL,
             "API_SECRET": self.API_SECRET,
             "TELEGRAM_TOKEN": self.TELEGRAM_TOKEN,
             "USER_ID": self.USER_ID,
-            "MONGO_URI": self.MONGO_URI
+            "MONGO_URI/MONGODB_URI": active_mongo
         }
         
         missing = [k for k, v in critical_keys.items() if not v or v == "0"]
