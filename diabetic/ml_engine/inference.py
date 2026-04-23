@@ -101,8 +101,15 @@ class MetabolicInferenceRunner:
             if ts:
                 ts_dt = datetime.fromisoformat(ts)
             else:
-                # _ is the index. If it's a DatetimeIndex, _ is a Timestamp.
-                ts_dt = _ if isinstance(_, datetime) else datetime.now(timezone.utc)
+                # Fix H3: pandas iterrows index is pd.Timestamp, not datetime.
+                # Safely convert any index type to UTC-aware datetime.
+                import pandas as pd
+                if isinstance(_, pd.Timestamp):
+                    ts_dt = _.to_pydatetime()
+                    if ts_dt.tzinfo is None:
+                        ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+                else:
+                    ts_dt = datetime.now(timezone.utc)
 
             reading = GlucoseReading(
                 timestamp=ts_dt,

@@ -29,22 +29,29 @@ class MetabolicDataset(Dataset):
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df = df.sort_values('timestamp')
 
-        # 1. Resample to 5-minute bins (selecting only numeric columns)
-        df = df.set_index('timestamp').select_dtypes(include=[np.number]).resample('5min').mean()
-        
+        # Fix H9: Detect DB-exported vs. legacy glucose column name
+        g_col = 'glucose_mmol_l' if 'glucose_mmol_l' in df.columns else 'glucose'
+        if g_col == 'glucose_mmol_l':
+            df.rename(columns={'glucose_mmol_l': 'glucose'}, inplace=True)
+
+        # Fix C3: Resample to dynamic sampling interval (not hardcoded 5min)
+        interval_mins = int(config.SAMPLING_INTERVAL_MINS)
+        resample_rule = f'{interval_mins}min'
+        df = df.set_index('timestamp').select_dtypes(include=[np.number]).resample(resample_rule).mean()
+
         # 2. Interpolate missing glucose
         df['glucose'] = df['glucose'].interpolate(method='linear')
-        df = df.dropna(subset=['glucose']) # Remove trailing/leading NaNs
+        df = df.dropna(subset=['glucose'])  # Remove trailing/leading NaNs
 
         # 3. Generate Synthetic Cardiac Channel
         hrs = []
         for i in range(len(df)):
             g_val = df.iloc[i]['glucose']
             # Calculate velocity if possible
-            vel = 0
+            vel = 0.0
             if i > 0:
-                # Divide by 5.0 to get per-minute velocity (Wave 5 Protocol)
-                vel = (g_val - df.iloc[i-1]['glucose']) / 5.0
+                # Fix C3: Divide by actual sampling interval, not hardcoded 5.0
+                vel = (g_val - df.iloc[i-1]['glucose']) / config.SAMPLING_INTERVAL_MINS
             
             g_reading = GlucoseReading(timestamp=df.index[i], value=g_val, trend="NONE")
             cardiac = cardiac_synthesizer.estimate(g_reading, velocity=vel)
