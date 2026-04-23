@@ -175,11 +175,25 @@ class Coordinator:
             snapshot.cardiac = None
 
         # 3b. Estimate Active Carbs/Insulin (COB/IOB) for Oracle Filtering
-        # Approximation: Linear 4-hour decay
+        # Fix C2: Physiological decay — COB uses Twin's log-normal absorption curve;
+        # IOB uses Twin's S-curve get_iob_fraction. Both replace the old linear (1 - t/240).
         if snapshot.last_meal and snapshot.last_meal.carbs is not None:
             dt_m = (now - snapshot.last_meal.timestamp).total_seconds() / 60.0
-            snapshot.active_carbs = max(0.0, snapshot.last_meal.carbs * (1.0 - dt_m / 240.0))
-        
+            gi_type = snapshot.last_meal.gi_type or "STARCH"
+            # Derive COB fraction: ratio of integral still remaining ahead of dt_m
+            # vs the full 240-min integral from the Twin's log-normal curve.
+            full_curve = self.twin.simulate_carb_impact(
+                snapshot.last_meal.carbs, gi_type=gi_type, resolution_mins=1.0
+            )
+            total_area = float(full_curve.sum())
+            if total_area > 0.0:
+                elapsed_idx = min(int(dt_m), len(full_curve) - 1)
+                remaining_area = float(full_curve[elapsed_idx:].sum())
+                cob_fraction = remaining_area / total_area
+            else:
+                cob_fraction = max(0.0, 1.0 - dt_m / 240.0)  # safe fallback
+            snapshot.active_carbs = max(0.0, snapshot.last_meal.carbs * cob_fraction)
+
         if snapshot.last_insulin and snapshot.last_insulin.units is not None:
             dt_i = (now - snapshot.last_insulin.timestamp).total_seconds() / 60.0
             snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i))
