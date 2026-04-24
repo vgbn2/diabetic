@@ -56,9 +56,33 @@ def run_future_5day_simulation():
     
     for tick in range(total_ticks):
         curr_time = start_time + timedelta(minutes=tick * interval_mins)
+        hour = curr_time.hour + curr_time.minute / 60.0
         
         # --- SCHEDULE & BEHAVIORAL ENGINE ---
         event = schedule_manager.get_event_at(curr_time)
+        
+        # --- SYNTHETIC CLIMATOLOGY (Layer 2) ---
+        # Weather waves: Temp peaks at 14:00, AQI rises over 5 days
+        temp = 22.0 + 8.0 * np.sin((hour - 8) * np.pi / 12) + np.random.normal(0, 1.0)
+        humid = 70.0 + 15.0 * np.cos((hour - 6) * np.pi / 12)
+        aqi_drift = 50.0 + (tick / total_ticks) * 100.0 # From 50 to 150
+        aqi = max(10, aqi_drift + np.random.normal(0, 5))
+        
+        env_dict = {
+            "temperature": temp,
+            "humidity": humid,
+            "aqi": aqi,
+            "is_outdoor": event.is_outdoor if event else False
+        }
+        
+        from diabetic.registry import EnvironmentReading
+        env_snapshot = EnvironmentReading(
+            timestamp=curr_time,
+            temperature=temp,
+            humidity=humid,
+            aqi=aqi,
+            is_outdoor=env_dict["is_outdoor"]
+        )
         
         # Check for Meal/Bolus trigger
         meal_val = 0
@@ -126,8 +150,14 @@ def run_future_5day_simulation():
         dawn_effect = 0.38 * np.exp(-((hour - 6.5)**2) / 2.5)
         
         basal_rate_u = 0.58 
-        res_mult = twin.get_hormonal_multiplier(curr_time)
         
+        # Get dynamic resistance multiplier from Twin (Aware of Schedule + Temporal + Env)
+        snapshot = MetabolicSnapshot(
+            glucose=GlucoseReading(timestamp=curr_time, value=current_bg, trend="Flat"),
+            environment=env_snapshot 
+        )
+        res_mult = twin.get_hormonal_multiplier(curr_time) * twin.get_environmental_multiplier(snapshot)
+
         # Effective Forces (Applying Resistance)
         basal_impact = (basal_rate_u * twin.isf / res_mult) * (interval_mins / 60.0)
         hgo_impact = (basal_impact * 0.94) + (dawn_effect * (interval_mins / 60.0)) # 6% negative drift for realism
@@ -150,9 +180,8 @@ def run_future_5day_simulation():
         glucose_neural = current_bg # Default to current
         if len(records) >= 30:
             window_df = pd.DataFrame(records[-30:])
-            # Feed current mechanistic state to CNN
-            pred_res = runner.run_inference_on_window(window_df, curr_time)
-            # The runner already handles the scaling and returns a dict with 'glucose'
+            # Feed current mechanistic state + weather to CNN
+            pred_res = runner.run_inference_on_window(window_df, curr_time, env_data=env_dict)
             glucose_neural = pred_res["glucose"]
 
         # --- BIOMETRIC SYNTHESIS ---
@@ -165,7 +194,9 @@ def run_future_5day_simulation():
             "glucose_neural": round(float(glucose_neural), 3),
             "heart_rate_bpm": cardiac.bpm,
             "hrv_rmssd": cardiac.hrv,
-            "is_outdoor": int(event.is_outdoor if event else False),
+            "is_outdoor": int(env_dict["is_outdoor"]),
+            "temperature_c": round(float(temp), 1),
+            "aqi": round(float(aqi), 1),
             "event_type": event.type if event else "ROUTINE",
             "sensitivity_mult": round(float(res_mult), 3),
             "meal_carbs": meal_val,

@@ -34,12 +34,23 @@ class ScalingEngine:
     }
 
     @classmethod
-    def assemble_static_vector(cls, now: Optional[datetime] = None) -> np.ndarray:
+    def assemble_static_vector(cls, now: Optional[datetime] = None, env_data: Optional[dict] = None) -> np.ndarray:
         """
         Assembles the 15-feature static trait vector exactly as used in training.
+        Supports dynamic environmental injection.
         """
         if now is None:
             now = datetime.now(timezone.utc)
+            
+        temp_scaled = 1.0
+        humid_scaled = 1.0
+        aqi_scaled = 1.0
+        
+        if env_data:
+            # Safely scale environment metrics
+            temp_scaled = min(1.0, max(0.0, env_data.get('temperature', 25.0) / 50.0)) # 0-50C -> 0.0-1.0
+            humid_scaled = min(1.0, max(0.0, env_data.get('humidity', 60.0) / 100.0))  # 0-100% -> 0.0-1.0
+            aqi_scaled = min(1.0, max(0.0, env_data.get('aqi', 50.0) / 500.0))         # 0-500 -> 0.0-1.0
 
         vector = [
             config.PATIENT_AGE / 100.0,
@@ -48,15 +59,16 @@ class ScalingEngine:
             cls.GENDER_MAP.get(config.PATIENT_GENDER, 0.0),
             cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),
             cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),
-            (datetime.now(timezone.utc).year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
+            (now.year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
             cls.ACTIVITY_LEVEL_MAP.get(config.PATIENT_ACTIVITY_LEVEL, 0.5),
             config.PATIENT_FRUCTOSAMIN / 500.0,
             1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
             0.0, # is_sick (Dynamic state flag)
             temporal_engine.get_multiplier(now),
-            1.0, 1.0, 1.0 # Climatology defaults (Temp, AQI, UV)
+            temp_scaled, humid_scaled, aqi_scaled
         ]
         return np.array(vector, dtype=np.float32)
+
 
     @staticmethod
     def scale_glucose(value: float) -> float:

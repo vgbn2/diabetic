@@ -53,17 +53,17 @@ class MetabolicInferenceRunner:
             return True # Assume Outdoor
         return False # Assume Indoor
 
-    def _assemble_static_vector(self, now: datetime) -> torch.Tensor:
+    def _assemble_static_vector(self, now: datetime, env_data: Optional[dict] = None) -> torch.Tensor:
         """
         Maps the 15 bio-basal and environmental traits via the ScalingEngine.
         Includes exposure-aware damping for environmental forcing.
         """
         is_outdoor = self._infer_exposure(now)
-        vector = scaling_engine.assemble_static_vector(now).tolist()
+        vector = scaling_engine.assemble_static_vector(now, env_data=env_data).tolist()
         
         # Override environmental forcing bits (indices 12, 13, 14 in the 15-feature vector)
         # Based on Layer 2 Climatology logic.
-        if not is_outdoor:
+        if not is_outdoor and env_data is None:
             vector[12] = 0.0 # Heat
             vector[13] = 0.0 # Humidity
             vector[14] = 0.0 # AQI
@@ -129,12 +129,12 @@ class MetabolicInferenceRunner:
         tensor = torch.tensor([temporal_data], dtype=torch.float32).transpose(1, 2)
         return tensor
 
-    def run_inference_on_window(self, df_window: pd.DataFrame, now: datetime) -> dict:
+    def run_inference_on_window(self, df_window: pd.DataFrame, now: datetime, env_data: Optional[dict] = None) -> dict:
         """
         Runs Multi-Task inference. Returns a dict of [glucose, heart_rate].
         """
         temp_x = self._prepare_temporal_tensor(df_window)
-        static_y = self._assemble_static_vector(now)
+        static_y = self._assemble_static_vector(now, env_data=env_data)
         
         with torch.no_grad():
             output = self.model(temp_x, static_y)[0] # (2,)
@@ -196,7 +196,13 @@ class MetabolicInferenceRunner:
             
         # Torch expects (Batch, Channels, Time)
         tensor = torch.tensor([temporal_data], dtype=torch.float32).transpose(1, 2)
-        static_y = self._assemble_static_vector(datetime.now(timezone.utc))
+
+        # In snapshots, we can extract env_data from the latest snapshot if available
+        env_data = None
+        if recent[-1].environment:
+            env_data = recent[-1].environment.model_dump()
+            
+        static_y = self._assemble_static_vector(datetime.now(timezone.utc), env_data=env_data)
         
         with torch.no_grad():
             output = self.model(tensor, static_y)[0]
