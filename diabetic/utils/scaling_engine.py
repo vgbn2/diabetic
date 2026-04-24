@@ -11,7 +11,11 @@ class ScalingEngine:
     """
     
     # ── Static Mapping Rules (Tier 1 Metadata) ────────────────────────────────
-    GENDER_MAP = {"FEMALE": 0.0, "MALE": 1.0, "OTHER": 0.5}#bruh
+    GENDER_MAP = { 
+        "FEMALE": 0.0, 
+        "MALE": 1.0, 
+        "OTHER": 0.5}#bruh
+
     ETHNICITY_MAP = {
         "ASIAN": 0.1, 
         "CAUCASIAN": 0.2, 

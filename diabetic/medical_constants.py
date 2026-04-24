@@ -39,8 +39,8 @@ HRV_MOCK_FLOOR          = 20.0
 PHYSIO_FLOOR     = 2.2    # ~40 mg/dL  — absolute survivable minimum
 HYPO_CRITICAL    = 2.5    # <56 mg/dL  — EMERGENCY, impaired cognition
 HYPO_WARNING     = 3.9    # <70 mg/dL  — WARNING, intervention needed
-HYPER_CRITICAL   = 16.0   # ~288 mg/dL — CRITICAL, ketoacidosis risk
-FAINT_GLUCOSE    = 22.0   # ~396 mg/dL — faint risk threshold
+HYPER_CRITICAL   = 14.0   # ~288 mg/dL — CRITICAL, ketoacidosis risk
+FAINT_GLUCOSE    = 20.0   # ~396 mg/dL — faint risk threshold
 TOP_TARGET       = 8.4    # Ideal clinical midpoint
 
 # ── Fatal Limits (Rate of Change) ────────────────────────────────────────────

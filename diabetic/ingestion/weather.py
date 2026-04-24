@@ -29,8 +29,11 @@ class WeatherIngestor:
         """Closes the underlying HTTP client."""
         await self.client.aclose()
 
-    async def fetch_current(self, lat: float, lon: float) -> Optional[EnvironmentReading]:
-        """Fetches current weather and AQI."""
+    async def fetch_current(self, lat: float, lon: float, strict: bool = False) -> Optional[EnvironmentReading]:
+        """
+        Fetches current weather and AQI.
+        If strict=True, raises exceptions on API failure instead of falling back to mock.
+        """
         if self.mock_mode:
             return self._get_mock_reading()
 
@@ -41,14 +44,22 @@ class WeatherIngestor:
                 "appid": self.api_key, "units": "metric"
             }
             resp = await self.client.get(self.BASE_URL, params=weather_params)
-            if resp.status_code != 200:
+            
+            if strict:
+                resp.raise_for_status()
+            elif resp.status_code != 200:
                 self.logger.error(f"Weather API Error: {resp.status_code}")
                 return self._get_mock_reading()
+            
             w_data = resp.json()
 
             # 2. Fetch Air Quality
             aqi_params = {"lat": lat, "lon": lon, "appid": self.api_key}
             resp_aqi = await self.client.get(self.AIR_POLLUTION_URL, params=aqi_params)
+            
+            if strict:
+                resp_aqi.raise_for_status()
+            
             aqi_val = None
             if resp_aqi.status_code == 200:
                 a_data = resp_aqi.json()
@@ -63,6 +74,8 @@ class WeatherIngestor:
             )
 
         except Exception as e:
+            if strict:
+                raise e
             self.logger.error(f"Weather fetch failed: {e}")
             return self._get_mock_reading()
 

@@ -22,8 +22,8 @@ def run_future_5day_simulation():
     
     # 1. Setup Simulation Engine (Physiological Harmony)
     twin = DigitalTwin(
-        isf=1.0,          # 1 unit -> 1.0 mmol/L drop
-        csf=0.10,         # 10g carbs -> 1.0 mmol/L rise
+        isf=mc.INSULIN_SENSITIVITY_DEFAULT,
+        csf=mc.CARB_SENSITIVITY_DEFAULT,
         gender=config.PATIENT_GENDER,
         age=config.PATIENT_AGE,
         weight_kg=config.PATIENT_WEIGHT_KG,
@@ -118,9 +118,9 @@ def run_future_5day_simulation():
         if len(records) >= 30:
             window_df = pd.DataFrame(records[-30:])
             # Feed current mechanistic state to CNN
-            pred_val = runner.run_inference_on_window(window_df, curr_time)
-            # The model predicts scaled glucose. Convert back using 20x multiplier.
-            glucose_neural = pred_val * 20.0 
+            pred_res = runner.run_inference_on_window(window_df, curr_time)
+            # The runner already handles the scaling and returns a dict with 'glucose'
+            glucose_neural = pred_res["glucose"]
 
         # --- BIOMETRIC SYNTHESIS ---
         g_reading = GlucoseReading(timestamp=curr_time, value=current_bg, trend="NONE")

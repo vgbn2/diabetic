@@ -165,7 +165,13 @@ class DigitalTwin:
             carbs_g *= np.random.uniform(0.85, 1.15)
 
         t = np.arange(0, 240 + resolution_mins, resolution_mins)
-        impact = (t / tau) * np.exp(1 - t / tau)
+        # Integral of (t/tau)*exp(1-t/tau) is used to create a persistent S-curve (Cumulative Appearance)
+        # Formula: 1 - (1 + t/tau)*exp(-t/tau) * e^1
+        x = t / tau
+        # Normalize so that at infinity it reaches 1.0
+        # The integral of x*e^(1-x) from 0 to inf is e. So we divide by e.
+        impact = 1.0 - (1.0 + x) * np.exp(-x) 
+        
         # Layer 2 & 3 Synthesis: Behavior * (Physiological + Environmental state)
         csf = csf_override if csf_override is not None else self.csf
         total_rise = carbs_g * csf * self.regime_multiplier * hormonal_mult * env_mult
@@ -204,7 +210,11 @@ class DigitalTwin:
             onset *= np.random.uniform(0.8, 1.5)
             units *= np.random.uniform(0.95, 1.05)
 
-        impact = (t / tau) * np.exp(1 - t / tau)
+        # Cumulative Insulin Action (S-Curve)
+        x = t / tau
+        impact = 1.0 - (1.0 + x) * np.exp(-x)
+        
+        # Apply onset lag ramp
         onset_ramp = 1.0 / (1.0 + np.exp(-(t - onset) / 3.0))
         impact *= onset_ramp
 

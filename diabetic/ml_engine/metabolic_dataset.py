@@ -29,9 +29,12 @@ class MetabolicDataset(Dataset):
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df = df.sort_values('timestamp')
 
-        # Fix H9: Detect DB-exported vs. legacy glucose column name
-        g_col = 'glucose_mmol_l' if 'glucose_mmol_l' in df.columns else 'glucose'
-        if g_col == 'glucose_mmol_l':
+        # Fix H9: Detect DB-exported vs. legacy glucose column name (and handle duplicates)
+        if 'glucose_mmol_l' in df.columns and 'glucose' in df.columns:
+            # Consolidation scenario: prioritize high-fidelity naming
+            df['glucose'] = df['glucose'].fillna(df['glucose_mmol_l'])
+            df.drop(columns=['glucose_mmol_l'], inplace=True)
+        elif 'glucose_mmol_l' in df.columns:
             df.rename(columns={'glucose_mmol_l': 'glucose'}, inplace=True)
 
         # Fix C3: Resample to dynamic sampling interval (not hardcoded 5min)

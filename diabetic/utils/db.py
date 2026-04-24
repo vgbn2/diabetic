@@ -21,7 +21,8 @@ class DatabaseSingleton:
             return
             
         self.logger = logging.getLogger("Bio-Quant.Utils.DB")
-        self.uri = config.MONGO_URI
+        # Prioritize MONGODB_URI (Heroku Addons) over MONGO_URI (Local/Manual)
+        self.uri = config.MONGODB_URI or config.MONGO_URI
         self.client: Optional[AsyncIOMotorClient] = None
         self.db = None
         
@@ -37,7 +38,9 @@ class DatabaseSingleton:
                 self.client = AsyncIOMotorClient(
                     self.uri, 
                     maxPoolSize=10, 
-                    serverSelectionTimeoutMS=5000
+                    serverSelectionTimeoutMS=5000,
+                    socketTimeoutMS=20000,
+                    heartbeatFrequencyMS=10000
                 )
                 
                 # Deterministic DB Name resolution
