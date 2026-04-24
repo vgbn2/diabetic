@@ -131,7 +131,7 @@ class Settings(BaseSettings):
         os.makedirs("storage", exist_ok=True)
         os.makedirs("storage/exports", exist_ok=True)
         
-        print("✅ Environment Validation Complete: All systems operational.")
+        print("[OK] Environment Validation Complete: All systems operational.")
 
 # Singleton instance
 config = Settings()

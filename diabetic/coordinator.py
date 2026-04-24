@@ -39,7 +39,9 @@ class Coordinator:
     """
     The Orchestrator. Connects ingestion, smoothing, prediction, and alerting.
     """
-    def __init__(self, audit_logger: Optional[AuditLogger] = None):
+    @classmethod
+    async def create(cls, audit_logger: Optional['AuditLogger'] = None) -> "Coordinator":
+        self = cls.__new__(cls)
         self.logger = logging.getLogger("Bio-Quant.Coordinator")
 
         self.background_tasks = set()
@@ -93,8 +95,8 @@ class Coordinator:
         # snapshot.predict_30m which is a short-horizon kinematic value.
         self.pending_meal_forecast_peak: Optional[float] = None
 
-        self.background_tasks = set() # Task tracking for async safety (H4)
         self.is_running = False
+        return self
 
 # =============================================================================
 # 📡 [DATA SYNTHESIS PIPELINE]
@@ -529,5 +531,7 @@ class Coordinator:
         self.logger.info("Bio-Quant Orchestrator stopped.")
 
 if __name__ == "__main__":
-    c = Coordinator()
-    asyncio.run(c.start_live_mode())
+    async def main():
+        c = await Coordinator.create()
+        await c.start_live_mode()
+    asyncio.run(main())

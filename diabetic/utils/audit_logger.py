@@ -52,6 +52,7 @@ class AuditLogger:
                 check_same_thread=False,
                 timeout=30.0
             )
+            self.sql_lock = asyncio.Lock()
             self.local_conn.execute("PRAGMA journal_mode=WAL")
             self.local_conn.execute("PRAGMA synchronous=NORMAL")
             self._init_sqlite()
@@ -129,7 +130,8 @@ class AuditLogger:
                     )
                     self.local_conn.commit()
 
-                await asyncio.to_thread(_write_db)
+                async with self.sql_lock:
+                    await asyncio.to_thread(_write_db)
             except Exception as e:
                 self.logger.error(f"Failed to persist log to SQLite: {e}")
 

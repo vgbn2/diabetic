@@ -76,17 +76,20 @@ class NightscoutClient:
         params = {"find[dateString][$gt]": iso_str, "count": 1000, **self._get_auth_params()}
         headers = self._get_auth_headers()
         
-        try:
-            response = await self.client.get(endpoint, params=params, headers=headers)
-            response.raise_for_status()
-            # Nightscout returns most recent first, we reverse to process chronologically
-            readings = self._parse_entries(response.json())
-            readings.reverse() 
-            return readings
-        except Exception as e:
-            # Task 8.2.1: Non-fatal, live polling will take over.
-            print(f"Backfill fetch failed: {e}")
-            return []
+        for attempt in range(3):
+            try:
+                response = await self.client.get(endpoint, params=params, headers=headers)
+                response.raise_for_status()
+                # Nightscout returns most recent first, we reverse to process chronologically
+                readings = self._parse_entries(response.json())
+                readings.reverse() 
+                return readings
+            except Exception as e:
+                if attempt == 2:
+                    # Task 8.2.1: Non-fatal, live polling will take over.
+                    print(f"Backfill fetch failed after 3 attempts: {e.__class__.__name__}")
+                    return []
+                await asyncio.sleep(2 ** attempt)
 
     def _parse_entries(self, entries: List[dict]) -> List[GlucoseReading]:
         """Shared logic for parsing Nightscout entry JSON."""
@@ -201,6 +204,6 @@ if __name__ == "__main__":
             print(f"  Latest Insulin: {ins}")
             print(f"  Latest Meal: {meal}")
         except Exception as e:
-            print(f"Test failed: {e}")
+            print(f"Test failed: {e.__class__.__name__}")
             
     asyncio.run(test())

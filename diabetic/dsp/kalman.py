@@ -48,11 +48,11 @@ class GlucoseFilter:
         # Ensures velocity doesn't project to infinity during data gaps.
         damping = np.exp(-dt / medical_constants.KINEMATIC_DECAY_MINS)
         
-        # F = [[1, dt*damping, 0.5*dt^2*damping],
+        # F = [[1, dt, 0.5*dt^2],
         #      [0, damping, dt*damping],
         #      [0, 0, damping]]
         self.kf.F = np.array([
-            [1.0, dt * damping, 0.5 * (dt**2) * damping],
+            [1.0, dt, 0.5 * (dt**2)],
             [0.0, damping, dt * damping],
             [0.0, 0.0, damping]
         ])

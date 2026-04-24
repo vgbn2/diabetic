@@ -136,7 +136,7 @@ class MetabolicInferenceRunner:
         temp_x = self._prepare_temporal_tensor(df_window)
         static_y = self._assemble_static_vector(now, env_data=env_data)
         
-        with torch.no_grad():
+        with torch.inference_mode():
             output = self.model(temp_x, static_y)[0] # (2,)
             
         # Rescale: 
@@ -204,7 +204,7 @@ class MetabolicInferenceRunner:
             
         static_y = self._assemble_static_vector(datetime.now(timezone.utc), env_data=env_data)
         
-        with torch.no_grad():
+        with torch.inference_mode():
             output = self.model(tensor, static_y)[0]
             
         # Rescale and Clamp logic (Layer 4 Safety)
@@ -238,7 +238,7 @@ class MetabolicInferenceRunner:
         
         print(f"Feeding data into CNN (Temporal: {temp_x.shape}, Static: {static_y.shape})...")
         
-        with torch.no_grad():
+        with torch.inference_mode():
             output = self.model(temp_x, static_y)[0]
             
         g_pred = float(output[0]) * 20.0

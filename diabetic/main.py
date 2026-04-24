@@ -21,7 +21,7 @@ async def run_simulation(scenario: str):
     Runs a metabolic simulation scenario.
     Scenarios: 'crash', 'faint', 'simulation' (stress)
     """
-    coordinator = Coordinator()
+    coordinator = await Coordinator.create()
     print(f"\n{'='*60}")
     print(f"  SYSTEM RUNTIME: BIO-QUANT (MODE: SIMULATION - {scenario.upper()})  ")
     print(f"{'='*60}\n")
@@ -84,6 +84,39 @@ async def handle_admin_commands(cmd: str):
 # 🚀 [SERVICE ORCHESTRATION]
 # =Focus: CLI Argument Parsing and Live/Offline Mode Bootstrapping
 # =============================================================================
+async def _run_command_loop():
+    while True:
+        try:
+            if len(sys.argv) > 1:
+                cmd = sys.argv[1]
+                if cmd in ["crash", "faint", "simulation", "normal"]:
+                    scenario = cmd
+                    await run_simulation(scenario)
+                    break
+                elif cmd == "live":
+                    coordinator = await Coordinator.create()
+                    await coordinator.start_live_mode()
+                elif cmd in ["export", "cleanup"]:
+                    await handle_admin_commands(cmd)
+                    break
+                else:
+                    print(f"Unknown command: {cmd}")
+                    print("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup]")
+                    break
+            else:
+                # Default to regular simulation
+                await run_simulation("simulation")
+                break
+        except KeyboardInterrupt:
+            raise
+        except ValueError as e:
+            logging.error(f"FATAL CONFIGURATION ERROR: {e}")
+            logging.error("Check your .env file or Heroku Config Vars. System exiting.")
+            sys.exit(1)
+        except Exception as e:
+            logging.error(f"FATAL SYSTEM CRASH: {e}. Attempting automated recovery in 30s...")
+            await asyncio.sleep(30) # Cool-down for recoverable network or transient errors
+
 async def main():
     # 0. Global Hygiene & Bootstrapping (Wave 1/3)
     logging.basicConfig(
@@ -94,36 +127,10 @@ async def main():
     
     config.validate_config()
     await db_manager.ensure_indices()
-
-    if len(sys.argv) > 1:
-        cmd = sys.argv[1]
-        if cmd in ["crash", "faint", "simulation", "normal"]:
-            scenario = cmd
-            await run_simulation(scenario)
-        elif cmd == "live":
-            coordinator = Coordinator()
-            await coordinator.start_live_mode()
-        elif cmd in ["export", "cleanup"]:
-            await handle_admin_commands(cmd)
-        else:
-            print(f"Unknown command: {cmd}")
-            print("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup]")
-    else:
-        # Default to regular simulation
-        await run_simulation("simulation")
+    await _run_command_loop()
 
 if __name__ == "__main__":
-    while True:
-        try:
-            asyncio.run(main())
-        except KeyboardInterrupt:
-            print("\nSystem stopped by user.")
-            break
-        except ValueError as e:
-            logging.error(f"FATAL CONFIGURATION ERROR: {e}")
-            logging.error("Check your .env file or Heroku Config Vars. System exiting.")
-            sys.exit(1)
-        except Exception as e:
-            logging.error(f"FATAL SYSTEM CRASH: {e}. Attempting automated recovery in 30s...")
-            import time
-            time.sleep(30) # Cool-down for recoverable network or transient errors
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nSystem stopped by user.")
