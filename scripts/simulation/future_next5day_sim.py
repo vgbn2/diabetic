@@ -104,8 +104,11 @@ def run_future_5day_simulation():
                     curve_c = twin.simulate_carb_impact(meal_val, "STARCH", interval_mins)
                     active_meals.append((tick, np.diff(curve_c, prepend=0.0)))
                     
+                    # Bolus Delay (Behavioral flaw: eating before injecting)
+                    # Delay randomly between -1 tick (pre-bolus) to +6 ticks (+30 mins late bolus)
+                    bolus_delay = random.randint(-1, 6) 
                     curve_i = twin.simulate_insulin_impact(bolus_val, "RAPID", interval_mins)
-                    active_insulin.append((tick, np.diff(curve_i, prepend=0.0)))
+                    active_insulin.append((tick + bolus_delay, np.diff(curve_i, prepend=0.0)))
 
         # B. Unexpected Carb Noise (Stressors)
         if tick % (360 // interval_mins) == 0 and random.random() < 0.2:
@@ -129,7 +132,11 @@ def run_future_5day_simulation():
             # Only correct if we are drifting high and no recent insulin is active
             req_units = (current_bg - 6.5) / twin.isf
             if req_units > 1.0:
-                print(f"  [CORRECTION] Bolus: {req_units:.1f}U at {curr_time.strftime('%H:%M')} (BG: {current_bg:.1f})")
+                # "Rage Bolus" mechanic: frustrated user takes 120-180% of what's actually needed!
+                rage_factor = np.random.uniform(1.2, 1.8) if random.random() > 0.5 else 1.0
+                req_units *= rage_factor
+                
+                print(f"  [CORRECTION] Bolus: {req_units:.1f}U (Rage:{rage_factor:.1f}) at {curr_time.strftime('%H:%M')} (BG: {current_bg:.1f})")
                 curve_c = twin.simulate_insulin_impact(req_units, "RAPID", interval_mins)
                 active_insulin.append((tick, np.diff(curve_c, prepend=0.0)))
                 last_correction_tick = tick
