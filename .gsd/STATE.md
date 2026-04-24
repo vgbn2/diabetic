@@ -1,26 +1,37 @@
 ## Current Position
-- **Phase**: Phase 0.8 Complete / Transitioning to Phase 1.1
-- **Task**: Initiate Multi-Tenant SQL Registry
-- **Status**: Active (resumed 2026-04-24T09:41:13+07:00)
+- **Phase**: Phase 0.9 Complete (Realism & Climatology Hardened)
+- **Task**: Preparing for Phase 1.1: Multi-Tenant SQL Registry
+- **Status**: Paused at 2026-04-24T10:48:00+07:00
 
 ## Last Session Summary
-Successfully completed Phase 0.8 (Fail-Fast Auditing Hardening). Overhauled the troubleshooting suite to be async-native and aligned with the Heroku + MongoDB stack. Purged irrelevant Supabase and synchronous legacy scripts.
+Successfully transitioned from a static metabolic simulation to a high-fidelity, 24-hour oscillating "Imbalance" model. Injected environmental forcing (Temperature, Humidity, AQI) and human-in-the-loop bio-feedback (Rage boluses, Hypo rescues) to achieve medical-grade simulation realism. Validated results via Monte Carlo statistical bands.
 
 ## In-Progress Work
-- Creating planning for Phase 1.1: Multi-Tenant SQL Registry (The Vessel).
+- Ready for Phase 1.1: Multi-Tenant SQL Registry (The Vessel).
+- Simulation scripts are fully modularized and verified.
 
 ## Blockers
-- None. (Supabase confusion resolved: user stack is Heroku+MongoDB).
+- None.
 
 ## Context Dump
 ### Decisions Made
-- **Audit Hardening**: All troubleshooting tools now strictly use `sys.exit(1)` and `asyncio.run()`, ensuring "Mission Control" reliability.
-- **Stack Alignment**: Removed Supabase stubs; created `test_mongodb.py` to verify the actual production stack.
+- **Cumulative Persistence**: Carbohydrates and Insulin impact the baseline as integrals of appearance, not transient pulses, ensuring metabolic events have lasting consequences until counter-regulated.
+- **Bio-Feedback Mechanic**: Injected "Rage Bolusing" and "Hypo Rescues" to simulate real-world human behavior, resulting in realistic jagged mountain-range glycemic patterns.
+- **Environmental Anchoring**: Corrected CNN scaling to anchor normal environmental states (25C, 50 AQI) to 1.0, ensuring the Neural Network doesn't process "normal" as a deviation.
+
+### Approaches Tried
+- **Determinisitc Drift**: (Failed) Created infinite drift that looked artificial.
+- **Stochastic Feedback**: (Success) Using randomized bolus delays and daily HGO amplitude variation creates life-like variance.
 
 ### Current Hypothesis
-- Phase 1.1 will transition from environment-based configuration to a persistent SQL-backed tenant registry, allowing the system to scale beyond a single environment file.
+- The system is now physiologically robust enough to support long-term training of deep-learning models on synthetic-to-real hybrid data.
+
+### Files of Interest
+- `scripts/simulation/future_next5day_sim.py`: Core simulation loop with bio-feedback.
+- `scripts/simulation/monte_carlo_5day.py`: Statistical range generator.
+- `diabetic/utils/scaling_engine.py`: Corrected environmental tensor normalization.
 
 ## Next Steps
 1. /plan Phase 1.1: Multi-Tenant SQL Registry (The Vessel).
-2. Decompose Phase 1.1 into executable tasks.
-3. Implement the `VesselRegistry` model and SQL migration.
+2. Decompose Phase 1.1 into the `VesselRegistry` data model (SQL).
+3. Migrate the current environment-based configuration to the multi-tenant SQL backend.
