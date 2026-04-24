@@ -95,10 +95,10 @@ def run_future_5day_simulation():
                 # Check if we already processed a meal for this window
                 last_meal_time = records[-1].get("meal_event") if records else None
                 if not last_meal_time:
-                    carbs = getattr(event, "carbs", 45) + random.randint(-5, 12) 
+                    carbs = getattr(event, "carbs", 45) + random.randint(-10, 20) 
                     meal_val = carbs
-                    # Bolus Miscalculation (User Error 15%)
-                    error_factor = np.random.normal(0.92, 0.12) 
+                    # Bolus Miscalculation (User Error 22%)
+                    error_factor = np.random.normal(0.90, 0.22) 
                     bolus_val = (carbs / 10.0) * error_factor
                     
                     curve_c = twin.simulate_carb_impact(meal_val, "STARCH", interval_mins)
@@ -146,8 +146,9 @@ def run_future_5day_simulation():
             
         # Circadian Basal-HGO (Hepatic Glucose Output)
         hour = curr_time.hour + curr_time.minute/60.0
-        # Dawn Phenomenon (Liver dump in morning)
-        dawn_effect = 0.38 * np.exp(-((hour - 6.5)**2) / 2.5)
+        # Dawn Phenomenon (Liver dump in morning) with daily random amplitude variation
+        dawn_amp = 0.38 + np.random.normal(0, 0.12)  # High daily volatility in liver dumps
+        dawn_effect = dawn_amp * np.exp(-((hour - 6.5)**2) / 2.5)
         
         basal_rate_u = 0.58 
         
@@ -173,7 +174,7 @@ def run_future_5day_simulation():
             
         velocity = (net_impact * res_mult) - (basal_impact) + hgo_impact - renal_clearance - mass_action
         current_bg += velocity
-        current_bg = max(2.6, current_bg + np.random.normal(0, 0.05)) # Added more high-frequency noise for CGM realism
+        current_bg = max(2.6, current_bg + np.random.normal(0, 0.12)) # Tripled high-frequency noise for volatile CGM realism
 
         # --- NEURAL ENGINE (CNN Prediction) ---
         # Look ahead prediction (T + 30m)

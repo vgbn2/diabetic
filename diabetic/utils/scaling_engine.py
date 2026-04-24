@@ -47,10 +47,13 @@ class ScalingEngine:
         aqi_scaled = 1.0
         
         if env_data:
-            # Safely scale environment metrics
-            temp_scaled = min(1.0, max(0.0, env_data.get('temperature', 25.0) / 50.0)) # 0-50C -> 0.0-1.0
-            humid_scaled = min(1.0, max(0.0, env_data.get('humidity', 60.0) / 100.0))  # 0-100% -> 0.0-1.0
-            aqi_scaled = min(1.0, max(0.0, env_data.get('aqi', 50.0) / 500.0))         # 0-500 -> 0.0-1.0
+            # Safely scale environment metrics anchored to 1.0 as baseline
+            # Temperature normal = 25C. Formula: (Temp / 25) so 25C -> 1.0
+            temp_scaled = min(2.0, max(0.0, env_data.get('temperature', 25.0) / 25.0))
+            # Humidity normal = 60%. Formula (Humid / 60) so 60% -> 1.0
+            humid_scaled = min(2.0, max(0.0, env_data.get('humidity', 60.0) / 60.0))
+            # AQI normal = 50. Formula (AQI / 50) so 50 AQI -> 1.0
+            aqi_scaled = min(10.0, max(0.0, env_data.get('aqi', 50.0) / 50.0))
 
         vector = [
             config.PATIENT_AGE / 100.0,
