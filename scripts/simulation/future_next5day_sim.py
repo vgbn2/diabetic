@@ -28,9 +28,10 @@ def run_future_5day_simulation():
         age=config.PATIENT_AGE,
         weight_kg=config.PATIENT_WEIGHT_KG,
     )
-    # Kinetics: Carbs hit fast, Insulin hits slow = Natural Spike
-    twin.starch_tau = 50.0 
-    mc.INSULIN_PEAK_TAU_RAPID = 110.0
+    # Kinetics Tuning for Lag Spikes (Carbs peak in 45m, Insulin in 120m)
+    twin.starch_tau = 45.0 
+    mc.INSULIN_PEAK_TAU_RAPID = 120.0 
+    mc.INSULIN_ONSET_LAG_MINS = 20.0
 
     # 2. Simulation Timeline
     now = datetime.now(timezone.utc)
@@ -45,6 +46,9 @@ def run_future_5day_simulation():
 
     active_meals = []    # List of (start_tick, impact_deltas)
     active_insulin = []  # List of (start_tick, impact_deltas)
+    
+    last_correction_tick = -999
+    last_hypo_tick = -999
 
     # 3. Simulation Loop
     runner = MetabolicInferenceRunner(seq_len=30)
@@ -67,10 +71,11 @@ def run_future_5day_simulation():
                 # Check if we already processed a meal for this window
                 last_meal_time = records[-1].get("meal_event") if records else None
                 if not last_meal_time:
-                    # In a real system, we'd track IDs. Here we use presence of 'carbs' in schema or hardcode
-                    carbs = getattr(event, "carbs", 40) 
+                    carbs = getattr(event, "carbs", 45) + random.randint(-5, 12) 
                     meal_val = carbs
-                    bolus_val = carbs / 10.0 # Standard 1:10 Ratio for perfect balance
+                    # Bolus Miscalculation (User Error 15%)
+                    error_factor = np.random.normal(0.92, 0.12) 
+                    bolus_val = (carbs / 10.0) * error_factor
                     
                     curve_c = twin.simulate_carb_impact(meal_val, "STARCH", interval_mins)
                     active_meals.append((tick, np.diff(curve_c, prepend=0.0)))
@@ -78,39 +83,67 @@ def run_future_5day_simulation():
                     curve_i = twin.simulate_insulin_impact(bolus_val, "RAPID", interval_mins)
                     active_insulin.append((tick, np.diff(curve_i, prepend=0.0)))
 
-        # B. Unexpected Carb Noise
+        # B. Unexpected Carb Noise (Stressors)
         if tick % (360 // interval_mins) == 0 and random.random() < 0.2:
             snack_carbs = random.randint(15, 25)
             print(f"  [STRESS] Unexpected Snack: {snack_carbs}g at {curr_time.strftime('%H:%M')}")
             curve_s = twin.simulate_carb_impact(snack_carbs, "LIQUID", interval_mins)
             active_meals.append((tick, np.diff(curve_s, prepend=0.0)))
+            
+        # C. User Bio-Feedback (Corrections & Rescues)
+        # 1. Hypo Rescue
+        if current_bg < 4.2 and (tick - last_hypo_tick) > (45 / interval_mins):
+            rescue_carbs = 15.0 # Standard rule of 15
+            print(f"  [RESCUE] Hypo Treatment: {rescue_carbs}g at {curr_time.strftime('%H:%M')} (BG: {current_bg:.1f})")
+            curve_r = twin.simulate_carb_impact(rescue_carbs, "LIQUID", interval_mins)
+            active_meals.append((tick, np.diff(curve_r, prepend=0.0)))
+            last_hypo_tick = tick
+            meal_val += rescue_carbs
 
-        # --- PHYSIOLOGICAL ENGINE (Mechanistic Truth) ---
+        # 2. Hyper Correction Bolus
+        elif current_bg > 11.5 and (tick - last_correction_tick) > (180 / interval_mins):
+            # Only correct if we are drifting high and no recent insulin is active
+            req_units = (current_bg - 6.5) / twin.isf
+            if req_units > 1.0:
+                print(f"  [CORRECTION] Bolus: {req_units:.1f}U at {curr_time.strftime('%H:%M')} (BG: {current_bg:.1f})")
+                curve_c = twin.simulate_insulin_impact(req_units, "RAPID", interval_mins)
+                active_insulin.append((tick, np.diff(curve_c, prepend=0.0)))
+                last_correction_tick = tick
+                bolus_val += req_units
+
+        # --- PHYSIOLOGICAL ENGINE ---
         net_impact = 0.0
-        # Carb Rise
         for start_tick, deltas in active_meals:
             idx = tick - start_tick
             if 0 <= idx < len(deltas): net_impact += deltas[idx]
-        # Insulin Drop
         for start_tick, deltas in active_insulin:
             idx = tick - start_tick
             if 0 <= idx < len(deltas): net_impact -= deltas[idx]
             
-        # Get dynamic resistance multiplier from Twin (Aware of Schedule + Temporal)
-        snapshot = MetabolicSnapshot(
-            glucose=GlucoseReading(timestamp=curr_time, value=current_bg, trend="Flat"),
-            environment=None # Placeholder
-        )
+        # Circadian Basal-HGO (Hepatic Glucose Output)
+        hour = curr_time.hour + curr_time.minute/60.0
+        # Dawn Phenomenon (Liver dump in morning)
+        dawn_effect = 0.38 * np.exp(-((hour - 6.5)**2) / 2.5)
+        
+        basal_rate_u = 0.58 
         res_mult = twin.get_hormonal_multiplier(curr_time)
         
-        # Neutral basal (Basal - HGO = 0)
-        net_basal = (0.22 - 0.22) * (interval_mins / 60.0)
+        # Effective Forces (Applying Resistance)
+        basal_impact = (basal_rate_u * twin.isf / res_mult) * (interval_mins / 60.0)
+        hgo_impact = (basal_impact * 0.94) + (dawn_effect * (interval_mins / 60.0)) # 6% negative drift for realism
         
-        velocity = (net_impact + net_basal)
+        # Renal Clearance (The Ceiling)
+        renal_clearance = 0.0
+        if current_bg > 11.5:
+            renal_clearance = (current_bg - 11.5) * mc.RENAL_CLEARANCE_SLOPE 
+            
+        # Mass Action (Non-Insulin Mediated Glucose Uptake)
+        # Tissues passively absorb glucose proportional to gradient above 5.5
+        mass_action = 0.015 * (current_bg - 5.5) * (interval_mins / 5.0)
+            
+        velocity = (net_impact * res_mult) - (basal_impact) + hgo_impact - renal_clearance - mass_action
         current_bg += velocity
-        
-        # Physical Floor
-        current_bg = max(mc.PHYSIO_FLOOR, current_bg + np.random.normal(0, 0.010)) # Reduced noise for neural clarity
+        current_bg = max(2.6, current_bg + np.random.normal(0, 0.05)) # Added more high-frequency noise for CGM realism
 
         # --- NEURAL ENGINE (CNN Prediction) ---
         # Look ahead prediction (T + 30m)
