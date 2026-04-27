@@ -82,3 +82,10 @@ testsprite_tests/
 *.bak
 *.db
 entities.json
+ROADMAP.md
+SPEC.md
+TODO.md
+VISION.md
+PROJECT_RULES.md
+GSD-STYLE.md
+CHANGELOG.md
