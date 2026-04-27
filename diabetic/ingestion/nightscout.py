@@ -14,8 +14,17 @@ class NightscoutClient:
     """
     def __init__(self):
         self.url = config.NIGHTSCOUT_URL.rstrip('/')
-        self.secret = config.API_SECRET
-        self.hashed_secret = hashlib.sha1(self.secret.encode()).hexdigest()
+        # FIX S6: Never store raw secret as instance attribute.
+        # Compute all auth artifacts immediately and let the plaintext go out of scope.
+        # This prevents secret leakage through repr(), tracebacks, or memory dumps.
+        _raw = config.API_SECRET
+        self.hashed_secret = hashlib.sha1(_raw.encode()).hexdigest()
+        # Detect token mode (long access tokens with dashes vs short hashed passwords)
+        self._is_token_mode = len(_raw) > 24 or '-' in _raw or _raw.startswith("subject-")
+        # Store raw only if it's an opaque token (needed for Bearer / query-param auth)
+        # Otherwise the hash is sufficient — do NOT store the plaintext form.
+        self._token = _raw if self._is_token_mode else None
+        # _raw intentionally goes out of scope here — not stored on self.
         
         # Wave 3 Hardening: Persistent AsyncClient to prevent connection exhaustion
         self.client = httpx.AsyncClient(timeout=15.0)
@@ -32,20 +41,16 @@ class NightscoutClient:
         """
         Returns auth as query params for Heroku-hosted Nightscout instances.
         Uses token= param when secret looks like an access token (not a raw password).
-        This is the preferred method for instances returning 401 on Authorization headers.
         """
-        # Heuristic: access tokens are typically long (>24 chars) or contain dashes
-        # Plain API secrets are typically short passwords that get SHA1 hashed.
-        if len(self.secret) > 24 or '-' in self.secret or self.secret.startswith("subject-"):
-            return {"token": self.secret}
-        # Otherwise use the hashed secret via header — return no extra params
+        if self._is_token_mode:
+            return {"token": self._token}
         return {}
 
     def _get_auth_headers(self) -> dict:
         """Returns auth headers for instances that support header-based auth."""
         headers = {"Accept": "application/json"}
-        if len(self.secret) > 24 or '-' in self.secret or self.secret.startswith("subject-"):
-            headers["Authorization"] = f"Bearer {self.secret}"
+        if self._is_token_mode:
+            headers["Authorization"] = f"Bearer {self._token}"
         else:
             headers["api-secret"] = self.hashed_secret
         return headers

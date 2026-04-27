@@ -63,31 +63,39 @@ class MongoDBClient:
             
         return readings
 
-    async def fetch_recent_treatments(self, hours: float = 24.0) -> List[tuple]:
-        """Fetches insulin and meal events for the last N hours."""
-        if self.treatments is None: return []
+    async def fetch_recent_treatments(self, hours: float = 24.0) -> tuple:
+        """
+        Fetches the latest insulin and meal events for the last N hours.
+        Returns Tuple[Optional[InsulinDose], Optional[MealEvent]] to match
+        the NightscoutClient contract and prevent arity mismatch in coordinator.
+        """
+        if self.treatments is None:
+            return None, None
         
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        doses = []
-        meals = []
+        latest_insulin: Optional[InsulinDose] = None
+        latest_meal: Optional[MealEvent] = None
         
         try:
             # Nightscout stores created_at as ISO string or Date
             cursor = self.treatments.find({
                 "created_at": {"$gte": cutoff.isoformat()},
                 "eventType": {"$in": ["Meal Bolus", "Correction Bolus", "Note", "Carb Correction"]}
-            }).sort("created_at", 1)
+            }).sort("created_at", -1)  # Most recent first so we grab the latest
             
             async for doc in cursor:
                 event = self._map_treatment(doc)
-                if isinstance(event, InsulinDose):
-                    doses.append(event)
-                elif isinstance(event, MealEvent):
-                    meals.append(event)
+                if isinstance(event, InsulinDose) and not latest_insulin:
+                    latest_insulin = event
+                elif isinstance(event, MealEvent) and not latest_meal:
+                    latest_meal = event
+                # Stop early once both slots are filled
+                if latest_insulin and latest_meal:
+                    break
         except Exception as e:
             self.logger.error(f"Error fetching treatments: {e}")
             
-        return doses, meals
+        return latest_insulin, latest_meal
 
 # =============================================================================
 # 📊 [CLINICAL REPORTING & MAINTENANCE]
@@ -225,8 +233,10 @@ class MongoDBClient:
         
         try:
             res_e = await self.entries.delete_many({"date": {"$lt": cutoff_ms}})
-            # Treatments often use 'created_at' ISO string
-            res_t = await self.treatments.delete_many({"created_at": {"$lt": cutoff_date.isoformat()}})
+            # FIX D5: Pass datetime object directly — NOT .isoformat() string.
+            # String comparison fails on non-zero-padded Nightscout dates (e.g., 2024-3-5T...).
+            # Motor/PyMongo correctly serializes datetime to BSON Date for comparison.
+            res_t = await self.treatments.delete_many({"created_at": {"$lt": cutoff_date}})
             
             self.logger.info(f"Cleanup complete. Removed {res_e.deleted_count} entries and {res_t.deleted_count} treatments.")
         except Exception as e:

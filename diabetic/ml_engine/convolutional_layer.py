@@ -46,7 +46,7 @@ class DiabeticCNN(nn.Module):
     STATIC_FEATURE_LABELS = [
         "age", "weight", "height", "gender", "ethnicity", 
         "diabetes_type", "diagnosis_year", "activity_level",
-        "fructosamin", "is_inflamed", "is_sick", #cant really know this
+        "fructosamin", "is_inflamed", "is_sick", #cant really know if someone is sick without them telling
         "temporal_multiplier", "temp_forcing", "hum_forcing", "aqi_forcing"
     ]
 

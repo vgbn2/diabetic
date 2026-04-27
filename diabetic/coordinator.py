@@ -112,7 +112,7 @@ class Coordinator:
 
         # 1. Signal Quality Check
         history = [snapshot.glucose for snapshot in self.snapshots] + [reading]
-        if len(history) < 3:
+        if len(history) < 3:#why 3?comment when read this
             self.logger.debug(
                 f"Startup: only {len(history)} reading(s) — compression recovery check inactive until 3rd reading."
             )

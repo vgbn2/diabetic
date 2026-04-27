@@ -7,11 +7,11 @@ from diabetic.config import config
 
 # =============================================================================
 # 🔗 [FRONTEND INTEGRATION]
-# =Focus: Proactive Data Propagation to the Render Cloud Hub
+# =Focus: Proactive Data Propagation to the heroku Cloud Hub
 # =============================================================================
 class StatelessPush:
     """
-    Handles proactive data pushing from Backend to Frontend (Render).
+    Handles proactive data pushing from Backend to Frontend (heroku).
     Implements the 'Stateless Push' model to keep the cloud hub updated.
     """
     def __init__(self):
@@ -59,13 +59,13 @@ class StatelessPush:
 # =Focus: heroku service Persistence and Stay-Alive Pings (eco plan on heroku needs data polling every 30minutes)
 # =============================================================================
     async def heartbeat(self):
-        """Self-pinging mechanism to keep the Render server alive."""
+        """Self-pinging mechanism to keep the heroku server alive."""
         if not self.push_url:
             return
             
         while True:
             try:
-                # Ping the base URL (Render root) to prevent sleeping
+                # Ping the base URL (heroku root) to prevent sleeping
                 base_url = "/".join(self.push_url.split("/")[:3])
                 await self.client.get(base_url)
             except Exception:

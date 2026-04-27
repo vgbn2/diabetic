@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from functools import wraps
@@ -83,6 +83,17 @@ class TelegramApp:
         self.audit_logger = audit_logger
         self.logger = logging.getLogger("Bio-Quant.TelegramApp")
         self._setup_handlers()
+        
+        # Wave 7: Command Menu Registration
+        async def post_init(application):
+            commands = [
+                BotCommand("start", "Boot the Metabolic Engine HUD"),
+                BotCommand("meal", "Log carbs [desc] [grams] (e.g. /meal rice 60)")
+            ]
+            await application.bot.set_my_commands(commands)
+            self.logger.info("Telegram command menu registered successfully.")
+
+        self.app.post_init = post_init
 
     def _setup_handlers(self):
         self.app.add_handler(CommandHandler("start", self._start_cmd))

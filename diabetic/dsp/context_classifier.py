@@ -20,6 +20,7 @@ from diabetic import medical_constants as mc
 
 class ActivityType(Enum):
     FOOD = "FOOD"
+    INSULIN="INSULIN"
     EXERCISE = "EXERCISE"
     STRESS_STUDYING = "STRESS_STUDYING"
     STRESS_ANOMALY = "STRESS_ANOMALY"  # Glucose/HR Decoupling
@@ -147,6 +148,7 @@ if __name__ == "__main__":
     result = classify_context(snap)
     assert result == ActivityType.RELAXED_STUDYING, f"Expected RELAXED_STUDYING, got {result}"
     print(f"[TEST 7] Baseline awake -> {result.value} [OK]")
+# is this just one big false test?
 
     print("\nALL CONTEXT CLASSIFIER TESTS PASSED.")
 # End of context_classifier.py

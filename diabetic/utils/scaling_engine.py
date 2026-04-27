@@ -32,7 +32,7 @@ class ScalingEngine:
         "ATHLETE": 1.2, 
         "UNKNOWN": 0.5
     }
-
+# all of the above should be a range no?
     @classmethod
     def assemble_static_vector(cls, now: Optional[datetime] = None, env_data: Optional[dict] = None) -> np.ndarray:
         """

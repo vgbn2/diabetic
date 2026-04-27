@@ -1,4 +1,4 @@
-# SPEC.md - Bio-Quant TWA [REVISED]
+# SPEC.md - Bio-Quant TWA [FINALIZED]
 
 ## Goal
 

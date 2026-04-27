@@ -20,8 +20,8 @@ MMOL_TO_MGDL = 18.018                      # exact SI factor
 MGDL_TO_MMOL = 1 / 18.018
 
 # ── Hardware & Sampling ──────────────────────────────────────────────────────
-SAMPLING_INTERVAL_MINS   = 2.5
-STALE_DATA_TIMEOUT_SECS  = 900    # 15 minutes — beyond this, data is unreliable, harder to predict
+SAMPLING_INTERVAL_MINS   = 5
+STALE_DATA_TIMEOUT_SECS  = 3600    # 60 minutes — beyond this, data is unreliable, harder to predict
 KALMAN_MEASUREMENT_NOISE = 0.25   # R = σ² = 0.5² (Ottai M8 base accuracy)
 MIN_DT_FLOOR             = 0.5    # minutes — prevents division by zero / filter explosion
 

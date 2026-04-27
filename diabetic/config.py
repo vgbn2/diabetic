@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 # =Focus: Polling intervals, Logging levels, and Data Stability
 # =============================================================================
     LOG_LEVEL: str = "INFO"
-    DATA_POLLING_INTERVAL: int = 150  # 2,5 minutes
+    DATA_POLLING_INTERVAL: int = 300  # 5 minutes
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
     
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     PATIENT_FRUCTOSAMIN: float = Field(300.0, validation_alias="PATIENT_FRUCTOSAMIN")
     PATIENT_MICROALBUMINURIA: bool = Field(False, validation_alias="PATIENT_MICROALBUMINURIA")
     PATIENT_INFLAMMATORY_MARKER: bool = Field(False, validation_alias="PATIENT_INFLAMMATORY_MARKER")
-    PATIENT_CYCLE_START: str = Field("2026-01-01", validation_alias="PATIENT_CYCLE_START")
+    PATIENT_CYCLE_START: str = Field("2026-01-01", validation_alias="PATIENT_CYCLE_START")#if gender=female
     
     PATIENT_GB_MMOL: float = 8.4
     PATIENT_HRV_BASELINE: float = 50.0
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     # Infrastructure
     MONGO_URI: str = ""
     MONGODB_URI: str = "" # Heroku Add-on standard
-    RENDER_EXTERNAL_URL: str = ""
+    RENDER_EXTERNAL_URL: str = ""#change to heroku
     HEART_RATE_SENSOR_ADDRESS: str = "MOCK" # Set to XX:XX... for BLE
     
     # Local High-Availability (Task 8.1.1)

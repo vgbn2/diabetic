@@ -1,10 +1,13 @@
 ## Current Position
-- **Phase**: Phase 1.0 Complete (Bio-Quant Audit Remediation v14)
-- **Task**: Empirical Validation Cleared
-- **Status**: Paused at 2026-04-25T13:05:00+07:00
+- **Phase**: Phase 1.0.5 — Audit Purge Complete
+- **Task**: All v14 Audit Findings Closed
+- **Status**: Ready for Phase 1.1 execution
 
 ## Last Session Summary
-Finalized the system audit remediation sweep. Successfully transitioned the core orchestrator and the main coordinator to an async-native lifecycle. Hardened the telemetry ingestion layer against network failures and secured the UI against malicious coordinate injection. Verified all changes against the production simulation runner on Windows.
+Closed the final 3 critical findings from the Bio-Quant v14 audit:
+- **D4/D5 (Arity Mismatch)**: `MongoDBClient.fetch_recent_treatments` now returns `Tuple[Optional[InsulinDose], Optional[MealEvent]]` matching the NightscoutClient contract. Coordinator unpack is safe regardless of which client is active.
+- **D5 (Retention Cleanup)**: Replaced `.isoformat()` string comparison in `run_retention_cleanup` with a raw `datetime` object. Motor/PyMongo serializes this to BSON Date, which is immune to non-zero-padded string format inconsistencies from Nightscout.
+- **S6 (Secret Leakage)**: `NightscoutClient.__init__` no longer stores `self.secret` in plaintext. Raw key goes out of scope after hashing; `self._token` is populated only for token-mode instances. Zero plaintext exposure in tracebacks or memory dumps.
 
 ## In-Progress Work
 - None (All Phase 1.0 tasks committed and verified).
@@ -32,6 +35,4 @@ Finalized the system audit remediation sweep. Successfully transitioned the core
 - `diabetic/utils/audit_logger.py`: High-concurrency SQLite WAL patterns.
 
 ## Next Steps
-1. Phase 1.1 Initiation: Define the SQL Alchemy schema for `VesselRegistry`.
-2. Migrate environment variables to the multi-tenant DB.
-3. Finalize Docker orchestration for Cloud Run.
+1. /execute 1.1

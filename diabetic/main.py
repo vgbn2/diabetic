@@ -82,7 +82,7 @@ async def handle_admin_commands(cmd: str):
 
 # =============================================================================
 # 🚀 [SERVICE ORCHESTRATION]
-# =Focus: CLI Argument Parsing and Live/Offline Mode Bootstrapping
+# =Focus: CLI Argument Parsing and Live/Offline Mode Bootstrapping, change it to telegram command
 # =============================================================================
 async def _run_command_loop():
     while True:
