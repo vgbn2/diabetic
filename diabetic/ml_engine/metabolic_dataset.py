@@ -38,9 +38,22 @@ class MetabolicDataset(Dataset):
             df.rename(columns={'glucose_mmol_l': 'glucose'}, inplace=True)
 
         # Fix C3: Resample to dynamic sampling interval (not hardcoded 5min)
+        # Fix C1: set_index FIRST, then resample. Using numeric_only=True on .mean()
+        # prevents chaining select_dtypes before the index is set, which was silently
+        # dropping non-numeric columns (velocity, timestamp) before resampling.
         interval_mins = int(config.SAMPLING_INTERVAL_MINS)
         resample_rule = f'{interval_mins}min'
-        df = df.set_index('timestamp').select_dtypes(include=[np.number]).resample(resample_rule).mean()
+        df = df.set_index('timestamp').resample(resample_rule).mean(numeric_only=True)
+
+        # Post-resample audit: log a warning if expected base channels are missing.
+        _expected = {'glucose'}
+        _missing = _expected - set(df.columns)
+        if _missing:
+            import logging as _logging
+            _logging.getLogger("Bio-Quant.MetabolicDataset").warning(
+                "[C1-GUARD] Post-resample column audit FAILED. Missing channels: %s. "
+                "Check CSV schema alignment.", _missing
+            )
 
         # 2. Interpolate missing glucose
         df['glucose'] = df['glucose'].interpolate(method='linear')
