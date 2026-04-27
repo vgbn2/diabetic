@@ -1,18 +1,19 @@
 ## Current Position
-- **Phase**: Phase 1.0.5 — Audit Purge Complete
-- **Task**: All v14 Audit Findings Closed
-- **Status**: Ready for Phase 1.1 execution
+- **Phase**: Phase 1.0 — Audit Purge [FINALIZED]
+- **Task**: System Infrastructure Hardening Complete
+- **Status**: Ready for Phase 1.1 (Multi-Tenant SQL Registry)
 
 ## Last Session Summary
-Closed the final 3 critical findings from the Bio-Quant v14 audit:
-- **D4/D5 (Arity Mismatch)**: `MongoDBClient.fetch_recent_treatments` now returns `Tuple[Optional[InsulinDose], Optional[MealEvent]]` matching the NightscoutClient contract. Coordinator unpack is safe regardless of which client is active.
-- **D5 (Retention Cleanup)**: Replaced `.isoformat()` string comparison in `run_retention_cleanup` with a raw `datetime` object. Motor/PyMongo serializes this to BSON Date, which is immune to non-zero-padded string format inconsistencies from Nightscout.
-- **S6 (Secret Leakage)**: `NightscoutClient.__init__` no longer stores `self.secret` in plaintext. Raw key goes out of scope after hashing; `self._token` is populated only for token-mode instances. Zero plaintext exposure in tracebacks or memory dumps.
+Finalized the Bio-Quant Audit Purge and Infrastructure Hardening:
+- **Telegram Menu**: Registered `/start` and `/meal` commands directly with the Bot API for auto-complete.
+- **Workflow Hardening**: Updated `/pause` to include a mandatory `Deep Architecture Snapshot` to keep `ARCHITECTURE.md` stale-free.
+- **Skill Hardening**: Added the `Diagnostic Pulse` protocol to the `Context Health Monitor` to capture shadow dependencies during failures.
+- **TODO Management**: Initialized project-wide `TODO.md` with prioritized technical debt and Phase 1 roadmap items.
 
 ## In-Progress Work
-- None (All Phase 1.0 tasks committed and verified).
-- Files modified: `diabetic/main.py`, `diabetic/coordinator.py`, `diabetic/dsp/kalman.py`, `diabetic/ml_engine/inference.py`, `diabetic/ingestion/nightscout.py`, `diabetic/utils/audit_logger.py`, `diabetic/telegram_bot/handlers.py`, `diabetic/config.py`, `.env`.
-- Tests status: Passing (Empirical simulation confirmed).
+- None (Phase 1.0 is closed).
+- Files modified: `TODO.md`, `diabetic/telegram_bot/handlers.py`, `.gsd/STATE.md`, `.gsd/JOURNAL.md`, `.agent/workflows/pause.md`, `.agent/skills/context-health-monitor/SKILL.md`.
+- Tests status: Passing (Verified bot menu and boot stability).
 
 ## Blockers
 - None.
@@ -35,4 +36,6 @@ Closed the final 3 critical findings from the Bio-Quant v14 audit:
 - `diabetic/utils/audit_logger.py`: High-concurrency SQLite WAL patterns.
 
 ## Next Steps
-1. /execute 1.1
+1. **Initialize Phase 1.1**: Create `diabetic/storage/engine.py` for SQLAlchemy models.
+2. **Migrate Secrets**: Move `.env` credentials into the new `vessel_registry.db`.
+3. **Verify Multi-Tenancy**: Test the bot with two distinct Telegram IDs to ensure state isolation.
