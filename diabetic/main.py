@@ -11,6 +11,8 @@ from diabetic.utils.db import db_manager
 
 # Core orchestration logic relocated to diabetic/main.py
 
+logger = logging.getLogger("Bio-Quant.Main")
+
 # =============================================================================
 # 🧪 [METABOLIC SIMULATION]
 # =Focus: Synthetic Stress Scenarios and Trajectory Validation
@@ -22,9 +24,9 @@ async def run_simulation(scenario: str):
     Scenarios: 'crash', 'faint', 'simulation' (stress)
     """
     coordinator = await Coordinator.create()
-    print(f"\n{'='*60}")
-    print(f"  SYSTEM RUNTIME: BIO-QUANT (MODE: SIMULATION - {scenario.upper()})  ")
-    print(f"{'='*60}\n")
+    logger.info(f"{'='*60}")
+    logger.info(f"  SYSTEM RUNTIME: BIO-QUANT (MODE: SIMULATION - {scenario.upper()})  ")
+    logger.info(f"{'='*60}")
 
     # Simulation data generation
     readings = []
@@ -32,20 +34,20 @@ async def run_simulation(scenario: str):
     
     if scenario == "crash":
         # Rapid drop from normal to hypoglycemia
-        print("SIMULATION: Initiating Rapid Hypoglycemic Crash...")
+        logger.info("SIMULATION: Initiating Rapid Hypoglycemic Crash...")
         for i in range(10):
             val = 110 - (i * 10) # dropping fast (mg/dL internally for logic? No, registry says mmol/L)
             val_mmol = 6.1 - (i * 0.5) 
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="DoubleDown"))
     elif scenario == "faint":
         # High hyperglycemia with suspected faint risk factors (Rapid climb)
-        print("SIMULATION: Initiating Hyperglycemic Faint Risk (High + Rapid Rise)...")
+        logger.info("SIMULATION: Initiating Hyperglycemic Faint Risk (High + Rapid Rise)...")
         for i in range(10):
             val_mmol = 15.0 + (i * 0.8) # starting high and rising fast
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="FortyFiveUp"))
     else:
         # 'simulation' or 'normal' stress test
-        print("SIMULATION: Normal Metabolic Stress Test...")
+        logger.info("SIMULATION: Normal Metabolic Stress Test...")
         for i in range(10):
             val_mmol = 8.0 + (i * 0.1)
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="Flat"))
@@ -67,17 +69,17 @@ async def handle_admin_commands(cmd: str):
     mongo = MongoDBClient()
     
     if cmd == "export":
-        print(f"\n[ADMIN] Initiating 15-day sensor period export...")
+        logger.info("[ADMIN] Initiating 15-day sensor period export...")
         await audit.log_admin_action("EXPORT_START", {"scope": "all_sensor_periods"})
         await mongo.export_sensor_periods()
-        print("[ADMIN] Export complete. files saved to storage/exports/")
+        logger.info("[ADMIN] Export complete. files saved to storage/exports/")
         await audit.log_admin_action("EXPORT_COMPLETE", {"scope": "all_sensor_periods"})
         
     elif cmd == "cleanup":
-        print(f"\n[ADMIN] Enforcing 180-day retention policy cleanup...")
+        logger.info("[ADMIN] Enforcing 180-day retention policy cleanup...")
         await audit.log_admin_action("CLEANUP_START", {"retention_days": 180})
         await mongo.run_retention_cleanup(days=180)
-        print("[ADMIN] Cleanup complete.")
+        logger.info("[ADMIN] Cleanup complete.")
         await audit.log_admin_action("CLEANUP_COMPLETE", {"retention_days": 180})
 
 # =============================================================================
@@ -100,8 +102,8 @@ async def _run_command_loop():
                     await handle_admin_commands(cmd)
                     break
                 else:
-                    print(f"Unknown command: {cmd}")
-                    print("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup]")
+                    logger.error(f"Unknown command: {cmd}")
+                    logger.error("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup]")
                     break
             else:
                 # Default to regular simulation
@@ -133,4 +135,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nSystem stopped by user.")
+        logger.info("System stopped by user.")

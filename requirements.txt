@@ -10,7 +10,6 @@ motor>=3.2.0
 rich>=13.0.0
 bleak>=0.21.0
 torch>=2.0.0
--e ./mempalace
 chromadb>=0.6.0
 aiohttp==3.13.3
 matplotlib==3.10.1

@@ -7,9 +7,9 @@ from typing import List, Dict, Any, Optional
 
 try:
     import chromadb
-    from mempalace.searcher import search_memories
-    # Local configuration detection for relocated mempalace.yaml
-    LOCAL_PALACE_CONFIG = Path(__file__).parent.parent / "utils" / "mempalace" / "mempalace.yaml"
+    # mempalace removed [B1]
+    search_memories = None
+    LOCAL_PALACE_CONFIG = None
 except ImportError:
     # Fallback for environment verification
     chromadb = None
