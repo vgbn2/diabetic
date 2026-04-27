@@ -117,6 +117,13 @@ class MetabolicSnapshot(BaseModel):
     forecast: Optional[ProbabilisticForecast] = None # P5/P95 Range
     residual_error: float = 0.0  # Error from previous forecast
     sensor_health: float = 1.0   # Diagnostic integrity (0.0 - 1.0)
+
+    # --- Tactical Prediction Horizons (Plan 1.0.2) ---
+    # Regression-based kinematic projections (TacticalForecaster)
+    predict_15m: float = 0.0   # 15-minute glucose projection (mmol/L)
+    predict_60m: float = 0.0   # 60-minute glucose projection (mmol/L)
+    confidence_index: float = 0.0  # Data density score (0.0 = no data, 1.0 = full)
+    velocity_score: float = 0.0    # Instantaneous rate of change (mmol/L/min)
     
     # Layer 3 (The Behavioral Engine)
     active_carbs: float = 0.0     # Carbs on Board (COB)
