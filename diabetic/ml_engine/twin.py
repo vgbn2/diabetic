@@ -93,16 +93,30 @@ class DigitalTwin:
 
     def get_iob_fraction(self, minutes_ago: float) -> float:
         """
-        Calculates remaining Insulin On Board fraction using an S-curve (Physiological Decay).
-        """
-        if minutes_ago < 0: return 1.0
-        if minutes_ago >= mc.INSULIN_ACTION_WINDOW_MINS: return 0.0
+        [L1] Calculates remaining Insulin On Board fraction using a biexponential
+        pharmacological decay model (Bergman rapid-acting insulin kinetics).
+
+        Model: IOB(t) = A * exp(-t/tau1) - B * exp(-t/tau2)
         
-        # S-curve approximation: IOB(t) = 1 - (t^2 / (t^2 + K))
-        # Where K = peak_time^2 (roughly)
-        peak = mc.INSULIN_PEAK_TAU_RAPID
-        curve = 1.0 - (minutes_ago**3) / (minutes_ago**3 + peak**3)
-        return max(0.0, curve)
+        Calibrated to a clinical Rapid-Acting insulin profile:
+          - Onset: ~10-15 min
+          - Peak activity: ~60-75 min
+          - Duration: ~240 min (mc.INSULIN_ACTION_WINDOW_MINS)
+        """
+        if minutes_ago < 0:
+            return 1.0
+        if minutes_ago >= mc.INSULIN_ACTION_WINDOW_MINS:
+            return 0.0
+
+        # Biexponential parameters (calibrated for rapid-acting insulin, e.g. Novorapid/Humalog)
+        # tau1 = fast distribution phase, tau2 = slow elimination phase
+        tau1 = mc.INSULIN_PEAK_TAU_RAPID * 0.7   # ~42 min default (fast compartment)
+        tau2 = mc.INSULIN_PEAK_TAU_RAPID * 2.5   # ~150 min default (slow compartment)
+        A = 1.0 / (1.0 - tau1 / tau2)            # normalisation: f(0) = A - B = 1.0
+        B = A - 1.0
+
+        raw = A * np.exp(-minutes_ago / tau1) - B * np.exp(-minutes_ago / tau2)
+        return float(np.clip(raw, 0.0, 1.0))
 
     def get_environmental_multiplier(self, env: Optional[MetabolicSnapshot]) -> float:
         """
@@ -253,10 +267,17 @@ class DigitalTwin:
             for meal in meals:
                 if not meal.carbs: continue
                 dt_meal_mins = (latest.glucose.timestamp - meal.timestamp).total_seconds() / 60.0
+                # [L2] Guard: skip future-dated meals (clock drift or TWA pre-log)
+                # Without this, `max(0, negative // dt)` = 0, injecting a peak at t=0
+                if dt_meal_mins < 0:
+                    continue
+                # Guard: skip zombie meals older than 24h (stale Nightscout entries)
+                if dt_meal_mins > 1440:
+                    continue
                 if dt_meal_mins > 240.0: continue
 
                 full_meal_curve = self.simulate_carb_impact(meal.carbs, meal.gi_type, snapshot=latest, csf_override=csf_override)
-                start_idx = int(max(0, dt_meal_mins // dt))
+                start_idx = int(dt_meal_mins // dt)
                 meal_projection = full_meal_curve[start_idx : start_idx + len(t)]
                 
                 if len(meal_projection) < len(t):

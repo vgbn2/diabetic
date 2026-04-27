@@ -261,7 +261,7 @@ class Coordinator:
 
         # 6. Alert Decision
         if not is_backfill:
-            alert = self.alert_guard.evaluate(snapshot, prediction_30m)
+            alert = await self.alert_guard.evaluate(snapshot, prediction_30m, self.audit)
             if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
                 await self._dispatch_alert(alert)
                 task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))

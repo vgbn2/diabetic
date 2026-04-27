@@ -2,7 +2,7 @@ import asyncio
 import sqlite3
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
@@ -192,6 +192,33 @@ class AuditLogger:
             "action": action,
             "is_false_alarm": action != "confirm"
         })
+
+    async def get_recent_feedback(self, alert_type: str, hours: int = 24) -> List[dict]:
+        """Retrieves recent RLHF feedback for fine-tuning sensitivity."""
+        if not hasattr(self, 'local_conn'):
+            return []
+
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            def _query_db():
+                cursor = self.local_conn.cursor()
+                cursor.execute(
+                    "SELECT data FROM audit_logs WHERE event_type = ? AND timestamp > ?",
+                    ("USER_FEEDBACK", cutoff.isoformat())
+                )
+                return cursor.fetchall()
+            
+            rows = await asyncio.to_thread(_query_db)
+            feedback = []
+            for row in rows:
+                data = json.loads(row[0])
+                if data.get("alert_type") == alert_type:
+                    feedback.append(data)
+            return feedback
+        except Exception as e:
+            self.logger.error(f"Failed to query recent feedback: {e}")
+            return []
+
 
 # =============================================================================
 # 🛡️ [ADMINISTRATIVE INTEGRITY]
