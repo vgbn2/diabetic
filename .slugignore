@@ -1,0 +1,14 @@
+.agent/
+.gsd/
+.git/
+artifacts/
+docs/
+testsprite_tests/
+scripts/
+tmp/
+scratch/
+charts/
+data/forecasts/
+mempalace/
+*.pth.bak
+*.db
