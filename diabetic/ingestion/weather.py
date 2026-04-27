@@ -13,7 +13,7 @@ class WeatherIngestor:
     BASE_URL = "https://api.openweathermap.org/data/2.5/weather"
     AIR_POLLUTION_URL = "https://api.openweathermap.org/data/2.5/air_pollution"
     FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
-
+    #open weather or open meteor is fine
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or config.OPENWEATHER_API_KEY
         self.logger = logging.getLogger("Bio-Quant.Weather")

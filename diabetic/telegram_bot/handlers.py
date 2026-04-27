@@ -50,7 +50,7 @@ class TelegramNotifier:
             text += f"├ 30m: {alert.prediction_30m:.1f} mmol/L\n"
             text += f"└ 60m: {alert.prediction_60m:.1f} mmol/L\n\n"
             if alert.confidence_index is not None:
-                text += f"📈 <b>Confidence:</b> {alert.confidence_index*100:.0f}%\n"
+                text += f"📈 <b>Confidence:</b> {alert.confidence_index*100:.0f}%\n"#confidence score for each and every time horizon?
         elif alert.prediction_30m:
             text += f"Predicted (30m): {alert.prediction_30m:.1f}\n"
 
