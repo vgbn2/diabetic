@@ -68,6 +68,7 @@ mempalace.yaml
 data/raw/*
 data/processed/*
 data/exports/
+data/forecasts/
 models/*.pkl
 models/*.pt
 models/*.h5
