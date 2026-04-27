@@ -44,8 +44,15 @@ class TelegramNotifier:
             f"{alert.message}\n\n"
             f"Current: {alert.glucose_value:.1f}\n"
         )
-        if alert.prediction_30m:
-            text += f"Predicted (30m): {alert.prediction_30m:.1f}"
+        if alert.prediction_15m:
+            text += f"📊 <b>Horizons (Predicted)</b>\n"
+            text += f"├ 15m: {alert.prediction_15m:.1f} mmol/L\n"
+            text += f"├ 30m: {alert.prediction_30m:.1f} mmol/L\n"
+            text += f"└ 60m: {alert.prediction_60m:.1f} mmol/L\n\n"
+            if alert.confidence_index is not None:
+                text += f"📈 <b>Confidence:</b> {alert.confidence_index*100:.0f}%\n"
+        elif alert.prediction_30m:
+            text += f"Predicted (30m): {alert.prediction_30m:.1f}\n"
 
         try:
             await self.bot.send_message(

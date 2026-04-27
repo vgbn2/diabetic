@@ -19,6 +19,10 @@ class Alert(BaseModel):
     message: str
     glucose_value: float
     prediction_30m: Optional[float] = None
+    prediction_15m: Optional[float] = None
+    prediction_60m: Optional[float] = None
+    confidence_index: Optional[float] = None
+    velocity_score: Optional[float] = None
 
 class DecisionMatrix:
     """
@@ -61,9 +65,13 @@ class DecisionMatrix:
                 timestamp=datetime.now(timezone.utc),
                 type="WARNING_HYPO",
                 severity=AlertSeverity.HIGH,
-                message=f"{self.config.UI_SETTINGS['HIGH']}: Predicted to hit {prediction_30m:.1f} mmol/L in 30 mins. (Vel: {v:.1f}) | Context: {'ACTIVE' if is_active else 'REST'}",
+                message=f"{self.config.UI_SETTINGS['HIGH']}: Predicted to hit {prediction_30m:.1f} mmol/L. | Context: {'ACTIVE' if is_active else 'REST'} | Confidence: {current.confidence_index*100:.0f}%",
                 glucose_value=g,
-                prediction_30m=prediction_30m
+                prediction_30m=prediction_30m,
+                prediction_15m=current.predict_15m,
+                prediction_60m=current.predict_60m,
+                confidence_index=current.confidence_index,
+                velocity_score=current.velocity_score
             )
 
         # 2b. STRESS ANOMALY (Decoupling)
@@ -74,7 +82,11 @@ class DecisionMatrix:
                     severity=AlertSeverity.HIGH,
                     message=f"{self.config.UI_SETTINGS['STRESS_ANOMALY']}: Biological Decoupling! Rapid velocity ({v:+1f}) while HR is baseline ({hr:.0f}). Potential faint risk.",
                     glucose_value=g,
-                    prediction_30m=prediction_30m
+                    prediction_30m=prediction_30m,
+                    prediction_15m=current.predict_15m,
+                    prediction_60m=current.predict_60m,
+                    confidence_index=current.confidence_index,
+                    velocity_score=current.velocity_score
                 )
 
         # 3. FAINT RISK (Hyper + Rapid climb + Cardiac stress)
@@ -91,7 +103,11 @@ class DecisionMatrix:
                     severity=AlertSeverity.HIGH,
                     message=f"{self.config.UI_SETTINGS['FAINT_RISK']}: Rapid climb ({v:+1f} mmol/L/min) | Glucose: {g:.1f} | HR: {hr:.0f}bpm.",
                     glucose_value=g,
-                    prediction_30m=prediction_30m
+                    prediction_30m=prediction_30m,
+                    prediction_15m=current.predict_15m,
+                    prediction_60m=current.predict_60m,
+                    confidence_index=current.confidence_index,
+                    velocity_score=current.velocity_score
                 )
 
         # 4. CRITICAL HYPER (Current)
