@@ -1,44 +1,38 @@
 ## Current Position
-- **Phase**: Phase 1.1 — Multi-Tenant Data Factory
-- **Task**: v20 Audit Remediations (C1-C3)
-- **Status**: Active (resumed 2026-04-27 15:49)
+- **Phase**: 1.1 Remediation Wave (v20 Audit Finalization)
+- **Task**: Wave 3: Hygiene, Horizons & Security
+- **Status**: Completed / Paused at 2026-04-27 17:24
 
 ## Last Session Summary
-Successfully implemented and verified the **Data Factory Bootstrap (Plan 1.0)**:
-- **Async SQL Registry**: Replaced .env config with a multi-tenant SQLAlchemy persistence layer.
-- **Kinematic Forecasting**: Implemented `TacticalForecaster` for 15/30/60m glucose horizons with confidence scoring.
-- **Forensic Tools**: Developed a BSON-to-JSON transformer for clinical history porting.
-- **v20 Audit**: Verified all 11 findings; created high-fidelity remediation roadmap in `v20_remediation_todo.md`.
+Remediated the final wave of 'Critical' and 'Hygiene' findings from the v20 System Audit. Key focus was on professionalizing the IOB model, hardening multi-tenant security, and enforcing global logging standards.
 
 ## In-Progress Work
-- **Remediation Planning**: C1 (Data Loss), C2 (BasalOracle), and C3 (RLHF) are mapped.
-- Files modified: `diabetic/coordinator.py`, `diabetic/registry.py`, `diabetic/utils/data_factory.py`, `diabetic/storage/*`, `scripts/utils/transform_bson_history.py`.
-- Tests status: Passing (Verified SQL CRUD, Regression Math, and UI Formatting).
+- None. All Phase 1.1 tasks are committed and pushed.
+- Files modified: `coordinator.py`, `twin.py`, `handlers.py`, `decision_matrix.py`, `inference.py`, `train.py`, `visualizer.py`, and parsers.
+- Tests status: **PASSING**. Verified via simulation harness and pharmacological curve analysis.
 
 ## Blockers
-- None.
+- None currently. Infrastructure stability (MongoDB DNS) remains a background risk.
 
 ## Context Dump
 ### Decisions Made
-- **UI Exposure**: Decision to explicitly render all horizons in Telegram to address user requests for 15m/60m visibility.
-- **Feedback Engine**: Decided to build a dedicated `FeedbackEngine` logic instead of just logging button clicks to close the RLHF gap.
+- **IOB Model [L1]**: Switched from difference-of-exponentials (action rate) to sum-of-exponentials (remaining fraction) for DigitalTwin. This fixed the "too fast decay" bug found during verification.
+- **Security [G3]**: Bridged Telegram `authorized_only` decorator to `VesselRegistry` SQL table. Static `.env` is now a fallback, and DB is the primary source of truth for multi-tenancy.
+- **Temporal Windows [L4]**: Strict 24-hour horizon implemented for regime detection to prevent unbounded memory leaks and drift.
 
-### Key Takeaways (v20 Audit)
-- **Connectivity vs Correctness**: The dominant problem is not code quality (which is high) but wiring. `storage/` and `oracle.py` are complete but orphaned.
-- **Hygiene**: Pervasive `print()` usage (40+ instances) needs migration to structured logging for cloud stability.
-- **Standalone Design**: `ingestion/offline/` (PDF parsers) are disconnected by design; not a bug.
+### Approaches Tried
+- **Biexponential Action Model**: Failed verification (decayed to 0.04 within 60m).
+- **2-Compartment Decay**: Successfully verified (IOB lasts 4h with peak alignment).
 
 ### Current Hypothesis
-- The `BasalOracle` is permanently dead because it lacks an ingestion bridge; fixing this will solve the "long-term drift" accuracy problem.
-- Connectivity is the dominant problem; code quality is high, but components are currently orphaned.
+The engine is now "Logic Stable." The next point of failure is likely **Infrastructure Scarcity** (Heroku Eco hours or MongoDB connection pooling).
 
 ### Files of Interest
-- `diabetic/ml_engine/metabolic_dataset.py`: Source of the C1 silent-drop bug.
-- `diabetic/ml_engine/twin.py`: Physiological curves (L1/L2).
-- `v20_remediation_todo.md`: The remediation roadmap.
+- `diabetic/ml_engine/twin.py`: Source of biexponential pharmacokinetic model.
+- `diabetic/telegram_bot/handlers.py`: Security layer implementation.
+- `diabetic/coordinator.py`: Core orchestration and windowing logic.
 
 ## Next Steps
-1. **Remediate C1**: Fix the non-numeric column drop in `MetabolicDataset`.
-2. **Execute G1/G3 Wiring**: Connect `VesselRegistry` to `Coordinator` and authorized bot handlers.
-3. **Refactor L1**: Update IOB decay to pharmacological biexponential model.
-4. **Execute L5**: Migrate all `print()` statements to structured logging.
+1. **Phase 1.2 Preparation**: Hardening initialization (Fail-Fast) and investigating MetabolicPalace recovery.
+2. **Infrastructure Analysis**: Review MongoDB connection pool parameters to resolve DNS timeouts.
+3. **Load Testing**: Simulating high-latency telemetry to ensure the alert loop doesn't block.

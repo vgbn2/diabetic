@@ -197,3 +197,29 @@ Session objective (Phase 1.0 Execution) complete. Moving to remediation phase.
 
 ### Handoff Notes
 Start with `C1` fix in `metabolic_dataset.py`. Use the `v20_remediation_todo.md` artifact as the roadmap for technical debt liquidation.
+
+---
+
+## Session: 2026-04-27 17:23
+
+### Objective
+Finalize Phase 1.1 Remediation Wave (v20 Audit) by liquidating technical debt and hardening architectural boundaries.
+
+### Accomplished
+- **Physiological Realism [L1]**: Implemented 2-compartment pharmacokinetic biexponential decay model for IOB.
+- **Identity & Security [G3]**: Bridged Telegram authorized_only decorator to VesselRegistry SQL database.
+- **Temporal Hygiene [L3/L4]**: Refactored all history lookbacks to strictly bounded 24-hour sampling-agnostic windows.
+- **Production Observability [L5]**: Performed global migration of print() statements to structured hierarchical logging (Bio-Quant.*).
+- **Learning Loops [C3]**: Integrated RLHF FeedbackEngine for net-score based alert dampening.
+
+### Verification
+- [x] L1: Confirmed strict monotonic decay in DigitalTwin (87% @ 10m, 48% @ 60m, 16% @ 180m).
+- [x] G3: Verified SQL registration-based authorization check.
+- [x] C3: Verified sensitivity dampening (1.4x trigger heightening) after 3+ Net False Alarms.
+- [x] L5: Verified hierarchical logging in console output via standard library logging handlers.
+
+### Paused Because
+Phase 1.1 Remediation Wave is complete and empirically validated. Ready to transition to Phase 1.2 Infrastructure Hardening.
+
+### Handoff Notes
+The system is 'Logic Stable'. The next priority is securing the database adapter (connection pooling for aiosqlite/aiopg) and investigating the MetabolicPalace semantic memory layer failure.
