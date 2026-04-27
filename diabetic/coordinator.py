@@ -26,6 +26,7 @@ from diabetic.ui.cli_hud import RealTimeHUD
 from diabetic.ui.visualizer import MetabolicVisualizer
 from diabetic.utils.stateless_push import StatelessPush
 from diabetic.utils.audit_logger import AuditLogger
+from diabetic.utils.data_factory import TacticalForecaster, compute_confidence_index
 try:
     from diabetic.ml_engine.metabolic_palace import MetabolicPalace
 except ImportError:
@@ -220,7 +221,21 @@ class Coordinator:
             snapshot.predict_30m = prediction_30m
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
 
-        # 5b. Context Classification
+        # 5b. Tactical Forecaster — 15/30/60m regression-based horizons
+        # Uses VesselRegistry traits if available; falls back to snapshot history (kinematic only).
+        raw_history: list[tuple[datetime, float]] = [
+            (s.glucose.timestamp, s.glucose.value)
+            for s in (self.snapshots + [snapshot])[-12:]  # last ~60 mins of data
+        ]
+        forecaster = TacticalForecaster()  # bio-traits can be injected once registry is wired to Coordinator
+        tactical = forecaster.compute(raw_history)
+        snapshot.predict_15m = tactical["p15m"]
+        # predict_30m already set by neural/kinematic above; tactical 30m available as secondary
+        snapshot.predict_60m = tactical["p60m"]
+        snapshot.velocity_score = tactical["velocity"]
+        snapshot.confidence_index = compute_confidence_index(raw_history)
+
+        # 5c. Context Classification
         snapshot.activity_label = classify_context(snapshot).value
 
         # 6. Alert Decision
