@@ -1,41 +1,44 @@
 ## Current Position
-- **Phase**: Phase 1.0 — Audit Purge [FINALIZED]
-- **Task**: System Infrastructure Hardening Complete
-- **Status**: Ready for Phase 1.1 (Multi-Tenant SQL Registry)
+- **Phase**: Phase 1.1 — Multi-Tenant Data Factory
+- **Task**: v20 Audit Remediations (C1-C3)
+- **Status**: Paused at 2026-04-27 11:51
 
 ## Last Session Summary
-Finalized the Bio-Quant Audit Purge and Infrastructure Hardening:
-- **Telegram Menu**: Registered `/start` and `/meal` commands directly with the Bot API for auto-complete.
-- **Workflow Hardening**: Updated `/pause` to include a mandatory `Deep Architecture Snapshot` to keep `ARCHITECTURE.md` stale-free.
-- **Skill Hardening**: Added the `Diagnostic Pulse` protocol to the `Context Health Monitor` to capture shadow dependencies during failures.
-- **TODO Management**: Initialized project-wide `TODO.md` with prioritized technical debt and Phase 1 roadmap items.
+Successfully implemented and verified the **Data Factory Bootstrap (Plan 1.0)**:
+- **Async SQL Registry**: Replaced .env config with a multi-tenant SQLAlchemy persistence layer.
+- **Kinematic Forecasting**: Implemented `TacticalForecaster` for 15/30/60m glucose horizons with confidence scoring.
+- **Forensic Tools**: Developed a BSON-to-JSON transformer for clinical history porting.
+- **v20 Audit**: Verified all 11 findings; created high-fidelity remediation roadmap in `v20_remediation_todo.md`.
 
 ## In-Progress Work
-- None (Phase 1.0 is closed).
-- Files modified: `TODO.md`, `diabetic/telegram_bot/handlers.py`, `.gsd/STATE.md`, `.gsd/JOURNAL.md`, `.agent/workflows/pause.md`, `.agent/skills/context-health-monitor/SKILL.md`.
-- Tests status: Passing (Verified bot menu and boot stability).
+- **Remediation Planning**: C1 (Data Loss), C2 (BasalOracle), and C3 (RLHF) are mapped.
+- Files modified: `diabetic/coordinator.py`, `diabetic/registry.py`, `diabetic/utils/data_factory.py`, `diabetic/storage/*`, `scripts/utils/transform_bson_history.py`.
+- Tests status: Passing (Verified SQL CRUD, Regression Math, and UI Formatting).
 
 ## Blockers
 - None.
 
 ## Context Dump
 ### Decisions Made
-- **Async Pattern**: Moved away from thread-blocking `__init__` to `async create()` factor, ensuring non-blocking startup for Cloud Run health checks.
-- **Fail-Fast Policy**: Retained strict validation on startup; if `.env` is malformed, the system crashes loudly with clear error messages.
-- **Encoding Stability**: Standardized on ASCII-wrapped bracket tags `[OK]` for console readiness on Windows.
+- **UI Exposure**: Decision to explicitly render all horizons in Telegram to address user requests for 15m/60m visibility.
+- **Feedback Engine**: Decided to build a dedicated `FeedbackEngine` logic instead of just logging button clicks to close the RLHF gap.
 
-### Approaches Tried
-- **Manual Retries**: (Replaced) by centralized exponential backoff in the ingestor client.
+### Key Takeaways (v20 Audit)
+- **Connectivity vs Correctness**: The dominant problem is not code quality (which is high) but wiring. `storage/` and `oracle.py` are complete but orphaned.
+- **Hygiene**: Pervasive `print()` usage (40+ instances) needs migration to structured logging for cloud stability.
+- **Standalone Design**: `ingestion/offline/` (PDF parsers) are disconnected by design; not a bug.
 
 ### Current Hypothesis
-- The system is now architecture-safe for the Multi-Tenant SQL migration.
+- The `BasalOracle` is permanently dead because it lacks an ingestion bridge; fixing this will solve the "long-term drift" accuracy problem.
+- Connectivity is the dominant problem; code quality is high, but components are currently orphaned.
 
 ### Files of Interest
-- `diabetic/main.py`: Loop orchestration.
-- `diabetic/coordinator.py`: Async lifecycle management.
-- `diabetic/utils/audit_logger.py`: High-concurrency SQLite WAL patterns.
+- `diabetic/ml_engine/metabolic_dataset.py`: Source of the C1 silent-drop bug.
+- `diabetic/ml_engine/twin.py`: Physiological curves (L1/L2).
+- `v20_remediation_todo.md`: The remediation roadmap.
 
 ## Next Steps
-1. **Initialize Phase 1.1**: Create `diabetic/storage/engine.py` for SQLAlchemy models.
-2. **Migrate Secrets**: Move `.env` credentials into the new `vessel_registry.db`.
-3. **Verify Multi-Tenancy**: Test the bot with two distinct Telegram IDs to ensure state isolation.
+1. **Remediate C1**: Fix the non-numeric column drop in `MetabolicDataset`.
+2. **Execute G1/G3 Wiring**: Connect `VesselRegistry` to `Coordinator` and authorized bot handlers.
+3. **Refactor L1**: Update IOB decay to pharmacological biexponential model.
+4. **Execute L5**: Migrate all `print()` statements to structured logging.
