@@ -1,3 +1,4 @@
+import logging
 import torch
 import numpy as np
 import random
@@ -20,17 +21,19 @@ import os
 from diabetic.ml_engine.convolutional_layer import DiabeticCNN, CNNConfig
 from diabetic.ml_engine.metabolic_dataset import MetabolicDataset
 
+logger = logging.getLogger("Bio-Quant.ML.Train")
+
 def train_metabolic_cnn(
     csv_path: str = "storage/data/processed/mar23-apr07.csv",
     epochs: int = 50,
     batch_size: int = 32,
     lr: float = 0.001
 ):
-    print(f"\n--- CLINICAL TRAINING INITIATED: {csv_path} ---")
+    logger.info(f"\n--- CLINICAL TRAINING INITIATED: {csv_path} ---")
     
     # 1. Device Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    logger.info(f"Device: {device}")
 
     # 2. Data Loading & Sequential Splitting (Wave 5 Protocol)
     dataset = MetabolicDataset(csv_path)
@@ -86,14 +89,14 @@ def train_metabolic_cnn(
         history["val_loss"].append(avg_val)
 
         if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_train:.6f} | Val Loss: {avg_val:.6f}")
+            logger.info(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_train:.6f} | Val Loss: {avg_val:.6f}")
 
     # 5. Save Weights
     weight_dir = Path("diabetic/ml_engine/weights")
     weight_dir.mkdir(parents=True, exist_ok=True)
     weight_path = weight_dir / "diabetic_cnn_v14.pth"
     torch.save(model.state_dict(), weight_path)
-    print(f"\nSUCCESS: Model Weights Saved to {weight_path}")
+    logger.info(f"\nSUCCESS: Model Weights Saved to {weight_path}")
 
     # 6. Plot Loss
     plt.figure(figsize=(10, 6))
@@ -107,7 +110,7 @@ def train_metabolic_cnn(
     
     plot_path = "storage/data/processed/plots/training_loss.png"
     plt.savefig(plot_path)
-    print(f"Convergence Plot Saved: {plot_path}")
+    logger.info(f"Convergence Plot Saved: {plot_path}")
 
     return model
 

@@ -108,14 +108,13 @@ class DigitalTwin:
         if minutes_ago >= mc.INSULIN_ACTION_WINDOW_MINS:
             return 0.0
 
-        # Biexponential parameters (calibrated for rapid-acting insulin, e.g. Novorapid/Humalog)
-        # tau1 = fast distribution phase, tau2 = slow elimination phase
-        tau1 = mc.INSULIN_PEAK_TAU_RAPID * 0.7   # ~42 min default (fast compartment)
-        tau2 = mc.INSULIN_PEAK_TAU_RAPID * 2.5   # ~150 min default (slow compartment)
-        A = 1.0 / (1.0 - tau1 / tau2)            # normalisation: f(0) = A - B = 1.0
-        B = A - 1.0
-
-        raw = A * np.exp(-minutes_ago / tau1) - B * np.exp(-minutes_ago / tau2)
+        # [L1] 2-compartment pharmacokinetic decay model (Sum of Exponentials)
+        # Calibrated for Novorapid/Humalog (~4h duration)
+        tau1 = mc.INSULIN_PEAK_TAU_RAPID * 0.8  # fast redistribution (~44 min)
+        tau2 = mc.INSULIN_ACTION_WINDOW_MINS / 1.8 # slow elimination (~133 min)
+        w = 0.4 # redistribution weight
+        
+        raw = w * np.exp(-minutes_ago / tau1) + (1 - w) * np.exp(-minutes_ago / tau2)
         return float(np.clip(raw, 0.0, 1.0))
 
     def get_environmental_multiplier(self, env: Optional[MetabolicSnapshot]) -> float:
@@ -343,9 +342,21 @@ class DigitalTwin:
     def detect_regime(self, history: List[MetabolicSnapshot]) -> str:
         if len(history) < mc.REGIME_MIN_SNAPSHOTS:
             return "NORMAL"
+        
         recent_samples = int(360 / mc.SAMPLING_INTERVAL_MINS)
         recent_avg = np.mean([s.filtered_value for s in history[-recent_samples:]])
-        long_avg = np.mean([s.filtered_value for s in history])
+        
+        # [L4] Dynamic 24-hour horizon instead of unbounded full-history
+        latest_ts = history[-1].glucose.timestamp
+        horizon_24h = latest_ts - timedelta(hours=24)
+        
+        # Filter for the last 24 hours
+        history_24h = [s.filtered_value for s in history if s.glucose.timestamp >= horizon_24h]
+        if not history_24h:
+            return "NORMAL"
+            
+        long_avg = np.mean(history_24h)
+        
         if recent_avg > long_avg * 1.15:
             self.regime_multiplier = mc.REGIME_SENSITIVITY_MULT
             return "HIGH_RESISTANCE"

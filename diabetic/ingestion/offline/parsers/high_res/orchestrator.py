@@ -10,6 +10,7 @@ Output: list of record dicts → DataFrame → CSV
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -81,6 +82,7 @@ class HighResParser:
 
     def __init__(self, pdf_path: str | Path):
         self.pdf_path = Path(pdf_path)
+        self.logger = logging.getLogger("Bio-Quant.Ingestion.Offline.HighRes")
         self._records: List[dict] = []
         self._vision: Optional[VisionEngine] = None
         self._prev_date: Optional[datetime] = None  # Cross-page continuation
@@ -88,15 +90,15 @@ class HighResParser:
     def parse(self) -> "HighResParser":
         active_path = self._maybe_normalize(self.pdf_path)
         self._vision = VisionEngine(active_path)
-        print(f"[parser] Processing: {active_path.name}")
+        self.logger.info(f"[parser] Processing: {active_path.name}")
 
         self._prev_date = None
         with pdfplumber.open(active_path) as pdf:
             for page_idx, raw_page in enumerate(pdf.pages):
                 page = self._localize(raw_page)
-                print(f"  Page {page_idx + 1}/{len(pdf.pages)}", end="\r")
+                # Keep end='\r' for progress tracking if logger supports it, but standard log is better for prod
+                self.logger.info(f"  Page {page_idx + 1}/{len(pdf.pages)}")
                 self._process_page(page, page_idx, "normalized" in active_path.name.lower())
-        print()
         return self
 
     def save_csv(self, output_path: str | Path, date_range: tuple = None) -> Path:
@@ -109,7 +111,7 @@ class HighResParser:
         """
         output_path = Path(output_path)
         if not self._records:
-            print("[parser] No data extracted.")
+            self.logger.warning("[parser] No data extracted.")
             return output_path
 
         df = pd.DataFrame(self._records)
@@ -122,7 +124,7 @@ class HighResParser:
             df = df[(df["timestamp"] >= pd.Timestamp(start)) & (df["timestamp"] <= pd.Timestamp(end))]
             dropped = before - len(df)
             if dropped > 0:
-                print(f"[parser] Date filter: dropped {dropped} out-of-range records")
+                self.logger.info(f"[parser] Date filter: dropped {dropped} out-of-range records")
         
         # --- Global Clinical Binning & Smoothing ---
         # Ottai clinical reports have ~2.5min native resolution. 
@@ -183,13 +185,13 @@ class HighResParser:
         final_df = final_df.drop_duplicates(subset=["timestamp"], keep="first").sort_values("timestamp")
         
         final_df.to_csv(output_path, index=False)
-        print(f"[parser] Saved {len(final_df)} clinical rows (interpolated) -> {output_path}")
+        self.logger.info(f"[parser] Saved {len(final_df)} clinical rows (interpolated) -> {output_path}")
         return output_path
 
     def _maybe_normalize(self, path: Path) -> Path:
         with pdfplumber.open(path) as pdf:
             if len(pdf.pages) == 1 and pdf.pages[0].height > 2000:
-                print("[parser] Detected Share format — normalising...")
+                self.logger.info("[parser] Detected Share format — normalising...")
                 try:
                     from diabetic.ingestion.offline.normalize_ottai_share import normalize_share_report
                     norm = normalize_share_report(path)
@@ -249,7 +251,7 @@ class HighResParser:
         raw_headers = _find_date_headers(recon, spans, words, year, is_share_normalized)
         if not raw_headers: return
         
-        print(f"    Dates: {[h['date'].strftime('%m-%d') for h in raw_headers]}")
+        self.logger.info(f"    Dates: {[h['date'].strftime('%m-%d') for h in raw_headers]}")
 
         raw_headers.sort(key=lambda h: h["coords"]["top"])
         rows = _group_into_rows(raw_headers)
@@ -278,7 +280,7 @@ class HighResParser:
                     )
                     cont_records = cell.to_records()
                     if cont_records:
-                        print(f"    [continuation] +{len(cont_records)} records for {self._prev_date.strftime('%m-%d')}")
+                        self.logger.info(f"    [continuation] +{len(cont_records)} records for {self._prev_date.strftime('%m-%d')}")
                         self._records.extend(cont_records)
 
         for row_idx, row_headers in enumerate(rows):

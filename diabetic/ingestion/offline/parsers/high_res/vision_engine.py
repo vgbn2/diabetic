@@ -8,6 +8,7 @@ Responsibilities:
   - Only initialises the renderer on first use (lazy loading).
 """
 from __future__ import annotations
+import logging
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -16,6 +17,8 @@ from .models import EventMarker
 # DPI for rendering — 400 gives adequate icon resolution with 2x less RAM
 _RENDER_DPI = 400
 _SCALE = _RENDER_DPI / 72.0   # pixels per PDF point
+
+logger = logging.getLogger("Bio-Quant.Ingestion.Offline.Vision")
 
 
 class VisionEngine:
@@ -84,7 +87,7 @@ class VisionEngine:
             return clean_mask
             
         except Exception as exc:
-            print(f"[vision_engine] Mask generation error on page {page_idx}: {exc}")
+            logger.error(f"[vision_engine] Mask generation error on page {page_idx}: {exc}")
             return None
 
     def extract_events(
@@ -129,6 +132,6 @@ class VisionEngine:
                     new_markers.append(EventMarker(type=event_type, x=pt_x, y=pt_y))
 
         except Exception as exc:
-            print(f"[vision_engine] Warning on page {page_idx}: {exc}")
+            logger.warning(f"[vision_engine] Warning on page {page_idx}: {exc}")
 
         return new_markers

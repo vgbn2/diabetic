@@ -1,9 +1,12 @@
 import numpy as np
+import logging
 from datetime import datetime, timezone
 from scipy.optimize import curve_fit
 from typing import List, Optional
 from diabetic.registry import MetabolicSnapshot
 from diabetic import medical_constants as mc
+
+logger = logging.getLogger("Bio-Quant.ML.Oracle")
 
 class BasalOracle:
     """
@@ -66,4 +69,4 @@ class BasalOracle:
 
 if __name__ == "__main__":
     oracle = BasalOracle()
-    print("BasalOracle logic initialized.")
+    logger.info("BasalOracle logic initialized.")

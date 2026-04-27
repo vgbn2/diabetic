@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from diabetic.registry import MetabolicSnapshot
 import torch
@@ -13,6 +14,8 @@ from diabetic.utils.temporal import temporal_engine
 from diabetic.utils.schedule import schedule_manager
 from diabetic.registry import GlucoseReading
 from diabetic.utils.scaling_engine import scaling_engine
+
+logger = logging.getLogger("Bio-Quant.ML.Inference")
 class MetabolicInferenceRunner:
     """
     Production-ready bridge to feed live data into the 5-layer CNN engine.
@@ -30,11 +33,11 @@ class MetabolicInferenceRunner:
         if weight_path.exists():
             try:
                 self.model.load_state_dict(torch.load(weight_path, map_location=torch.device('cpu'), weights_only=True))
-                print(f"Personalized CNN Multi-Task v14 Weights Loaded: {weight_path}")
+                logger.info(f"Personalized CNN Multi-Task v14 Weights Loaded: {weight_path}")
             except Exception as e:
-                print(f"Warning: Failed to load multi-task weights: {e}. Running in Cold Mode.")
+                logger.warning(f"Warning: Failed to load multi-task weights: {e}. Running in Cold Mode.")
         else:
-            print(f"Warning: No weights found at {weight_path}. Running in Cold Mode.")
+            logger.warning(f"Warning: No weights found at {weight_path}. Running in Cold Mode.")
             
         self.model.eval() # Inference mode
 
@@ -225,7 +228,7 @@ class MetabolicInferenceRunner:
         Main entry point: Read live file -> Build tensors -> Forward Pass.
         """
         if not Path(csv_path).exists():
-            print(f"Error: Live data not found at {csv_path}")
+            logger.error(f"Error: Live data not found at {csv_path}")
             return None
 
         # Load latest data
@@ -236,7 +239,7 @@ class MetabolicInferenceRunner:
         temp_x = self._prepare_temporal_tensor(df)
         static_y = self._assemble_static_vector(now)
         
-        print(f"Feeding data into CNN (Temporal: {temp_x.shape}, Static: {static_y.shape})...")
+        logger.info(f"Feeding data into CNN (Temporal: {temp_x.shape}, Static: {static_y.shape})...")
         
         with torch.inference_mode():
             output = self.model(temp_x, static_y)[0]
@@ -254,17 +257,19 @@ if __name__ == "__main__":
     export_dir = Path("data/exports")
     csv_files = list(export_dir.glob("*.csv"))
     if not csv_files:
-        print("No live data found to feed into CNN.")
+        logger.info("No live data found to feed into CNN.")
     else:
         # Sort by mtime to get the latest
         latest_csv = max(csv_files, key=lambda p: p.stat().st_mtime)
-        print(f"Targeting: {latest_csv.name}")
+        logger.info(f"Targeting: {latest_csv.name}")
         
         runner = MetabolicInferenceRunner()
         result = runner.run_live_inference(str(latest_csv))
         
-        print("\n--- CNN INFERENCE RESULT ---")
-        print(f"Predicted Glucose: {result['glucose']:.2f} mmol/L")
-        print(f"Predicted Heart Rate: {result['heart_rate']:.1f} BPM")
-        print("Status: Success (Multi-Task activation verified)")
-        print("Note: Running with initialized weights (Cold Mode)")
+        if result:
+            logger.info("\n--- CNN INFERENCE RESULT ---")
+            logger.info(f"Predicted Glucose: {result['glucose']:.2f} mmol/L")
+            logger.info(f"Predicted Heart Rate: {result['heart_rate']:.1f} BPM")
+            logger.info("Status: Success (Multi-Task activation verified)")
+            logger.info("Note: Running with initialized weights (Cold Mode)")
+

@@ -236,9 +236,11 @@ class Coordinator:
 
         # 5b. Tactical Forecaster — 15/30/60m regression-based horizons
         # [G1] VesselRegistry is now live; traits are available via self.vessel_registry
+        # Dynamic 60-minute lookback calculation
+        points_1h = int(60 / config.SAMPLING_INTERVAL_MINS)
         raw_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
-            for s in (self.snapshots + [snapshot])[-12:]  # last ~60 mins of data
+            for s in (self.snapshots + [snapshot])[-points_1h:]  # Exactly 60 mins of data
         ]
         forecaster = TacticalForecaster()
         tactical = forecaster.compute(raw_history)

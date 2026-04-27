@@ -54,6 +54,26 @@ This document serves as the granular engineering blueprint for the transformatio
 
 ---
 
+## 🟠 PHASE 1.1: THE REMEDIATION WAVE (v20 Audit)
+**Goal**: Liquidate 11 critical bugs and wiring gaps before vertical scaling.
+
+### Task 1.1.1: Foundations & Connectivity
+- [ ] **Fix C1**: Rectify silent data loss in training pipeline resampling.
+- [ ] **Wire G1**: Connect `VesselRegistry` traits to `Coordinator` assembly.
+- [ ] **Revive C2**: Integrate `BasalOracle` harmonic baseline into 4h trajectory.
+
+### Task 1.1.2: Physiological & Feedback Logic
+- [ ] **Refactor L1**: Deploy pharmacological biexponential IOB decay curve.
+- [ ] **Guard L2**: Implement race-condition protections for future-dated meals.
+- [ ] **Close C3**: Implement `FeedbackEngine` to make RLHF loop influence model weighting.
+
+### Task 1.1.3: Hygiene & Horizons
+- [ ] **Dynamic L3/L4**: Auto-scale history windows based on sampling frequency.
+- [ ] **Hygiene L5**: Global migration from raw `print()` to structured `Bio-Quant` logging.
+- [ ] **Auth G3**: Bridge Telegram authorization to the SQL `users` table.
+
+---
+
 ## 🟡 PHASE 2: THE COMMAND CENTER (TWA Platform)
 **Goal**: Transition from CLI to a premium, user-controlled interface.
 

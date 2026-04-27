@@ -79,5 +79,5 @@ artifacts/
 tmp/
 testsprite_tests/
 *.bak
-audit.db
+*.db
 entities.json

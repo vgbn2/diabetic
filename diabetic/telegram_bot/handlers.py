@@ -116,12 +116,25 @@ class TelegramApp:
             if config.CAREGIVER_ID:
                 authorized_ids.append(config.CAREGIVER_ID)
             
-            if user.id not in authorized_ids:
+            # [G3] SQL-Based Authorization Bridge
+            is_authorized = user.id in authorized_ids
+            
+            if not is_authorized and self.coordinator and hasattr(self.coordinator, 'vessel_registry'):
+                reg_user = await self.coordinator.vessel_registry.get_user(user.id)
+                if reg_user:
+                    is_authorized = True
+
+            if not is_authorized:
                 self.logger.warning(f"UNAUTHORIZED ACCESS ATTEMPT: User {user.id} ({user.username}) tried to call {func.__name__}")
+                denied_msg = (
+                    "⛔ <b>Access Denied</b>\n\n"
+                    "Your Vessel is not registered with this Metabolic Engine.\n"
+                    "Please contact the administrator or use the Bio-Quant TWA to pair your device."
+                )
                 if update.message:
-                    await update.message.reply_text("⛔ Access Denied. You are not authorized to control this Metabolic Engine.")
+                    await update.message.reply_text(denied_msg, parse_mode=ParseMode.HTML)
                 elif update.callback_query:
-                    await update.callback_query.answer("⛔ Access Denied.", show_alert=True)
+                    await update.callback_query.answer("⛔ Access Denied. Vessel not registered.", show_alert=True)
                 return
             return await func(self, update, context)
         return wrapper

@@ -1,4 +1,5 @@
-import asyncio 
+import asyncio
+import logging
 import matplotlib
 matplotlib.use('Agg') # Headless support (Task 8.3.1)
 import matplotlib.pyplot as plt
@@ -16,6 +17,8 @@ from diabetic.medical_constants import (
     LOW_SIDE_THRESHOLD
 )
 from diabetic.registry import MetabolicSnapshot
+
+logger = logging.getLogger("Bio-Quant.UI.Visualizer")
 
 class MetabolicVisualizer:
     """
@@ -175,4 +178,4 @@ if __name__ == "__main__":
     hist = [8.0, 8.2, 8.5, 8.7, 9.0, 9.2, 9.5, 9.7, 10.0, 10.2, 10.5, 10.7]
     pred = np.linspace(10.7, 15.0, 49) 
     viz.plot_forecast(hist, pred, "Test Meal")
-    print("Test chart generated.")
+    logger.info("Test chart generated.")
