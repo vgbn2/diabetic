@@ -27,6 +27,9 @@ from diabetic.ui.visualizer import MetabolicVisualizer
 from diabetic.utils.stateless_push import StatelessPush
 from diabetic.utils.audit_logger import AuditLogger
 from diabetic.utils.data_factory import TacticalForecaster, compute_confidence_index
+from diabetic.storage.engine import init_db, close_db as close_storage_db
+from diabetic.storage.vessel_registry import VesselRegistry
+from diabetic.ml_engine.oracle import BasalOracle
 try:
     from diabetic.ml_engine.metabolic_palace import MetabolicPalace
 except ImportError:
@@ -82,6 +85,16 @@ class Coordinator:
         except Exception as e:
             self.logger.warning(f"MetabolicPalace initialization failed: {e}. Semantic memory disabled.")
             self.palace = None
+
+        # [G1] Wire VesselRegistry — multi-tenant bio-trait persistence
+        self.vessel_registry = VesselRegistry()
+        await init_db()  # idempotent: creates tables if not present
+        await self.vessel_registry.migrate_from_env()  # one-time .env -> SQL migration
+        self.logger.info("[G1] VesselRegistry initialized and traits loaded for user.")
+
+        # [C2] Revive BasalOracle — harmonic circadian rhythm predictor
+        self.oracle = BasalOracle(history_days=3)
+        self.logger.info("[C2] BasalOracle instantiated. Will fit after 24h of data accumulation.")
 
         self.snapshots: List[MetabolicSnapshot] = []
         self.regime_step_count = 0  # FIX C1: Persistent counter independent of buffer length
@@ -222,18 +235,26 @@ class Coordinator:
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
 
         # 5b. Tactical Forecaster — 15/30/60m regression-based horizons
-        # Uses VesselRegistry traits if available; falls back to snapshot history (kinematic only).
+        # [G1] VesselRegistry is now live; traits are available via self.vessel_registry
         raw_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
             for s in (self.snapshots + [snapshot])[-12:]  # last ~60 mins of data
         ]
-        forecaster = TacticalForecaster()  # bio-traits can be injected once registry is wired to Coordinator
+        forecaster = TacticalForecaster()
         tactical = forecaster.compute(raw_history)
         snapshot.predict_15m = tactical["p15m"]
         # predict_30m already set by neural/kinematic above; tactical 30m available as secondary
         snapshot.predict_60m = tactical["p60m"]
         snapshot.velocity_score = tactical["velocity"]
         snapshot.confidence_index = compute_confidence_index(raw_history)
+
+        # [C2] Log oracle's expected basal for observability
+        if self.oracle.params is not None:
+            expected_basal = self.oracle.get_expected_basal(
+                target_time=datetime.now(timezone.utc),
+                reference_start=self.snapshots[0].glucose.timestamp if self.snapshots else datetime.now(timezone.utc)
+            )
+            self.logger.debug(f"[Oracle] Expected basal at this time: {expected_basal:.2f} mmol/L")
 
         # 5c. Context Classification
         snapshot.activity_label = classify_context(snapshot).value
@@ -378,6 +399,26 @@ class Coordinator:
             # Ensure we don't double-trigger if maintenance is extremely fast
             await asyncio.sleep(60)
 
+    async def _refit_oracle_loop(self):
+        """[C2] Fits the BasalOracle every 24h on accumulated snapshot history."""
+        self.logger.info("[C2] BasalOracle re-fit loop started. First fit in 24h.")
+        while self.is_running:
+            await asyncio.sleep(24 * 3600)  # 24 hours
+            if len(self.snapshots) >= 2:
+                try:
+                    self.oracle.fit(self.snapshots)
+                    if self.oracle.params is not None:
+                        self.logger.info(
+                            "[C2] BasalOracle fit successful. Params: A=%.2f, phi=%.2f, C=%.2f",
+                            *self.oracle.params
+                        )
+                    else:
+                        self.logger.warning("[C2] BasalOracle fit ran but insufficient fasting data. Retaining default.")
+                except Exception as e:
+                    self.logger.error("[C2] BasalOracle fit failed: %s", e)
+            else:
+                self.logger.debug("[C2] BasalOracle re-fit skipped: not enough snapshots yet (%d).", len(self.snapshots))
+
 # =============================================================================
 # 🔄 [LIVE MONITORING LOOP]
 # =Focus: Real-Time Polling, Backfill Management, and HUD Orchestration
@@ -402,6 +443,11 @@ class Coordinator:
         task_maint = asyncio.create_task(self._maintenance_loop())
         self.background_tasks.add(task_maint)
         task_maint.add_done_callback(self.background_tasks.discard)
+
+        # [C2] BasalOracle 24-hour re-fit loop
+        task_oracle = asyncio.create_task(self._refit_oracle_loop())
+        self.background_tasks.add(task_oracle)
+        task_oracle.add_done_callback(self.background_tasks.discard)
 
         if self.bot_app:
             self.logger.info("Initializing Telegram Bot callback loop...")
