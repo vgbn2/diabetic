@@ -50,7 +50,7 @@ class TelegramNotifier:
             text += f"├ 30m: {alert.prediction_30m:.1f} mmol/L\n"
             text += f"└ 60m: {alert.prediction_60m:.1f} mmol/L\n\n"
             if alert.confidence_index is not None:
-                text += f"📈 <b>Confidence:</b> {alert.confidence_index*100:.0f}%\n"#confidence score for each and every time horizon?
+                text += f"📈 <b>Signal quality:</b> {alert.confidence_index*100:.0f}%\n"
         elif alert.prediction_30m:
             text += f"Predicted (30m): {alert.prediction_30m:.1f}\n"
 
@@ -95,7 +95,8 @@ class TelegramApp:
         async def post_init(application):
             commands = [
                 BotCommand("start", "Boot the Metabolic Engine HUD"),
-                BotCommand("meal", "Log carbs [desc] [grams] (e.g. /meal rice 60)")
+                BotCommand("meal", "Log carbs [desc] [grams] (e.g. /meal rice 60)"),
+                BotCommand("status", "Get current metabolic engine status")
             ]
             await application.bot.set_my_commands(commands)
             self.logger.info("Telegram command menu registered successfully.")
@@ -105,6 +106,7 @@ class TelegramApp:
     def _setup_handlers(self):
         self.app.add_handler(CommandHandler("start", self._start_cmd))
         self.app.add_handler(CommandHandler("meal", self._meal_cmd))
+        self.app.add_handler(CommandHandler("status", self._status_cmd))
         self.app.add_handler(CallbackQueryHandler(self._handle_button))
 
     def authorized_only(func):
@@ -144,6 +146,29 @@ class TelegramApp:
         await update.message.reply_text("Bio-Quant Predictor Online. Monitoring signals...")
 
     @authorized_only
+    async def _status_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for /status"""
+        if not self.coordinator:
+            await update.message.reply_text("Engine not connected.")
+            return
+
+        snapshot = self.coordinator.snapshots[-1] if self.coordinator.snapshots else None
+        if not snapshot:
+            await update.message.reply_text("No readings captured yet.")
+            return
+
+        status_text = (
+            f"📊 <b>Metabolic Status</b>\n"
+            f"------------------\n"
+            f"Current: {snapshot.filtered_value:.1f} mmol/L\n"
+            f"Velocity: {snapshot.velocity:+1f} mmol/L/min\n"
+            f"Signal Quality: {snapshot.confidence_index*100:.0f}%\n"
+            f"Active Carbs: {snapshot.active_carbs:.1f}g\n"
+            f"Active Insulin: {snapshot.active_insulin:.2f}U\n"
+        )
+        await update.message.reply_text(status_text, parse_mode=ParseMode.HTML)
+
+    @authorized_only
     async def _meal_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler for /meal [desc] [grams]"""
         if not context.args or len(context.args) < 1:
@@ -165,10 +190,22 @@ class TelegramApp:
             fast_keywords = ["honey", "sugar", "juice", "liquid", "soda", "gel"]
             gi_type = "LIQUID" if any(k in desc for k in fast_keywords) else "STARCH"
 
-            await update.message.reply_text(f"Logged {grams}g of {desc} ({gi_type} profile). Generating Digital Twin forecast...")
+            await update.message.reply_text(f"Logged {grams}g of {desc} ({gi_type} profile). Syncing with Nightscout...")
 
             if self.coordinator:
+                # 1. Local update for immediate twin forecast
                 await self.coordinator.handle_meal_input(desc, grams, gi_type)
+                # 2. Nightscout sync
+                if hasattr(self.coordinator.client, 'post_treatment'):
+                    success = await self.coordinator.client.post_treatment(
+                        event_type="Meal Bolus",
+                        notes=f"Bio-Quant Logged: {desc}",
+                        carbs=grams
+                    )
+                    if success:
+                        await update.message.reply_text("✅ Nightscout sync complete.")
+                    else:
+                        await update.message.reply_text("⚠️ Nightscout sync failed. Local only.")
 
         except ValueError:
             await update.message.reply_text("Please provide grams as a number at the end.")

@@ -1,6 +1,7 @@
 import httpx
 import hashlib
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from diabetic.registry import GlucoseReading, InsulinDose, MealEvent
@@ -28,6 +29,7 @@ class NightscoutClient:
         
         # Wave 3 Hardening: Persistent AsyncClient to prevent connection exhaustion
         self.client = httpx.AsyncClient(timeout=15.0)
+        self.logger = logging.getLogger("Bio-Quant.Ingestion.Nightscout")
 
     async def close(self):
         """Closes the underlying HTTP client."""
@@ -92,7 +94,7 @@ class NightscoutClient:
             except Exception as e:
                 if attempt == 2:
                     # Task 8.2.1: Non-fatal, live polling will take over.
-                    print(f"Backfill fetch failed after 3 attempts: {e.__class__.__name__}")
+                    self.logger.error(f"Backfill fetch failed after 3 attempts: {e.__class__.__name__}")
                     return []
                 await asyncio.sleep(2 ** attempt)
 
@@ -135,8 +137,8 @@ class NightscoutClient:
                 ))
         return readings
 
-    async def fetch_recent_treatments(self, count: int = 10) -> Tuple[Optional[InsulinDose], Optional[MealEvent]]:
-        """Fetches the latest insulin and carb events from Nightscout."""
+    async def fetch_recent_treatments(self, count: int = 20) -> Tuple[List[InsulinDose], List[MealEvent]]:
+        """Fetches all insulin and carb events from Nightscout within the 4-hour window."""
         endpoint = f"{self.url}/api/v1/treatments.json"
         params = {"count": count, **self._get_auth_params()}
         headers = self._get_auth_headers()
@@ -147,11 +149,10 @@ class NightscoutClient:
             treatments = response.json()
             now = datetime.now(timezone.utc)
             
-            latest_insulin: Optional[InsulinDose] = None
-            latest_meal: Optional[MealEvent] = None
+            insulin_list: List[InsulinDose] = []
+            meal_list: List[MealEvent] = []
             
             for t in treatments:
-                # Parse timestamp (created_at is standard for treatments)
                 if 'created_at' not in t:
                     continue
                 
@@ -165,50 +166,69 @@ class NightscoutClient:
                     continue
 
                 # Parse Insulin
-                if 'insulin' in t and not latest_insulin:
+                if 'insulin' in t:
                     ev_type = t.get('eventType', 'correction').lower()
-                    # Map Nightscout types to Twin types (RAPID/LONG)
-                    # Rule: Most Nightscout events are rapid (Bolus, correction).
-                    # Basal/Long tags are long-acting.
                     insulin_type = "RAPID"
                     if any(x in ev_type for x in ["long", "basal", "levermir", "lantus", "tresiba"]):
                         insulin_type = "LONG"
 
-                    latest_insulin = InsulinDose(
+                    insulin_list.append(InsulinDose(
                         timestamp=ts,
                         units=float(t['insulin']),
                         type=insulin_type
-                    )
+                    ))
                 
                 # Parse Carbs
-                if 'carbs' in t and not latest_meal:
-                    latest_meal = MealEvent(
+                if 'carbs' in t:
+                    meal_list.append(MealEvent(
                         timestamp=ts,
                         carbs=float(t['carbs'])
-                    )
+                    ))
                     
-                if latest_insulin and latest_meal:
-                    break
-                    
-            return latest_insulin, latest_meal
+            return insulin_list, meal_list
                 
         except Exception:
-            # Treatments are non-critical for the core smoothed loop
-            return None, None
+            return [], []
+
+    async def post_treatment(self, event_type: str, notes: str, carbs: Optional[float] = None, insulin: Optional[float] = None):
+        """Writes a treatment event back to Nightscout."""
+        endpoint = f"{self.url}/api/v1/treatments.json"
+        headers = self._get_auth_headers()
+        
+        payload = {
+            "enteredBy": "Bio-Quant Metabolic Engine",
+            "eventType": event_type,
+            "notes": notes,
+            "created_at": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        }
+        if carbs:
+            payload["carbs"] = carbs
+        if insulin:
+            payload["insulin"] = insulin
+            
+        try:
+            response = await self.client.post(endpoint, json=payload, headers=headers)
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            # Non-fatal
+            return False
 
 if __name__ == "__main__":
     import asyncio
+    logger = logging.getLogger("Bio-Quant.Test.Nightscout")
     async def test():
         client = NightscoutClient()
         try:
-            print("Fetching glucose...")
+            logger.info("Fetching glucose...")
             data = await client.fetch_recent_glucose(5)
-            for d in data: print(f"  {d}")
-            print("\nFetching treatments...")
+            for d in data: logger.info(f"  {d}")
+            logger.info("\nFetching treatments...")
             ins, meal = await client.fetch_recent_treatments()
-            print(f"  Latest Insulin: {ins}")
-            print(f"  Latest Meal: {meal}")
+            logger.info(f"  Treatments: {len(ins)} doses, {len(meal)} meals")
         except Exception as e:
-            print(f"Test failed: {e.__class__.__name__}")
+            logger.error(f"Test failed: {e}")
+        finally:
+            await client.close()
             
     asyncio.run(test())

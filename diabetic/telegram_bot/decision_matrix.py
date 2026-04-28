@@ -4,6 +4,7 @@ from enum import Enum
 from pydantic import BaseModel
 from diabetic.registry import MetabolicSnapshot, GlucoseReading
 from diabetic import medical_constants
+from diabetic.config import config
 
 class AlertSeverity(Enum):
     INFO = "INFO"
@@ -58,7 +59,6 @@ class DecisionMatrix:
     The 'Safety Shield'. Evaluates metabolic state against medical thresholds.
     """
     def __init__(self):
-        from diabetic.config import config
         self.config = config
 
     async def evaluate(self, current: MetabolicSnapshot, prediction_30m: float, audit_logger=None) -> Optional[Alert]:
@@ -73,7 +73,7 @@ class DecisionMatrix:
             hr = self.config.PATIENT_BPM_BASELINE
             
         hrv = current.hrv or self.config.PATIENT_HRV_BASELINE
-        is_active = hr > 115 # Exercise Context Buffer
+        is_active = hr > (self.config.PATIENT_BPM_BASELINE * 1.4) # Exercise Context Buffer
 
         # 1. CRITICAL HYPO (Current) - Never suppressed
         if g < medical_constants.HYPO_CRITICAL:
@@ -89,6 +89,10 @@ class DecisionMatrix:
         if prediction_30m < medical_constants.HYPO_WARNING and v < 0:
             if is_active and g > 4.5:
                 return None # Exercise-induced drop; suppressed to avoid false alarm
+            
+            dampener = await FeedbackEngine.get_dampener(audit_logger, "WARNING_HYPO")
+            if prediction_30m > (medical_constants.HYPO_WARNING / dampener):
+                return None
                 
             return Alert(
                 timestamp=datetime.now(timezone.utc),
@@ -130,7 +134,8 @@ class DecisionMatrix:
 
         # 3. FAINT RISK (Hyper + Rapid climb + Cardiac stress)
         if g > medical_constants.FAINT_GLUCOSE:
-            is_faint_risk = v > medical_constants.FAINT_VELOCITY_LIMIT_PER_MIN
+            dampener = await FeedbackEngine.get_dampener(audit_logger, "FAINT_RISK")
+            is_faint_risk = v > (medical_constants.FAINT_VELOCITY_LIMIT_PER_MIN * dampener)
             cardiac_stress = hr > 100 or hrv < 20
             now_hour = datetime.now(timezone.utc).hour
             is_dawn = 4 <= now_hour <= 8
@@ -151,6 +156,10 @@ class DecisionMatrix:
 
         # 4. CRITICAL HYPER (Current)
         if g > medical_constants.HYPER_CRITICAL:
+            dampener = await FeedbackEngine.get_dampener(audit_logger, "CRITICAL_HYPER")
+            if g < (medical_constants.HYPER_CRITICAL * dampener):
+                return None
+
             return Alert(
                 timestamp=datetime.now(timezone.utc),
                 type="CRITICAL_HYPER",

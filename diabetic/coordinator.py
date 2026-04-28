@@ -7,6 +7,7 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 from typing import List, Optional
+import numpy as np
 from diabetic.config import config
 from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent
 from diabetic import medical_constants
@@ -20,7 +21,7 @@ from diabetic.dsp.metabolic_math import MetabolicMath
 from diabetic.dsp.context_classifier import classify_context
 from diabetic.ml_engine.twin import DigitalTwin
 from diabetic.ml_engine.inference import MetabolicInferenceRunner
-from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert
+from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert, AlertSeverity
 from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
 from diabetic.ui.cli_hud import RealTimeHUD
 from diabetic.ui.visualizer import MetabolicVisualizer
@@ -263,12 +264,25 @@ class Coordinator:
 
         # 6. Alert Decision
         if not is_backfill:
-            alert = await self.alert_guard.evaluate(snapshot, prediction_30m, self.audit)
-            if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
-                await self._dispatch_alert(alert)
-                task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))
-                self.background_tasks.add(task)
-                task.add_done_callback(self.background_tasks.discard)
+            try:
+                alert = await self.alert_guard.evaluate(snapshot, prediction_30m, self.audit)
+                if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
+                    await self._dispatch_alert(alert)
+                    task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))
+                    self.background_tasks.add(task)
+                    task.add_done_callback(self.background_tasks.discard)
+            except Exception as e:
+                self.logger.error(f"Alert evaluation failed: {e}. Attempting fallback alert...")
+                # Fallback: if glucose is critically low, send emergency alert regardless of matrix failure
+                if reading.value < medical_constants.HYPO_CRITICAL:
+                    emergency_alert = Alert(
+                        timestamp=datetime.now(timezone.utc),
+                        type="EMERGENCY_FALLBACK",
+                        severity=AlertSeverity.EMERGENCY,
+                        message=f"CRITICAL: Glucose is {reading.value:.1f}. Alert engine experienced a failure but emergency detected.",
+                        glucose_value=reading.value
+                    )
+                    await self._dispatch_alert(emergency_alert)
 
         self.snapshots.append(snapshot)
 
@@ -499,7 +513,14 @@ class Coordinator:
                     readings = await self.client.fetch_recent_glucose(count=1)
                 
                 if readings:
-                    await self._process_reading(readings[0])
+                    reading = readings[0]
+                    # Wave 8 Hardening: Poll-level freshness check
+                    now = datetime.now(timezone.utc)
+                    r_ts = reading.timestamp.replace(tzinfo=timezone.utc) if reading.timestamp.tzinfo is None else reading.timestamp
+                    if (now - r_ts).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
+                        self.logger.warning(f"Poll returned stale data ({r_ts}). Waiting for fresh reading...")
+                    else:
+                        await self._process_reading(reading)
             except (ValueError, ConnectionError) as e:
                 # Only crash if both backends fail with fatal Auth errors
                 if ("URL" in str(e) or "token" in str(e).lower() or "Unauthorized" in str(e)) and self.mongo.entries is None:
@@ -526,10 +547,22 @@ class Coordinator:
         history_count = int(60 / config.SAMPLING_INTERVAL_MINS)
         history = self.snapshots[-history_count:]
         if history:
+            # [C2] Build basal drift array from Oracle for 4h projection
+            basal_drift = None
+            if self.oracle.params is not None:
+                dt = config.SAMPLING_INTERVAL_MINS
+                points = int(240 / dt) + 1
+                basal_drift = np.zeros(points)
+                ref_start = history[0].glucose.timestamp if history else datetime.now(timezone.utc)
+                for i in range(points):
+                    target_t = datetime.now(timezone.utc) + timedelta(minutes=i * dt)
+                    basal_drift[i] = self.oracle.get_expected_basal(target_t, ref_start)
+
             prediction_4h = self.twin.predict_4h_trajectory(
                 history, 
                 meals=[self.last_meal],
-                insulin_doses=[history[-1].last_insulin] if history and history[-1].last_insulin else None
+                insulin_doses=[history[-1].last_insulin] if history and history[-1].last_insulin else None,
+                basal_drift=basal_drift
             )
 
             # FIX L1: store peak now for use by auto_tune at t+230 min

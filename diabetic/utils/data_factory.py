@@ -52,8 +52,16 @@ class TacticalForecaster:
         bmi: Optional[float] = None,
     ) -> None:
         self.age = age
-        self.weight_kg = weight_kg
+        self.weight_kg = weight_kg or 70.0  # Default to 70kg if unknown
         self.bmi = bmi
+        
+        # [W1] Physiological Correction: compute ISF-based velocity dampener
+        # Rule: Heavier patients have higher metabolic inertia (lower ISF).
+        # ISF (mmol/L per unit) approx = 100 / (weight * 0.5)
+        self.isf = 100.0 / (self.weight_kg * 0.5)
+        # Normalize correction factor: baseline is 70kg (ISF ~2.85)
+        # correction > 1.0 for lighter (faster change), < 1.0 for heavier (slower change)
+        self.velocity_correction = 2.85 / self.isf 
 
     def compute(
         self,
@@ -97,6 +105,10 @@ class TacticalForecaster:
             poly1 = np.polyfit(x, y, 1)   # [c1, c0]
             v = float(poly1[0])            # slope (mmol/L per min)
             a = float(2 * poly2[0])        # 2nd derivative at t=0
+
+        # [W1] Apply velocity correction factor based on physiological ISF
+        v *= self.velocity_correction
+        a *= self.velocity_correction
 
         def project(delta_min: float) -> float:
             raw = g_now + v * delta_min + 0.5 * a * delta_min ** 2
