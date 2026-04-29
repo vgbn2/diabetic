@@ -172,7 +172,7 @@ class Coordinator:
             tr_task = self.client.fetch_recent_treatments(count=10)
             hr_task = self.hr_client.fetch_latest()
             we_task = self.weather_client.fetch_current(config.LATITUDE, config.LONGITUDE)
-            ms_task = self.vessel_registry.get_medical_state(config.TELEGRAM_CHAT_ID)
+            ms_task = self.vessel_registry.get_medical_state(config.USER_ID)
             results = await asyncio.gather(tr_task, hr_task, we_task, ms_task, return_exceptions=True)
 
             tr_res = results[0]
@@ -253,7 +253,14 @@ class Coordinator:
         else:
             # Wave 2 Hardening: Kinematic Fallback
             velocity, _ = MetabolicMath.extract_kinematics(list(self.snapshots) + [snapshot])
-            prediction_30m = snapshot.glucose.value + (velocity * 30.0)
+            
+            # [H1-P1] Apply BasalOracle correction to kinematic fallback
+            oracle_offset = 0.0
+            if self.oracle.params is not None:
+                oracle_offset = self.oracle.get_expected_basal(now + timedelta(minutes=30), now)
+                self.logger.info(f"ORACLE_BIAS: Applying {oracle_offset:+.2f} drift to kinematic forecast.")
+                
+            prediction_30m = snapshot.glucose.value + (velocity * 30.0) + oracle_offset
             snapshot.predict_30m = prediction_30m
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
 
@@ -339,8 +346,6 @@ class Coordinator:
                     self.logger.warning("No stored meal forecast peak — auto_tune skipped.")
                 
                 # Reset window
-                self.last_meal = None
-                self.meal_window_start = None
                 self.meal_tune_pending = False
                 self.pending_meal_forecast_peak = None
                 self.actual_meal_peak = 0.0
@@ -634,8 +639,6 @@ class Coordinator:
                 f"Peak: {prediction_4h.max():.1f} mmol/L at t={int(prediction_4h.argmax()*config.SAMPLING_INTERVAL_MINS)} min. "
                 "Forecast chart pushed to Telegram."
             )
-        # FIX: removed asyncio.wait() from here — it belongs only in stop(), not
-        # in an interactive command handler (was blocking up to 5s on every /meal).
 
     async def _deep_historical_sync(self, end_ts: datetime):
         """Background task to fetch and audit history prior to the blocking backfill window."""

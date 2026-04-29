@@ -30,8 +30,7 @@ class MetabolicVisualizer:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
         
-        # Apply Cyberpunk-Dark styling
-        plt.style.use('dark_background')
+        # Apply Cyberpunk-Dark styling (using Figure-level overrides instead of global plt.style)
         self.colors = {
             'glucose': '#00f2ff',      # Neon Cyan
             'prediction': '#ff0055',   # Neon Pink

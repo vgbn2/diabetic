@@ -170,7 +170,13 @@ class VesselRegistry:
         telegram_id = int(telegram_id_str)
 
         # Check if already migrated
-        existing = await self.get_user(telegram_id)
+        async with self._session() as session:
+            from sqlalchemy.orm import selectinload
+            result = await session.execute(
+                select(User).options(selectinload(User.bio_traits)).where(User.telegram_id == telegram_id)
+            )
+            existing = result.scalar_one_or_none()
+            
         if existing and existing.bio_traits:
             logger.debug("[Registry] User %s already in registry — skipping migration.", telegram_id)
             return

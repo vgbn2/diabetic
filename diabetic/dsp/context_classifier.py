@@ -20,7 +20,6 @@ from diabetic import medical_constants as mc
 
 class ActivityType(Enum):
     FOOD = "FOOD"
-    INSULIN="INSULIN"
     EXERCISE = "EXERCISE"
     STRESS_STUDYING = "STRESS_STUDYING"
     STRESS_ANOMALY = "STRESS_ANOMALY"  # Glucose/HR Decoupling
