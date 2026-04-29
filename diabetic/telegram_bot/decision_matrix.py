@@ -42,8 +42,8 @@ class FeedbackEngine:
         if not feedback:
             return 1.0
             
-        false_alarms = sum(1 for f in feedback if f.get("is_false_alarm"))
-        confirms = sum(1 for f in feedback if not f.get("is_false_alarm"))
+        false_alarms = sum(1 for f in feedback if f.get("is_false_alarm") is True)
+        confirms = sum(1 for f in feedback if f.get("is_confirmed") is True)
         
         net_false = false_alarms - confirms
         if net_false >= 3:
@@ -73,7 +73,7 @@ class DecisionMatrix:
             hr = self.config.PATIENT_BPM_BASELINE
             
         hrv = current.hrv or self.config.PATIENT_HRV_BASELINE
-        is_active = hr > (self.config.PATIENT_BPM_BASELINE * 1.4) # Exercise Context Buffer
+        is_active = hr > (self.config.PATIENT_BPM_BASELINE * 1.4) # Exercise Context Buffer why 1.4? hardcoded?
 
         # 1. CRITICAL HYPO (Current) - Never suppressed
         if g < medical_constants.HYPO_CRITICAL:

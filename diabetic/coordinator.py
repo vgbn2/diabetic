@@ -2,10 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 from typing import List, Optional
 import numpy as np
 from diabetic.config import config
@@ -228,17 +225,13 @@ class Coordinator:
             self.logger.info(f"NEURAL_BRAIN: Pred Glu={prediction_30m:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
         else:
             # Wave 2 Hardening: Kinematic Fallback
-            # Instead of a flat current value, we project using current velocity over 30m.
-            # prediction = current + (velocity * 30)
             velocity, _ = MetabolicMath.extract_kinematics(self.snapshots + [snapshot])
             prediction_30m = snapshot.glucose.value + (velocity * 30.0)
             snapshot.predict_30m = prediction_30m
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
 
         # 5b. Tactical Forecaster — 15/30/60m regression-based horizons
-        # [G1] VesselRegistry is now live; traits are available via self.vessel_registry
-        # Dynamic 60-minute lookback calculation
-        points_1h = int(60 / config.SAMPLING_INTERVAL_MINS)
+        points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
         raw_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
             for s in (self.snapshots + [snapshot])[-points_1h:]  # Exactly 60 mins of data
@@ -246,50 +239,47 @@ class Coordinator:
         forecaster = TacticalForecaster()
         tactical = forecaster.compute(raw_history)
         snapshot.predict_15m = tactical["p15m"]
-        # predict_30m already set by neural/kinematic above; tactical 30m available as secondary
         snapshot.predict_60m = tactical["p60m"]
         snapshot.velocity_score = tactical["velocity"]
         snapshot.confidence_index = compute_confidence_index(raw_history)
-
-        # [C2] Log oracle's expected basal for observability
-        if self.oracle.params is not None:
-            expected_basal = self.oracle.get_expected_basal(
-                target_time=datetime.now(timezone.utc),
-                reference_start=self.snapshots[0].glucose.timestamp if self.snapshots else datetime.now(timezone.utc)
-            )
-            self.logger.debug(f"[Oracle] Expected basal at this time: {expected_basal:.2f} mmol/L")
 
         # 5c. Context Classification
         snapshot.activity_label = classify_context(snapshot).value
 
         # 6. Alert Decision
-        if not is_backfill:
-            try:
-                alert = await self.alert_guard.evaluate(snapshot, prediction_30m, self.audit)
-                if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
-                    await self._dispatch_alert(alert)
-                    task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))
-                    self.background_tasks.add(task)
-                    task.add_done_callback(self.background_tasks.discard)
-            except Exception as e:
-                self.logger.error(f"Alert evaluation failed: {e}. Attempting fallback alert...")
-                # Fallback: if glucose is critically low, send emergency alert regardless of matrix failure
-                if reading.value < medical_constants.HYPO_CRITICAL:
-                    emergency_alert = Alert(
-                        timestamp=datetime.now(timezone.utc),
-                        type="EMERGENCY_FALLBACK",
-                        severity=AlertSeverity.EMERGENCY,
-                        message=f"CRITICAL: Glucose is {reading.value:.1f}. Alert engine experienced a failure but emergency detected.",
-                        glucose_value=reading.value
-                    )
-                    await self._dispatch_alert(emergency_alert)
+        # Strategy: Skip alerting during backfill/sync.
+        if is_backfill:
+            self.snapshots.append(snapshot)
+            if len(self.snapshots) > medical_constants.SNAPSHOT_CAP:
+                self.snapshots.pop(0)
+            return
+
+        try:
+            alert = await self.alert_guard.evaluate(snapshot, prediction_30m, self.audit)
+            if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
+                await self._dispatch_alert(alert)
+                task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
+        except Exception as e:
+            self.logger.error(f"Alert evaluation failed: {e}. Attempting fallback alert...")
+            if reading.value < medical_constants.HYPO_CRITICAL:
+                emergency_alert = Alert(
+                    timestamp=datetime.now(timezone.utc),
+                    type="EMERGENCY_FALLBACK",
+                    severity=AlertSeverity.EMERGENCY,
+                    message=f"CRITICAL: Glucose is {reading.value:.1f}. Alert engine failure fallback triggered.",
+                    glucose_value=reading.value
+                )
+                await self._dispatch_alert(emergency_alert)
+
 
         self.snapshots.append(snapshot)
 
         # 6b. Semantic Memory (Layer 4/5)
         # Trapping anomalies: e.g., high prediction, high value, or HR distress
         if not is_backfill:
-            if prediction_30m > 16.0 or reading.value > 16.0 or (snapshot.bpm and snapshot.bpm > 110):
+            if prediction_30m > 16.0 or reading.value > 16.0 or (snapshot.bpm and snapshot.bpm > 110):#hardcoded, get values from metabolic constatn
                 if self.palace is not None:
                     task = asyncio.create_task(asyncio.to_thread(
                         self.palace.remember_snapshot, snapshot.model_dump(), room="l4_anomaly_audit"
@@ -474,30 +464,47 @@ class Coordinator:
             task_bot = asyncio.create_task(self.bot_app.app.updater.start_polling())
             self.background_tasks.add(task_bot)
 
-        # 0. Stateful Backfill
+        # 0. Stateful Backfill (Hardened for Neural Warm-up)
+        # STAGE 1: Blocking Priority (Last 24 Hours)
+        now = datetime.now(timezone.utc)
+        blocking_cutoff = now - timedelta(hours=24)
         last_ts = await self.audit.get_last_reading_timestamp()
-        if last_ts:
-            # FIX: normalise to UTC-aware before comparisons AND before passing to fetch_since
-            if last_ts.tzinfo is None:
-                last_ts = last_ts.replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
-            gap_mins = (now - last_ts).total_seconds() / 60
-            if medical_constants.SAMPLING_INTERVAL_MINS < gap_mins < config.BACKFILL_MAX_HOURS * 60:
-                self.logger.info(f"Detected {gap_mins:.1f} min gap. Starting backfill...")
+        
+        # Normalise last_ts to UTC
+        if last_ts and last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=timezone.utc)
+
+        # Strategy: Fetch since (last_ts) OR (24 hours ago) whichever is EARLIER
+        fetch_since_ts = last_ts if last_ts and last_ts < blocking_cutoff else blocking_cutoff
+        
+        gap_mins = (now - fetch_since_ts).total_seconds() / 60
+        if gap_mins > medical_constants.SAMPLING_INTERVAL_MINS:
+            self.logger.info(f"Starting STAGE 1 backfill. Gap: {gap_mins:.1f} mins. Target: {fetch_since_ts.strftime('%H:%M:%S')} UTC")
+            
+            if self.mongo.entries is not None:
+                backfill_readings = await self.mongo.fetch_since(fetch_since_ts)
+            else:
+                backfill_readings = await self.client.fetch_since(fetch_since_ts)
+            
+            if backfill_readings:
+                self.logger.info(f"Filling {len(backfill_readings)} historical readings...")
+                for r in backfill_readings:
+                    await self._process_reading(r, is_backfill=True)
                 
-                # OPTIMIZATION: Prioritize MongoDB for deep historical backfills
-                if self.mongo.entries is not None:
-                    self.logger.info("Using MongoDB for high-fidelity backfill optimization...")
-                    backfill_readings = await self.mongo.fetch_since(last_ts)
+                if len(self.snapshots) < 30:
+                    self.logger.warning(f"⚠️ NEURAL_BRAIN STARVATION: Only {len(self.snapshots)}/30 snapshots available.")
                 else:
-                    self.logger.info("Using Nightscout REST API for backfill...")
-                    backfill_readings = await self.client.fetch_since(last_ts)
+                    self.logger.info(f"✅ NEURAL_BRAIN SATURATED: {len(self.snapshots)} snapshots loaded.")
                 
-                if backfill_readings:
-                    self.logger.info(f"Filling {len(backfill_readings)} missing readings...")
-                    for r in backfill_readings:
-                        await self._process_reading(r, is_backfill=True)
-                    self.logger.info("Backfill complete. Kalman state stabilized.")
+                self.logger.info("Stage 1 Backfill complete.")
+
+        # STAGE 2: Deep Historical Sync (Background)
+        # Launches after Stage 1 to populate the Audit Log with all-time history.
+        sync_task = asyncio.create_task(self._deep_historical_sync(fetch_since_ts))
+        self.background_tasks.add(sync_task)
+        sync_task.add_done_callback(self.background_tasks.discard)
+
+
 
         while self.is_running:
             try:
@@ -592,6 +599,50 @@ class Coordinator:
             )
         # FIX: removed asyncio.wait() from here — it belongs only in stop(), not
         # in an interactive command handler (was blocking up to 5s on every /meal).
+
+    async def _deep_historical_sync(self, end_ts: datetime):
+        """Background task to fetch and audit history prior to the blocking backfill window."""
+        self.logger.info(f"Background Sync: Starting deep historical fetch (Backwards from {end_ts.strftime('%Y-%m-%d')})")
+        
+        # We fetch in chunks of 3 days to avoid overwhelming the API
+        current_end = end_ts
+        chunk_days = 3
+        total_synced = 0
+        
+        while self.is_running:
+            start_ts = current_end - timedelta(days=chunk_days)
+            try:
+                if self.mongo.entries is not None:
+                    # fetch_since fetches everything > start_ts
+                    readings = await self.mongo.fetch_since(start_ts)
+                else:
+                    readings = await self.client.fetch_since(start_ts)
+
+                if not readings:
+                    self.logger.info(f"Background Sync Complete: Total {total_synced} historical readings audited.")
+                    break
+                
+                # We only care about readings BEFORE current_end
+                readings = [r for r in readings if r.timestamp < current_end]
+                if not readings:
+                    self.logger.info(f"Background Sync Complete: No older data found. Total {total_synced} audited.")
+                    break
+
+                for r in readings:
+                    # We log to audit without full metabolic processing (skip expensive CPU tasks)
+                    await self.audit.log_event("HISTORICAL_SYNC", r.model_dump())
+                    total_synced += 1
+                
+                current_end = min(r.timestamp for r in readings)
+                self.logger.info(f"Background Sync: Audited {len(readings)} readings. Moved cursor to {current_end.strftime('%Y-%m-%d')}")
+                
+                # Yield to live process
+                await asyncio.sleep(5)
+                
+            except Exception as e:
+                self.logger.error(f"Background Sync Failure: {e}. Retrying in 60s...")
+                await asyncio.sleep(60)
+
 
 # =============================================================================
 # 🛑 [TERMINATION]

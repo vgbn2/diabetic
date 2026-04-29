@@ -190,7 +190,9 @@ class AuditLogger:
         await self.log_event("USER_FEEDBACK", {
             "alert_type": alert_type,
             "action": action,
-            "is_false_alarm": action != "confirm"
+            "is_false_alarm": action == "false",
+            "is_confirmed": action == "confirm",
+            "is_neutral": action == "neutral"
         })
 
     async def get_recent_feedback(self, alert_type: str, hours: int = 24) -> List[dict]:

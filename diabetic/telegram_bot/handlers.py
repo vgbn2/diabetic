@@ -33,7 +33,8 @@ class TelegramNotifier:
         keyboard = [
             [
                 InlineKeyboardButton("✅ Confirmed", callback_data=f"confirm_{alert.type}"),
-                InlineKeyboardButton("❌ False Alarm", callback_data=f"false_{alert.type}")
+                InlineKeyboardButton("❌ False Alarm", callback_data=f"false_{alert.type}"),
+                InlineKeyboardButton("Neutral", callback_data=f"neutral_{alert.type}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -143,7 +144,7 @@ class TelegramApp:
 
     @authorized_only
     async def _start_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("Bio-Quant Predictor Online. Monitoring signals...")
+        await update.message.reply_text(" Predictor Online. Monitoring signals")
 
     @authorized_only
     async def _status_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,6 +233,8 @@ class TelegramApp:
 
         if action == "confirm":
             await query.edit_message_text(text=f"✅ Alert {alert_type} acknowledged. Stay safe.")
+        elif action == "neutral":
+            await query.edit_message_text(text=f"⚪ Alert {alert_type} received (Neutral). No sensitivity change.")
         else:
             await query.edit_message_text(text=f"⚠️ {alert_type} marked as False Alarm. Logic will be audited.")
 
