@@ -56,13 +56,13 @@ class MetabolicInferenceRunner:
             return True # Assume Outdoor
         return False # Assume Indoor
 
-    def _assemble_static_vector(self, now: datetime, env_data: Optional[dict] = None) -> torch.Tensor:
+    def _assemble_static_vector(self, now: datetime, env_data: Optional[dict] = None, is_sick: bool = False) -> torch.Tensor:
         """
         Maps the 15 bio-basal and environmental traits via the ScalingEngine.
         Includes exposure-aware damping for environmental forcing.
         """
         is_outdoor = self._infer_exposure(now)
-        vector = scaling_engine.assemble_static_vector(now, env_data=env_data).tolist()
+        vector = scaling_engine.assemble_static_vector(now, env_data=env_data, is_sick=is_sick).tolist()
         
         # Override environmental forcing bits (indices 12, 13, 14 in the 15-feature vector)
         # Based on Layer 2 Climatology logic.
@@ -202,10 +202,12 @@ class MetabolicInferenceRunner:
 
         # In snapshots, we can extract env_data from the latest snapshot if available
         env_data = None
+        is_sick = False
         if recent[-1].environment:
             env_data = recent[-1].environment.model_dump()
+        is_sick = recent[-1].is_sick
             
-        static_y = self._assemble_static_vector(datetime.now(timezone.utc), env_data=env_data)
+        static_y = self._assemble_static_vector(datetime.now(timezone.utc), env_data=env_data, is_sick=is_sick)
         
         with torch.inference_mode():
             output = self.model(tensor, static_y)[0]

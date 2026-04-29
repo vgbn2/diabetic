@@ -73,7 +73,7 @@ class DecisionMatrix:
             hr = self.config.PATIENT_BPM_BASELINE
             
         hrv = current.hrv or self.config.PATIENT_HRV_BASELINE
-        is_active = hr > (self.config.PATIENT_BPM_BASELINE * 1.4) # Exercise Context Buffer why 1.4? hardcoded?
+        is_active = hr > (self.config.PATIENT_BPM_BASELINE * medical_constants.BPM_EXERCISE_MULTIPLIER) # Exercise Context Buffer
 
         # 1. CRITICAL HYPO (Current) - Never suppressed
         if g < medical_constants.HYPO_CRITICAL:

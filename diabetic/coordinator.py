@@ -5,26 +5,34 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from typing import List, Optional
 import numpy as np
+from collections import deque
 from diabetic.config import config
 from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent
 from diabetic import medical_constants
+
 from diabetic.ingestion.nightscout import NightscoutClient
 from diabetic.ingestion.mongo import MongoDBClient
 from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.ingestion.weather import WeatherIngestor
+
 from diabetic.dsp.kalman import GlucoseFilter
 from diabetic.dsp.signal_quality import SignalQuality
 from diabetic.dsp.metabolic_math import MetabolicMath
 from diabetic.dsp.context_classifier import classify_context
+
 from diabetic.ml_engine.twin import DigitalTwin
 from diabetic.ml_engine.inference import MetabolicInferenceRunner
+
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert, AlertSeverity
 from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
+
 from diabetic.ui.cli_hud import RealTimeHUD
 from diabetic.ui.visualizer import MetabolicVisualizer
+
 from diabetic.utils.stateless_push import StatelessPush
 from diabetic.utils.audit_logger import AuditLogger
 from diabetic.utils.data_factory import TacticalForecaster, compute_confidence_index
+
 from diabetic.storage.engine import init_db, close_db as close_storage_db
 from diabetic.storage.vessel_registry import VesselRegistry
 from diabetic.ml_engine.oracle import BasalOracle
@@ -94,7 +102,7 @@ class Coordinator:
         self.oracle = BasalOracle(history_days=3)
         self.logger.info("[C2] BasalOracle instantiated. Will fit after 24h of data accumulation.")
 
-        self.snapshots: List[MetabolicSnapshot] = []
+        self.snapshots: deque[MetabolicSnapshot] = deque(maxlen=medical_constants.SNAPSHOT_CAP)
         self.regime_step_count = 0  # FIX C1: Persistent counter independent of buffer length
 
         self.last_meal: Optional[MealEvent] = None
@@ -106,6 +114,12 @@ class Coordinator:
         # compares actual glucose against the real 4h meal prediction, not
         # snapshot.predict_30m which is a short-horizon kinematic value.
         self.pending_meal_forecast_peak: Optional[float] = None
+        
+        # O1: Consolidated Tactical Forecaster (physiology-aware)
+        self.forecaster = TacticalForecaster(
+            age=config.PATIENT_AGE,
+            weight_kg=config.PATIENT_WEIGHT_KG
+        )
 
         self.is_running = False
         return self
@@ -124,7 +138,7 @@ class Coordinator:
 
         # 1. Signal Quality Check
         history = [snapshot.glucose for snapshot in self.snapshots] + [reading]
-        if len(history) < 3:#why 3?comment when read this
+        if len(history) < medical_constants.SIGNAL_MIN_HISTORY:
             self.logger.debug(
                 f"Startup: only {len(history)} reading(s) — compression recovery check inactive until 3rd reading."
             )
@@ -158,7 +172,8 @@ class Coordinator:
             tr_task = self.client.fetch_recent_treatments(count=10)
             hr_task = self.hr_client.fetch_latest()
             we_task = self.weather_client.fetch_current(config.LATITUDE, config.LONGITUDE)
-            results = await asyncio.gather(tr_task, hr_task, we_task, return_exceptions=True)
+            ms_task = self.vessel_registry.get_medical_state(config.TELEGRAM_CHAT_ID)
+            results = await asyncio.gather(tr_task, hr_task, we_task, ms_task, return_exceptions=True)
 
             tr_res = results[0]
             if not isinstance(tr_res, Exception) and isinstance(tr_res, tuple):
@@ -183,10 +198,22 @@ class Coordinator:
                 self.logger.warning(f"Weather ingestion failed: {we_res}")
                 snapshot.environment = None
 
+            ms_res = results[3]
+            if not isinstance(ms_res, Exception) and ms_res:
+                # Dynamic Sick Mode Check
+                is_active = ms_res.sick_mode_active
+                if ms_res.sick_mode_expires_at:
+                    if datetime.now(timezone.utc) > ms_res.sick_mode_expires_at.replace(tzinfo=timezone.utc):
+                        is_active = False
+                snapshot.is_sick = is_active
+            else:
+                snapshot.is_sick = False
+
         except Exception as e:
             self.logger.warning(f"In-depth ingestion failed: {e}. Falling back to defaults.")
             snapshot.last_meal = self.last_meal
             snapshot.cardiac = None
+            snapshot.is_sick = False
 
         # 3b. Estimate Active Carbs/Insulin (COB/IOB) for Oracle Filtering
         # Fix C2: Physiological decay — COB uses Twin's log-normal absorption curve;
@@ -213,11 +240,11 @@ class Coordinator:
             snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i))
 
         # 4. Feature Extraction
-        snapshot.atr_14 = MetabolicMath.calculate_atr(self.snapshots + [snapshot], period=14)
+        snapshot.atr_14 = MetabolicMath.calculate_atr(list(self.snapshots) + [snapshot], period=14)
 
         # 5. Forecasting
         # Strategy: Use Multi-Task Neural Engine as primary, fallback to kinematics if warming up.
-        neural_res = self.neural_runner.run_inference_on_snapshots(self.snapshots + [snapshot])
+        neural_res = self.neural_runner.run_inference_on_snapshots(list(self.snapshots) + [snapshot])
         if neural_res:
             prediction_30m = neural_res["glucose"]
             snapshot.predict_30m = prediction_30m
@@ -225,7 +252,7 @@ class Coordinator:
             self.logger.info(f"NEURAL_BRAIN: Pred Glu={prediction_30m:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
         else:
             # Wave 2 Hardening: Kinematic Fallback
-            velocity, _ = MetabolicMath.extract_kinematics(self.snapshots + [snapshot])
+            velocity, _ = MetabolicMath.extract_kinematics(list(self.snapshots) + [snapshot])
             prediction_30m = snapshot.glucose.value + (velocity * 30.0)
             snapshot.predict_30m = prediction_30m
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
@@ -234,10 +261,9 @@ class Coordinator:
         points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
         raw_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
-            for s in (self.snapshots + [snapshot])[-points_1h:]  # Exactly 60 mins of data
+            for s in (list(self.snapshots) + [snapshot])[-points_1h:]  # Exactly 60 mins of data
         ]
-        forecaster = TacticalForecaster()
-        tactical = forecaster.compute(raw_history)
+        tactical = self.forecaster.compute(raw_history)
         snapshot.predict_15m = tactical["p15m"]
         snapshot.predict_60m = tactical["p60m"]
         snapshot.velocity_score = tactical["velocity"]
@@ -250,8 +276,6 @@ class Coordinator:
         # Strategy: Skip alerting during backfill/sync.
         if is_backfill:
             self.snapshots.append(snapshot)
-            if len(self.snapshots) > medical_constants.SNAPSHOT_CAP:
-                self.snapshots.pop(0)
             return
 
         try:
@@ -279,16 +303,15 @@ class Coordinator:
         # 6b. Semantic Memory (Layer 4/5)
         # Trapping anomalies: e.g., high prediction, high value, or HR distress
         if not is_backfill:
-            if prediction_30m > 16.0 or reading.value > 16.0 or (snapshot.bpm and snapshot.bpm > 110):#hardcoded, get values from metabolic constatn
+            if prediction_30m > medical_constants.PALACE_ANOMALY_GLUCOSE \
+               or reading.value > medical_constants.PALACE_ANOMALY_GLUCOSE \
+               or (snapshot.bpm and snapshot.bpm > medical_constants.PALACE_ANOMALY_BPM):
                 if self.palace is not None:
                     task = asyncio.create_task(asyncio.to_thread(
                         self.palace.remember_snapshot, snapshot.model_dump(), room="l4_anomaly_audit"
                     ))
                     self.background_tasks.add(task)
                     task.add_done_callback(self.background_tasks.discard)
-
-        if len(self.snapshots) > medical_constants.SNAPSHOT_CAP:
-            self.snapshots.pop(0)
 
         hr_val = snapshot.bpm if snapshot.bpm else "N/A"
         hr_max = snapshot.max_bpm if snapshot.max_bpm else hr_val
@@ -298,7 +321,7 @@ class Coordinator:
         # 7. Digital Twin Regime Detection (every 6 hours)
         regime_trigger = int(360 / medical_constants.SAMPLING_INTERVAL_MINS)
         if self.regime_step_count % regime_trigger == 0:
-            regime = self.twin.detect_regime(self.snapshots)
+            regime = self.twin.detect_regime(list(self.snapshots))
             self.logger.info(f"Metabolic Regime Detected: {regime} (Step: {self.regime_step_count})")
 
         # 8. Meal Window Auto-Tune
@@ -332,7 +355,7 @@ class Coordinator:
             task.add_done_callback(self.background_tasks.discard)
 
         # 10. Update Continuous Chart
-        self.visualizer.update_continuous(self.snapshots)
+        self.visualizer.update_continuous(list(self.snapshots))
 
 # =============================================================================
 # 🎮 [INTERACTION & INTERFACE]
@@ -396,6 +419,18 @@ class Coordinator:
                 # 2. Retention Policy Cleanup
                 await self.mongo.run_retention_cleanup(days=180)
                 
+                # 3. Nightscout-Direct Training (New Phase)
+                # Strategy: Retrain the CNN on the latest 15 days of real-world data
+                try:
+                    from diabetic.ml_engine.train import train_metabolic_cnn
+                    self.logger.info("MAINTENANCE: Initiating Nightscout-Direct Retraining (Source: MongoDB)...")
+                    # We use a smaller epoch count for daily calibration to prevent overfitting
+                    # and ensure the maintenance window isn't held open too long.
+                    await train_metabolic_cnn(source="mongo", epochs=20, weight_version="v15")
+                    self.logger.info("MAINTENANCE: Retraining complete. New weights saved to v15.")
+                except Exception as te:
+                    self.logger.error(f"Maintenance retraining failed: {te}")
+
                 await self.audit.log_admin_action("AUTO_MAINTENANCE_COMPLETE", {"local_time": str(target)})
                 self.logger.info("Regional Maintenance Cycle complete.")
             except Exception as e:
@@ -412,7 +447,7 @@ class Coordinator:
             await asyncio.sleep(24 * 3600)  # 24 hours
             if len(self.snapshots) >= 2:
                 try:
-                    self.oracle.fit(self.snapshots)
+                    self.oracle.fit(list(self.snapshots))
                     if self.oracle.params is not None:
                         self.logger.info(
                             "[C2] BasalOracle fit successful. Params: A=%.2f, phi=%.2f, C=%.2f",
@@ -552,7 +587,7 @@ class Coordinator:
         self.meal_tune_pending = True
 
         history_count = int(60 / config.SAMPLING_INTERVAL_MINS)
-        history = self.snapshots[-history_count:]
+        history = list(self.snapshots)[-history_count:]
         if history:
             # [C2] Build basal drift array from Oracle for 4h projection
             basal_drift = None
@@ -560,9 +595,11 @@ class Coordinator:
                 dt = config.SAMPLING_INTERVAL_MINS
                 points = int(240 / dt) + 1
                 basal_drift = np.zeros(points)
-                ref_start = history[0].glucose.timestamp if history else datetime.now(timezone.utc)
+                # reference_start must match history[0].timestamp for correct phase alignment
+                ref_start = history[0].glucose.timestamp
+                now_utc = datetime.now(timezone.utc)
                 for i in range(points):
-                    target_t = datetime.now(timezone.utc) + timedelta(minutes=i * dt)
+                    target_t = now_utc + timedelta(minutes=i * dt)
                     basal_drift[i] = self.oracle.get_expected_basal(target_t, ref_start)
 
             prediction_4h = self.twin.predict_4h_trajectory(
@@ -651,7 +688,7 @@ class Coordinator:
     async def stop(self):
         """Graceful shutdown of all services."""
         self.is_running = False
-
+        self.hr_client.is_running = False
         if self.bot_app:
             self.logger.info("Stopping Telegram Bot...")
             try:
@@ -664,7 +701,10 @@ class Coordinator:
 
         if self.background_tasks:
             self.logger.info(f"Awaiting {len(self.background_tasks)} background tasks before shutdown...")
-            await asyncio.wait(self.background_tasks, timeout=5.0)
+            # Wave 6 Hardening: Filter out current task if we are running in one
+            tasks = [t for t in self.background_tasks if t is not asyncio.current_task()]
+            if tasks:
+                await asyncio.wait(tasks, timeout=5.0)
 
         # Wave 0 Hardening: Close persistent clients
         self.logger.info("Closing persistent network and database resources...")

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from datetime import datetime, timezone
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 from diabetic.ml_engine.synthetic_cardiac import cardiac_synthesizer
 from diabetic.registry import GlucoseReading
@@ -16,8 +16,15 @@ class MetabolicDataset(Dataset):
     Performs feature scaling and cardiac synthesis for training.
     """
     
-    def __init__(self, csv_path: str, seq_len: int = 30, prediction_offset: int = 6):
+    def __init__(
+        self, 
+        csv_path: Optional[str] = None, 
+        df_input: Optional[pd.DataFrame] = None,
+        seq_len: int = 30, 
+        prediction_offset: int = 6
+    ):
         self.csv_path = csv_path
+        self.df_input = df_input
         self.seq_len = seq_len
         self.prediction_offset = prediction_offset # e.g. 6 ticks = 30 mins
         
@@ -25,7 +32,12 @@ class MetabolicDataset(Dataset):
         self.X, self.y = self._create_windows()
 
     def _preprocess(self) -> Tuple[pd.DataFrame, np.ndarray]:
-        df = pd.read_csv(self.csv_path)
+        if self.df_input is not None:
+            df = self.df_input.copy()
+        elif self.csv_path:
+            df = pd.read_csv(self.csv_path)
+        else:
+            raise ValueError("MetabolicDataset requires either csv_path or df_input.")
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df = df.sort_values('timestamp')
 
@@ -85,28 +97,9 @@ class MetabolicDataset(Dataset):
         return df, static
 
     def _assemble_static_vector(self, now: datetime) -> np.ndarray:
-        """Assembles the 15-feature static trait vector from config."""
-        # Simple mapping (0.0 - 1.0)
-        gender_map = {"FEMALE": 0.0, "MALE": 1.0, "OTHER": 0.5}
-        eth_map = {"ASIAN": 0.1, "CAUCASIAN": 0.2, "AFRICAN": 0.3, "HISPANIC": 0.4}
-        type_map = {"T1D": 1.0, "T2D": 0.5, "PRE": 0.2}
-
-        vector = [
-            config.PATIENT_AGE / 100.0,
-            config.PATIENT_WEIGHT_KG / 150.0,
-            config.PATIENT_HEIGHT_CM / 250.0,
-            gender_map.get(config.PATIENT_GENDER, 0.0),
-            eth_map.get(config.PATIENT_ETHNICITY, 0.0),
-            type_map.get(config.PATIENT_DIABETES_TYPE, 0.0),
-            (datetime.now().year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
-            0.5, # Default activity level
-            config.PATIENT_FRUCTOSAMIN / 500.0,
-            1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
-            0.0, # is_sick
-            temporal_engine.get_multiplier(now),
-            1.0, 1.0, 1.0 # Environment defaults for training
-        ]
-        return np.array(vector, dtype=np.float32)
+        """Assembles the 15-feature static trait vector from ScalingEngine (Fix C2)."""
+        from diabetic.utils.scaling_engine import scaling_engine
+        return scaling_engine.assemble_static_vector(now)
 
     def _create_windows(self) -> Tuple[np.ndarray, np.ndarray]:
         X_list = []

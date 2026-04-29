@@ -140,6 +140,19 @@ class VesselRegistry:
             await session.commit()
             logger.info("[Registry] Sick mode set to %s for user %s", active, telegram_id)
 
+
+    async def get_medical_state(self, telegram_id: int) -> Optional[MedicalStates]:
+        """Retrieve dynamic medical state for a user."""
+        async with self._session() as session:
+            user_result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+            user = user_result.scalar_one_or_none()
+            if user is None:
+                return None
+            result = await session.execute(
+                select(MedicalStates).where(MedicalStates.user_id == user.id)
+            )
+            return result.scalar_one_or_none()
+
     # -------------------------------------------------------------------------
     # Legacy Migration from .env
     # -------------------------------------------------------------------------
@@ -168,9 +181,9 @@ class VesselRegistry:
         # Migrate any bio-traits that were previously hardcoded
         await self.update_biometrics(
             telegram_id=telegram_id,
-            age=float(os.environ.get("USER_AGE", 0)) or None,
-            weight_kg=float(os.environ.get("USER_WEIGHT_KG", 0)) or None,
-            height_cm=float(os.environ.get("USER_HEIGHT_CM", 0)) or None,
-            diabetes_type=os.environ.get("DIABETES_TYPE", "T1D"),
+            age=float(os.environ.get("PATIENT_AGE", 0)) or None,
+            weight_kg=float(os.environ.get("PATIENT_WEIGHT_KG", 0)) or None,
+            height_cm=float(os.environ.get("PATIENT_HEIGHT_CM", 0)) or None,
+            diabetes_type=os.environ.get("PATIENT_DIABETES_TYPE", "T1D"),
         )
         logger.info("[Registry] Legacy .env user migrated to SQL for telegram_id=%s", telegram_id)

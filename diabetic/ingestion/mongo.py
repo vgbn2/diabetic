@@ -63,7 +63,7 @@ class MongoDBClient:
             
         return readings
 
-    async def fetch_recent_treatments(self, hours: float = 24.0) -> tuple:
+    async def fetch_recent_treatments(self,count:int=10, hours: float = 4.0) -> tuple:
         """
         Fetches the latest insulin and meal events for the last N hours.
         Returns Tuple[Optional[InsulinDose], Optional[MealEvent]] to match
@@ -81,7 +81,7 @@ class MongoDBClient:
             cursor = self.treatments.find({
                 "created_at": {"$gte": cutoff.isoformat()},
                 "eventType": {"$in": ["Meal Bolus", "Correction Bolus", "Note", "Carb Correction"]}
-            }).sort("created_at", -1)  # Most recent first so we grab the latest
+            }).sort("created_at", -1).limit(count*2)  # Most recent first so we grab the latest
             
             async for doc in cursor:
                 event = self._map_treatment(doc)
@@ -96,6 +96,75 @@ class MongoDBClient:
             self.logger.error(f"Error fetching treatments: {e}")
             
         return latest_insulin, latest_meal
+
+# =============================================================================
+# 📊 [TRAINING & CLINICAL ANALYSIS]
+# =Focus: High-Volume Data Retrieval for Model Optimization
+# =============================================================================
+    async def fetch_training_data(self, days: int = 15) -> Optional["pd.DataFrame"]:
+        """
+        Retrieves joined glucose and treatment data for a training window.
+        Returns a Pandas DataFrame formatted for MetabolicDataset.
+        """
+        import pandas as pd
+        if self.entries is None:
+            return None
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        start_ms = cutoff.timestamp() * 1000
+
+        try:
+            self.logger.info(f"Fetching training data for the last {days} days...")
+            
+            # 1. Fetch Glucose (Entries)
+            entries_cursor = self.entries.find({"date": {"$gte": start_ms}}).sort("date", 1)
+            entries_raw = await entries_cursor.to_list(length=10000)
+            
+            if not entries_raw:
+                self.logger.warning("No glucose entries found for training window.")
+                return None
+
+            df_entries = pd.DataFrame([{
+                "timestamp": datetime.fromtimestamp(d["date"] / 1000.0, tz=timezone.utc),
+                "glucose": float(d.get("sgv", 0)) / 18.0182 if float(d.get("sgv", 0)) > 40 else float(d.get("sgv", 0)),
+                "trend": d.get("direction", "Flat")
+            } for d in entries_raw])
+
+            # 2. Fetch Treatments (Bolus/Meals)
+            # Treatments use ISO date strings in NS, but we query by created_at
+            treatments_cursor = self.treatments.find({
+                "created_at": {"$gte": cutoff.isoformat()}
+            }).sort("created_at", 1)
+            treatments_raw = await treatments_cursor.to_list(length=5000)
+
+            if treatments_raw:
+                df_treatments = pd.DataFrame([{
+                    "timestamp": datetime.fromisoformat(t["created_at"].replace('Z', '+00:00')),
+                    "bolus": float(t.get("insulin", 0)) if t.get("insulin") else 0,
+                    "meal": float(t.get("carbs", 0)) if t.get("carbs") else 0
+                } for t in treatments_raw])
+                
+                # Merge logic: align treatments to the nearest glucose reading
+                # Note: This is a simplified merge, MetabolicDataset will resample
+                df = pd.merge_asof(
+                    df_entries.sort_values("timestamp"),
+                    df_treatments.sort_values("timestamp"),
+                    on="timestamp",
+                    direction="backward",
+                    tolerance=timedelta(minutes=5)
+                )
+            else:
+                df = df_entries
+                df["bolus"] = 0
+                df["meal"] = 0
+
+            df = df.fillna(0)
+            self.logger.info(f"Successfully retrieved {len(df)} training samples from MongoDB.")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Failed to fetch training data from MongoDB: {e}")
+            return None
 
 # =============================================================================
 # 📊 [CLINICAL REPORTING & MAINTENANCE]

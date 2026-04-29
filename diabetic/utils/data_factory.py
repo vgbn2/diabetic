@@ -22,7 +22,8 @@ logger = logging.getLogger("Bio-Quant.DataFactory")
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
-_SENSOR_INTERVAL_MIN = 5          # Expected CGM reading cadence
+from diabetic.config import config
+_SENSOR_INTERVAL_MIN = config.SAMPLING_INTERVAL_MINS          # FIX M1: Follow config
 _CONFIDENCE_WINDOW_MIN = 90       # Window for density calculation
 _MIN_POINTS_FOR_REGRESSION = 3    # Below this, fall back to linear delta
 
@@ -61,7 +62,8 @@ class TacticalForecaster:
         self.isf = 100.0 / (self.weight_kg * 0.5)
         # Normalize correction factor: baseline is 70kg (ISF ~2.85)
         # correction > 1.0 for lighter (faster change), < 1.0 for heavier (slower change)
-        self.velocity_correction = 2.85 / self.isf 
+        # FIX C1: correction should be isf / baseline_isf, not baseline_isf / isf
+        self.velocity_correction = self.isf / 2.85 
 
     def compute(
         self,

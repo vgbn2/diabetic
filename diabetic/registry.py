@@ -64,6 +64,7 @@ class HydrationEvent(BaseModel):
 
 class ScheduleEvent(BaseModel):
     """Represents a planned activity or state (Layer 3 - Behavioral Ground Truth)."""
+    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
     name: str
     type: str  # SLEEP, WORK, WORKOUT, COMMUTE
     is_outdoor: bool = False

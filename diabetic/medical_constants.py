@@ -151,3 +151,9 @@ SNAPSHOT_CAP         = 300      # ring buffer cap
 ALERT_RETRY_MINS        = 15.0 # Delay between repeated critical alerts
 FALSE_ALARM_DEBOUNCE    = 30.0 # Suppression window after "False Alarm" label
 MAX_CONFIDENCE_BIAS     = 0.20 # +/- 20% shift based on RLHF feedback
+
+# ── Audit Hardening (Plan 1.4) ────────────────────────────────────────────────
+BPM_EXERCISE_MULTIPLIER = 1.4   # threshold multiplier for active context detection
+SIGNAL_MIN_HISTORY      = 3     # minimum readings before compression check is meaningful
+PALACE_ANOMALY_GLUCOSE  = 16.0  # mmol/L threshold for semantic memory indexing
+PALACE_ANOMALY_BPM      = 110   # BPM threshold for semantic memory indexing

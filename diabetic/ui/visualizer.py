@@ -45,7 +45,8 @@ class MetabolicVisualizer:
 
     def _save_continuous_sync(self, snapshots: List[MetabolicSnapshot]):
         """
-        Synchronous render — called via run_in_executor to avoid blocking the event loop.
+        Thread-safe render (Fix H3).
+        Uses Object-Oriented matplotlib API to avoid global state corruption.
         """
         if not snapshots:
             return
@@ -60,8 +61,10 @@ class MetabolicVisualizer:
         velocity = [s.velocity if s.velocity else 0.0 for s in window]
         bpm = [s.bpm if s.bpm else 0.0 for s in window]
 
-        fig, (ax_g, ax_k) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [2, 1]})
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(12, 10))
         fig.patch.set_facecolor('#0a0a0a')
+        ax_g, ax_k = fig.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]})
 
         # --- SUBPLOT 1: GLUCOSE ---
         ax_g.set_facecolor('#0f0f0f')
@@ -82,7 +85,6 @@ class MetabolicVisualizer:
 
         # --- SUBPLOT 2: KINEMATICS ---
         ax_k.set_facecolor('#0f0f0f')
-        # Hardening: Standardized label to mmol/L/min (Wave 6)
         ax_k.plot(times, velocity, color=self.colors['velocity'], linewidth=1.5, label='Velocity (mmol/L/min)')
 
         if any(bpm):
@@ -96,10 +98,9 @@ class MetabolicVisualizer:
         ax_k.grid(True, color=self.colors['grid'], alpha=0.3)
         ax_k.legend(loc='upper left', frameon=False)
 
-        plt.tight_layout()
+        fig.tight_layout()
         save_path = os.path.join(self.output_dir, "live_dashboard.png")
-        plt.savefig(save_path, facecolor=fig.get_facecolor(), dpi=120)
-        plt.close()
+        fig.savefig(save_path, facecolor=fig.get_facecolor(), dpi=120)
 
     def update_continuous(self, snapshots: List[MetabolicSnapshot]):
         """Non-blocking dashboard update — dispatches savefig to a thread."""
@@ -132,43 +133,45 @@ class MetabolicVisualizer:
 
     def render_forecast_buffer(self, history: List[float], prediction: np.ndarray, meal_name: str = "Meal") -> io.BytesIO:
         """
-        Renders the forecast and returns it as a BytesIO buffer (Task 8.4.1).
+        Thread-safe render (Fix H3).
         Uses Sampling-Agnostic temporal scaling (Wave 6).
         """
-        plt.figure(figsize=(10, 6))
-        plt.gca().set_facecolor('#0f0f0f')
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(10, 6))
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('#0f0f0f')
+        fig.patch.set_facecolor('#0a0a0a')
         
         # Hardening: Use SAMPLING_INTERVAL_MINS instead of hardcoded 5
         history_t = np.arange(-SAMPLING_INTERVAL_MINS * len(history), 0, SAMPLING_INTERVAL_MINS)
         predict_t = np.arange(0, SAMPLING_INTERVAL_MINS * len(prediction), SAMPLING_INTERVAL_MINS)
         
         # Plot History
-        plt.plot(history_t, history, color=self.colors['glucose'], linewidth=2.5, label='Actual (Historical)')
-        plt.scatter(history_t[-1], history[-1], color=self.colors['glucose'], s=50)
+        ax.plot(history_t, history, color=self.colors['glucose'], linewidth=2.5, label='Actual (Historical)')
+        ax.scatter(history_t[-1], history[-1], color=self.colors['glucose'], s=50)
         
         # Plot Prediction
-        plt.plot(predict_t, prediction, color=self.colors['prediction'], linestyle='--', linewidth=2, label=f'Digital Twin ({meal_name})')
-        plt.fill_between(predict_t, prediction - 0.5, prediction + 0.5, color=self.colors['prediction'], alpha=0.1)
+        ax.plot(predict_t, prediction, color=self.colors['prediction'], linestyle='--', linewidth=2, label=f'Digital Twin ({meal_name})')
+        ax.fill_between(predict_t, prediction - 0.5, prediction + 0.5, color=self.colors['prediction'], alpha=0.1)
         
         # Annotate Peak
         peak_idx = np.argmax(prediction)
         peak_val = prediction[peak_idx]
         peak_time = predict_t[peak_idx]
-        plt.annotate(f"Peak: {peak_val:.1f}", xy=(peak_time, peak_val), xytext=(peak_time+10, peak_val+1),
+        ax.annotate(f"Peak: {peak_val:.1f}", xy=(peak_time, peak_val), xytext=(peak_time+10, peak_val+1),
                      arrowprops=dict(facecolor='white', shrink=0.05, width=1, headwidth=5),
                      color='white', fontweight='bold')
         
-        plt.axhline(y=FAINT_GLUCOSE, color='red', linestyle='--', alpha=0.3)
+        ax.axhline(y=FAINT_GLUCOSE, color='red', linestyle='--', alpha=0.3)
         
-        plt.title(f"DIGITAL TWIN FORECAST: {meal_name.upper()}", fontsize=14, fontweight='bold', color='white')
-        plt.xlabel("Minutes from Now", color='silver')
-        plt.ylabel("Glucose (mmol/L)", color='silver')
-        plt.legend(frameon=False)
-        plt.grid(True, color=self.colors['grid'], alpha=0.3)
+        ax.set_title(f"DIGITAL TWIN FORECAST: {meal_name.upper()}", fontsize=14, fontweight='bold', color='white')
+        ax.set_xlabel("Minutes from Now", color='silver')
+        ax.set_ylabel("Glucose (mmol/L)", color='silver')
+        ax.legend(frameon=False)
+        ax.grid(True, color=self.colors['grid'], alpha=0.3)
         
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=120)
-        plt.close()
+        fig.savefig(buf, format='png', dpi=120)
         buf.seek(0)
         return buf
 

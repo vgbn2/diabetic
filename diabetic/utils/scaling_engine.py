@@ -28,16 +28,16 @@ class ScalingEngine:
         "SEDENTARY": 0.3, 
         "MODERATE": 0.5, 
         "ACTIVE": 0.7, 
-        "ACTIVE": 0.8, 
+        "VERY ACTIVE": 1.0, 
         "ATHLETE": 1.2, 
         "UNKNOWN": 0.5
     }
 # all of the above should be a range no?
     @classmethod
-    def assemble_static_vector(cls, now: Optional[datetime] = None, env_data: Optional[dict] = None) -> np.ndarray:
+    def assemble_static_vector(cls, now: Optional[datetime] = None, env_data: Optional[dict] = None, is_sick: bool = False) -> np.ndarray:
         """
         Assembles the 15-feature static trait vector exactly as used in training.
-        Supports dynamic environmental injection.
+        Supports dynamic environmental injection and clinical overrides (sick mode).
         """
         if now is None:
             now = datetime.now(timezone.utc)
@@ -66,7 +66,7 @@ class ScalingEngine:
             cls.ACTIVITY_LEVEL_MAP.get(config.PATIENT_ACTIVITY_LEVEL, 0.5),
             config.PATIENT_FRUCTOSAMIN / 500.0,
             1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
-            0.0, # is_sick (Dynamic state flag)
+            1.0 if is_sick else 0.0, # is_sick (Dynamic state flag)
             temporal_engine.get_multiplier(now),
             temp_scaled, humid_scaled, aqi_scaled
         ]
