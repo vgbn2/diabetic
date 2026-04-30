@@ -141,7 +141,8 @@ EMA_RESIDUAL_SPAN        = 6   # window for stability analysis
 
 # ── Buffer Management ────────────────────────────────────────────────────────
 REGIME_MIN_SNAPSHOTS = 200      # minimum for detection
-SNAPSHOT_CAP         = 300      # ring buffer cap
+SNAPSHOT_CAP         = 500      # ring buffer cap
+BACKFILL_DAYS_LIMIT  = 180      # System-wide limit for historical data retrieval
 
 # =============================================================================
 # 📱 [LAYER 5: THE INTERACTION LAYER]

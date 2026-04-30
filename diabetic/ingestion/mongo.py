@@ -46,6 +46,13 @@ class MongoDBClient:
         
         return sorted(readings, key=lambda x: x.timestamp)
 
+    async def fetch_neural_window(self) -> List[GlucoseReading]:
+        """
+        Specifically fetches the last 288 readings (24 hours) to ensure a full 
+        circadian context and guaranteed 30-snapshot buffer for the Neural Engine.
+        """
+        return await self.fetch_recent_glucose(count=288)
+
     async def fetch_since(self, start_ts: datetime) -> List[GlucoseReading]:
         """Fetches all glucose readings since a specific timestamp (Backfill Mode)."""
         if self.entries is None: return []

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 # =Focus: Polling intervals, Logging levels, and Data Stability
 # =============================================================================
     LOG_LEVEL: str = "INFO"
-    DATA_POLLING_INTERVAL: int = 300  # 5 minutes
+    DATA_POLLING_INTERVAL: int = 150  # 5 minutes
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
     

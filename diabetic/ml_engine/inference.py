@@ -239,7 +239,7 @@ class MetabolicInferenceRunner:
         
         # Prepare inputs
         temp_x = self._prepare_temporal_tensor(df)
-        static_y = self._assemble_static_vector(now)
+        static_y = self._assemble_static_vector(now,is_sick=False)
         
         logger.info(f"Feeding data into CNN (Temporal: {temp_x.shape}, Static: {static_y.shape})...")
         

@@ -505,42 +505,36 @@ class Coordinator:
             self.background_tasks.add(task_bot)
 
         # 0. Stateful Backfill (Hardened for Neural Warm-up)
-        # STAGE 1: Blocking Priority (Last 24 Hours)
-        now = datetime.now(timezone.utc)
-        blocking_cutoff = now - timedelta(hours=24)
-        last_ts = await self.audit.get_last_reading_timestamp()
+        # STAGE 1: Blocking Priority (Neural Engine Saturation)
+        self.logger.info("Starting STAGE 1 backfill (Neural Engine Saturation)...")
         
-        # Normalise last_ts to UTC
-        if last_ts and last_ts.tzinfo is None:
-            last_ts = last_ts.replace(tzinfo=timezone.utc)
-
-        # Strategy: Fetch since (last_ts) OR (24 hours ago) whichever is EARLIER
-        fetch_since_ts = last_ts if last_ts and last_ts < blocking_cutoff else blocking_cutoff
-        
-        gap_mins = (now - fetch_since_ts).total_seconds() / 60
-        if gap_mins > medical_constants.SAMPLING_INTERVAL_MINS:
-            self.logger.info(f"Starting STAGE 1 backfill. Gap: {gap_mins:.1f} mins. Target: {fetch_since_ts.strftime('%H:%M:%S')} UTC")
-            
+        try:
+            # Strategy: Fetch exactly 35 readings to guarantee the 30-snapshot neural requirement.
             if self.mongo.entries is not None:
-                backfill_readings = await self.mongo.fetch_since(fetch_since_ts)
+                backfill_readings = await self.mongo.fetch_neural_window()
             else:
-                backfill_readings = await self.client.fetch_since(fetch_since_ts)
-            
+                # Fallback to REST if MongoDB is not active
+                backfill_readings = await self.client.fetch_recent_glucose(count=35)
+                
             if backfill_readings:
-                self.logger.info(f"Filling {len(backfill_readings)} historical readings...")
+                self.logger.info(f"Filling {len(backfill_readings)} historical readings to internal memory...")
                 for r in backfill_readings:
                     await self._process_reading(r, is_backfill=True)
                 
                 if len(self.snapshots) < 30:
-                    self.logger.warning(f"⚠️ NEURAL_BRAIN STARVATION: Only {len(self.snapshots)}/30 snapshots available.")
+                    self.logger.warning(f"⚠️ NEURAL_BRAIN STARVATION: Only {len(self.snapshots)}/30 snapshots available. AI will be inactive until {30 - len(self.snapshots)} more readings arrive.")
                 else:
-                    self.logger.info(f"✅ NEURAL_BRAIN SATURATED: {len(self.snapshots)} snapshots loaded.")
-                
-                self.logger.info("Stage 1 Backfill complete.")
+                    self.logger.info(f"✅ NEURAL_BRAIN SATURATED: {len(self.snapshots)} snapshots loaded. AI Active.")
+            else:
+                self.logger.warning("No historical readings found. Starting in Cold Mode.")
+        except Exception as be:
+            self.logger.error(f"Critical Backfill Failure: {be}. Starting in degraded mode.")
 
         # STAGE 2: Deep Historical Sync (Background)
         # Launches after Stage 1 to populate the Audit Log with all-time history.
-        sync_task = asyncio.create_task(self._deep_historical_sync(fetch_since_ts))
+        now = datetime.now(timezone.utc)
+        blocking_cutoff = now - timedelta(hours=24)
+        sync_task = asyncio.create_task(self._deep_historical_sync(blocking_cutoff))
         self.background_tasks.add(sync_task)
         sync_task.add_done_callback(self.background_tasks.discard)
 
@@ -642,15 +636,17 @@ class Coordinator:
 
     async def _deep_historical_sync(self, end_ts: datetime):
         """Background task to fetch and audit history prior to the blocking backfill window."""
-        self.logger.info(f"Background Sync: Starting deep historical fetch (Backwards from {end_ts.strftime('%Y-%m-%d')})")
+        limit_days = medical_constants.BACKFILL_DAYS_LIMIT
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=limit_days)
+        self.logger.info(f"Background Sync: Starting deep historical fetch (Backwards from {end_ts.strftime('%Y-%m-%d')} to {cutoff_date.strftime('%Y-%m-%d')})")
         
         # We fetch in chunks of 3 days to avoid overwhelming the API
         current_end = end_ts
         chunk_days = 3
         total_synced = 0
         
-        while self.is_running:
-            start_ts = current_end - timedelta(days=chunk_days)
+        while self.is_running and current_end > cutoff_date:
+            start_ts = max(cutoff_date, current_end - timedelta(days=chunk_days))
             try:
                 if self.mongo.entries is not None:
                     # fetch_since fetches everything > start_ts
