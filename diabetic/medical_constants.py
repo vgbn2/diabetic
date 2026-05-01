@@ -10,10 +10,9 @@ Sections:
 5. Layer 5: The Interaction Layer (Interface & User Logic)
 """
 
-# =============================================================================
-# 🏗️ [LAYER 1: THE BIO-BASAL VESSEL]
-# =Focus: Static Physiology, Hardware Sampling, and Critical Thresholds
-# =============================================================================
+# -----------------------------------------------------------------------------
+# BIO-BASAL LAYER: Physiology & Hardware Thresholds
+# -----------------------------------------------------------------------------
 
 # ── Unit Conversion ──────────────────────────────────────────────────────────
 MMOL_TO_MGDL = 18.018                      # exact SI factor
@@ -59,10 +58,9 @@ KOVATCHEV_RISK_MULT = 10.0
 KOVATCHEV_FLOOR_MGDL = 20.0
 KOVATCHEV_CEIL_MGDL  = 600.0
 
-# =============================================================================
-# 🌊 [LAYER 2: THE ADAPTIVE REGIMES]
-# =Focus: Climatology, Hormonal Cycles, and Temporal Intelligence
-# =============================================================================
+# -----------------------------------------------------------------------------
+# ADAPTIVE REGIMES: Climatology & Biological Cycles
+# -----------------------------------------------------------------------------
 
 # ── Environmental Forcing (Climatology) ──────────────────────────────────────
 DEFAULT_LATITUDE  = 21.0285  # Hanoi baseline for solar/circadian syncing
@@ -95,10 +93,9 @@ METABOLIC_BRAKE_FLOOR = 0.70   # maximum 30% reduction
 LOW_SIDE_THRESHOLD    = 3.9    # mmol/L
 LOW_SIDE_BRAKE_SLOPE  = 0.25   # damping aggressive drops
 
-# =============================================================================
-# 🎮 [LAYER 3: THE BEHAVIORAL ENGINE]
-# =Focus: Pharmacodynamics, User Agency, and Activity Context
-# =============================================================================
+# -----------------------------------------------------------------------------
+# BEHAVIORAL ENGINE: Pharmacodynamics & Activity
+# -----------------------------------------------------------------------------
 
 # ── Sensitivity Defaults (Seeds for auto-tuning) ─────────────────────────────
 INSULIN_SENSITIVITY_DEFAULT = 2.0     # mmol/L drop per 1 Unit
@@ -123,10 +120,9 @@ BPM_SLEEP_CEILING       = 65
 HRV_STRESS_CEILING      = 30
 HRV_SLEEP_FLOOR         = 60
 
-# =============================================================================
-# 🔬 [LAYER 4: THE META-CORRECTION LAYER]
-# =Focus: Systemic Error, Signal Integrity, and Forecast Auditing
-# =============================================================================
+# -----------------------------------------------------------------------------
+# META-CORRECTION: Signal Integrity & Forecast Auditing
+# -----------------------------------------------------------------------------
 
 # ── Projection Parameters ────────────────────────────────────────────────────
 KINEMATIC_DECAY_MINS = 90.0   # timescale for momentum exhaustion
@@ -144,10 +140,9 @@ REGIME_MIN_SNAPSHOTS = 200      # minimum for detection
 SNAPSHOT_CAP         = 500      # ring buffer cap
 BACKFILL_DAYS_LIMIT  = 180      # System-wide limit for historical data retrieval
 
-# =============================================================================
-# 📱 [LAYER 5: THE INTERACTION LAYER]
-# =Focus: User Logic, Alert Interface, and Personalized Calibration
-# =============================================================================
+# -----------------------------------------------------------------------------
+# INTERACTION LAYER: Alerting & Calibration
+# -----------------------------------------------------------------------------
 
 ALERT_RETRY_MINS        = 15.0 # Delay between repeated critical alerts
 FALSE_ALARM_DEBOUNCE    = 30.0 # Suppression window after "False Alarm" label

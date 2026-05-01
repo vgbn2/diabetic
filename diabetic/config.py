@@ -6,10 +6,9 @@ from typing import Optional, Dict
 from diabetic import medical_constants
 
 class Settings(BaseSettings):
-# =============================================================================
-# 🔐 [LAYER 0: CORE MEDICAL & ALERTING APIs]
-# =Focus: Nightscout, OpenWeather, and Telegram Credentials
-# =============================================================================
+# -----------------------------------------------------------------------------
+# CORE SETTINGS: API & Alerting Credentials
+# -----------------------------------------------------------------------------
     NIGHTSCOUT_URL: str = ""
     API_SECRET: str = Field("", validation_alias="NIGHTSCOUT_API_SECRET")
     OPENWEATHER_API_KEY: str = ""
@@ -20,19 +19,17 @@ class Settings(BaseSettings):
     USER_ID: int = Field(0, validation_alias="TELEGRAM_CHAT_ID")
     CAREGIVER_ID: Optional[int] = None
     
-# =============================================================================
-# ⚙️ [SYSTEM RUNTIME & SAMPLING]
-# =Focus: Polling intervals, Logging levels, and Data Stability
-# =============================================================================
+# -----------------------------------------------------------------------------
+# RUNTIME SETTINGS: Polling & Logging
+# -----------------------------------------------------------------------------
     LOG_LEVEL: str = "INFO"
     DATA_POLLING_INTERVAL: int = 150  # 5 minutes
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
     
-# =============================================================================
-# 🧬 [PHYSIOLOGICAL BASELINE PROFILE]
-# =Focus: Layer 1 Hardware/Biological Static Markers
-# =============================================================================
+# -----------------------------------------------------------------------------
+# PATIENT PROFILE: Physiological Baselines
+# -----------------------------------------------------------------------------
     PATIENT_AGE: int = Field(30, validation_alias="PATIENT_AGE")
     PATIENT_WEIGHT_KG: float = Field(75.0, validation_alias="PATIENT_WEIGHT_KG")
     PATIENT_HEIGHT_CM: float = Field(175.0, validation_alias="PATIENT_HEIGHT_CM")
@@ -44,10 +41,9 @@ class Settings(BaseSettings):
     PATIENT_DIAGNOSIS_YEAR: int = Field(2020, validation_alias="PATIENT_DIAGNOSIS_YEAR")
     PATIENT_ACTIVITY_LEVEL: str = Field("MODERATE", validation_alias="PATIENT_ACTIVITY_LEVEL")
     
-# =============================================================================
-# 🌍 [REGIONAL & MAINTENANCE LOGIC]
-# =Focus: Timezone Discovery and Automated Sync Scheduling
-# =============================================================================
+# -----------------------------------------------------------------------------
+# REGIONAL SETTINGS: Timezone & Maintenance
+# -----------------------------------------------------------------------------
     USER_TIMEZONE: str = Field("Asia/Ho_Chi_Minh", validation_alias="BIO_USER_TIMEZONE")
     MAINTENANCE_LOCAL_HOUR: int = Field(3, validation_alias="BIO_MAINTENANCE_HOUR")
     
@@ -65,10 +61,9 @@ class Settings(BaseSettings):
     LATITUDE: float  = medical_constants.DEFAULT_LATITUDE
     LONGITUDE: float = medical_constants.DEFAULT_LONGITUDE
     
-# =============================================================================
-# 📱 [INTERACTION & HARDWARE STACK]
-# =Focus: UI Settings, BLE Addresses, and Data Persistence
-# =============================================================================
+# -----------------------------------------------------------------------------
+# INFRASTRUCTURE: UI, Database & Hardware
+# -----------------------------------------------------------------------------
     UI_SETTINGS: Dict[str, str] = {
         "EMERGENCY": "🚨 EMERGENCY",
         "HIGH": "⚠️ WARNING",
@@ -131,7 +126,7 @@ class Settings(BaseSettings):
         os.makedirs("storage", exist_ok=True)
         os.makedirs("storage/exports", exist_ok=True)
         
-        print("[OK] Environment Validation Complete: All systems operational.")
+        print("Configuration validated: System ready.")
 
 # Singleton instance
 config = Settings()

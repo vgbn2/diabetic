@@ -78,7 +78,7 @@ async def handle_admin_commands(cmd: str):
     elif cmd == "cleanup":
         logger.info("[ADMIN] Enforcing 180-day retention policy cleanup...")
         await audit.log_admin_action("CLEANUP_START", {"retention_days": 180})
-        await mongo.run_retention_cleanup(days=180)
+        await mongo.run_retention_cleanup(days=180)#limit days, this was hardcoded, fix later
         logger.info("[ADMIN] Cleanup complete.")
         await audit.log_admin_action("CLEANUP_COMPLETE", {"retention_days": 180})
 
