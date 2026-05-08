@@ -67,6 +67,7 @@ class Coordinator:
         self.alert_guard = DecisionMatrix()
         self.circuit_breaker = CircuitBreaker()
         self.notifier = TelegramNotifier()
+        self.notifier.audit_logger = self.audit
         self.bot_app = TelegramApp(coordinator=self, audit_logger=self.audit) if config.TELEGRAM_TOKEN else None
         self.hud = RealTimeHUD()
         self.twin = DigitalTwin(

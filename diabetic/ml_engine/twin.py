@@ -305,7 +305,7 @@ class DigitalTwin:
                             basal_drift: Optional[np.ndarray] = None,
                             N: int = 30) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         if not history:
-            pts = int(240/mc.SAMPLING_INTERVAL_MINS)+1
+            pts = int(240 / mc.SAMPLING_INTERVAL_MINS) + 1
             return np.zeros(pts), np.zeros(pts), np.zeros(pts)
 
         all_sims = []

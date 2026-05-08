@@ -20,9 +20,37 @@ class TelegramNotifier:
         self.chat_id = config.USER_ID
         self.bot: Optional[Bot] = None
         self.logger = logging.getLogger("Bio-Quant.Telegram")
+        self.audit_logger = None
+        self.pending_tasks = {}
 
         if self.token:
             self.bot = Bot(token=self.token)
+
+    async def _auto_review_task(self, message_id: int, alert_type: str):
+        try:
+            await asyncio.sleep(3600)  # 60 minutes auto-review timeout
+            
+            # Log as neutral
+            if self.audit_logger:
+                await self.audit_logger.log_feedback(alert_type, "neutral")
+            
+            # Edit the message to remove buttons
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=self.chat_id,
+                    message_id=message_id,
+                    text=f"⏳ Alert <b>{alert_type}</b> Auto-Reviewed (Neutral).",
+                    parse_mode=ParseMode.HTML
+                )
+                self.logger.info(f"Auto-reviewed alert {alert_type} as neutral.")
+            except Exception as e:
+                self.logger.error(f"Failed to edit message for auto-review: {e}")
+                
+        except asyncio.CancelledError:
+            # User clicked the button, task was cancelled
+            pass
+        finally:
+            self.pending_tasks.pop(message_id, None)
 
     async def send_alert(self, alert: Alert):
         """Pushes an alert to the user with interactive buttons."""
@@ -56,13 +84,18 @@ class TelegramNotifier:
             text += f"Predicted (30m): {alert.prediction_30m:.1f}\n"
 
         try:
-            await self.bot.send_message(
+            msg = await self.bot.send_message(
                 chat_id=self.chat_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup
             )
             self.logger.info(f"Telegram alert sent: {alert.type}")
+            
+            # Start auto-review background task
+            task = asyncio.create_task(self._auto_review_task(msg.message_id, alert.type))
+            self.pending_tasks[msg.message_id] = task
+            
         except Exception as e:
             self.logger.error(f"Failed to send Telegram message: {e}")
 
@@ -224,6 +257,14 @@ class TelegramApp:
             return
 
         action, alert_type = parts
+
+        # Cancel auto-review task if it exists
+        message_id = query.message.message_id
+        if self.coordinator and hasattr(self.coordinator, 'notifier'):
+            notifier = self.coordinator.notifier
+            if hasattr(notifier, 'pending_tasks') and message_id in notifier.pending_tasks:
+                notifier.pending_tasks[message_id].cancel()
+                notifier.pending_tasks.pop(message_id, None)
 
         if self.audit_logger:
             task = asyncio.create_task(self.audit_logger.log_feedback(alert_type, action))
