@@ -5,7 +5,7 @@ from diabetic.registry import CardiacReading, GlucoseReading
 from diabetic import medical_constants as mc
 from diabetic.config import config
 
-class SyntheticCardiacEstimator:
+class SyntheticCardiacEstimator:#how realistic is this?
     """
     Bio-Quant Synthetic Cardiac Layer (Layer 2.5).
     Estimates heart rate (BPM) and variability (HRV) from glucose dynamics

@@ -266,15 +266,22 @@ class Coordinator:
 
         # 5b. Tactical Forecaster — 15/30/60m regression-based horizons
         points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
+        points_90m = int(90 / medical_constants.SAMPLING_INTERVAL_MINS)
+        full_history = list(self.snapshots) + [snapshot]
+        
         raw_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
-            for s in (list(self.snapshots) + [snapshot])[-points_1h:]  # Exactly 60 mins of data
+            for s in full_history[-points_1h:]  # Exactly 60 mins of data
+        ]
+        confidence_history: list[tuple[datetime, float]] = [
+            (s.glucose.timestamp, s.glucose.value)
+            for s in full_history[-points_90m:]  # Exactly 90 mins of data
         ]
         tactical = self.forecaster.compute(raw_history)
         snapshot.predict_15m = tactical["p15m"]
         snapshot.predict_60m = tactical["p60m"]
         snapshot.velocity_score = tactical["velocity"]
-        snapshot.confidence_index = compute_confidence_index(raw_history)
+        snapshot.confidence_index = compute_confidence_index(confidence_history)
 
         # 5c. Context Classification
         snapshot.activity_label = classify_context(snapshot).value

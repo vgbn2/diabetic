@@ -145,7 +145,7 @@ class DigitalTwin:
             
         # 3. Humidity Friction (Heat Stress)
         if e.humidity > 85.0 and e.temperature > 28.0:
-            multiplier += 0.05 # +5% fixed penalty for high heat index stress
+            multiplier += 0.05 # +5% fixed penalty for high heat index stress, why 5%
             
         # 4. Exposure Awareness (Indoor/Outdoor Damping)
         if not e.is_outdoor:

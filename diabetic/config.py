@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 # RUNTIME SETTINGS: Polling & Logging
 # -----------------------------------------------------------------------------
     LOG_LEVEL: str = "INFO"
-    DATA_POLLING_INTERVAL: int = 150  # 5 minutes
+    DATA_POLLING_INTERVAL: int = 150  # 2.5 minutes
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
     

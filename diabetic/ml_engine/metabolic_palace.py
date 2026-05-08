@@ -24,7 +24,7 @@ class MetabolicPalace:
     """
     
     def __init__(self, palace_path: Optional[str] = None):
-        self.palace_path = palace_path or str(Path.home() / ".mempalace" / "palace")
+        self.palace_path = palace_path or str(Path.home() / ".mempalace" / "palace")#is this needed?
         self.wing = "hyperglycemia_faint_predictor"
         self._ensure_init()
         
