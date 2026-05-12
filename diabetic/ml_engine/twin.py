@@ -310,7 +310,7 @@ class DigitalTwin:
                             meals: List[MealEvent],
                             insulin: List[InsulinDose],
                             basal_drift: Optional[np.ndarray] = None,
-                            N: int = 30) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                            N: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         if not history:
             pts = int(240 / mc.SAMPLING_INTERVAL_MINS) + 1
             return np.zeros(pts), np.zeros(pts), np.zeros(pts)
@@ -327,11 +327,13 @@ class DigitalTwin:
             all_sims.append(traj)
 
         stack = np.vstack(all_sims)
-        mean_traj = np.mean(stack, axis=0)
         p5_traj   = np.percentile(stack, 5, axis=0)
+        p50_traj  = np.percentile(stack, 50, axis=0)
         p95_traj  = np.percentile(stack, 95, axis=0)
 
-        return mean_traj, p5_traj, p95_traj
+        # Slice to 60 minutes (12 points at 5 min intervals + 1 for current state)
+        pts_60 = int(60 / mc.SAMPLING_INTERVAL_MINS) + 1
+        return p5_traj[:pts_60], p50_traj[:pts_60], p95_traj[:pts_60]
 
 # =============================================================================
 # 🛠️ [METABOLIC TUNING]

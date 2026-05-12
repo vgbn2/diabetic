@@ -79,8 +79,8 @@ class MetabolicInferenceRunner:
         Includes synthetic heart rate generation.
         """
         if len(df) < self.seq_len:
-            # Pad if needed, though we usually only run if we have a full window
-            df = pd.concat([df.iloc[0:1]] * (self.seq_len - len(df)) + [df])
+            logger.warning(f"Saturation Status: Unsaturated ({len(df)}/{self.seq_len}). CNN Inference suspended to prevent Edge Artifacts.")
+            raise ValueError(f"Insufficient data for inference. Need {self.seq_len} readings.")
 
         window = df.tail(self.seq_len).copy()
         # Ensure we have a working copy and detect col
@@ -163,6 +163,7 @@ class MetabolicInferenceRunner:
         Expects a list of MetabolicSnapshot objects (last 30).
         """
         if len(snapshots) < self.seq_len:
+            logger.debug(f"Saturation Status: Unsaturated ({len(snapshots)}/{self.seq_len}). CNN Inference suspended to prevent Edge Artifacts.")
             return None
             
         recent = snapshots[-self.seq_len:]
