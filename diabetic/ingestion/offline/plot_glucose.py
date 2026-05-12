@@ -187,16 +187,7 @@ def plot_glucose_data(csv_path, output_image=None, days_to_show=None, smooth_win
                        marker='*', color='#00cec9', s=100, label='Basal marker',
                        zorder=11, alpha=0.7)
 
-        # ── predictive overlay (XGBoost) ──────────────────────────────────────
-        if 'predicted_30m' in data.columns:
-            pred_data = data.dropna(subset=['predicted_30m'])
-            if not pred_data.empty:
-                # We shift the forecast line FORWARD by 30 mins (6 rows) 
-                # to overlay it on the actual outcome it was predicting.
-                ax.plot(pred_data['timestamp'] + pd.Timedelta(minutes=30), 
-                        pred_data['predicted_30m'],
-                        color='#e67e22', linestyle='--', linewidth=1.5, alpha=0.8,
-                        label='XGBoost 30m Forecast', zorder=12)
+
 
         # ── axes & grid ───────────────────────────────────────────────────────
         ax.set_title(title, fontsize=16, fontweight='bold', pad=15, color='#2d3436')

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bio-Quant HUD</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent-blue: #38bdf8;
+            --accent-red: #ef4444;
+            --text-primary: #f8fafc;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .hud-container {
+            padding: 20px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Glassmorphism Card */
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Glucose Gauge */
+        .gauge-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+            position: relative;
+        }
+
+        .glucose-value {
+            font-size: 4rem;
+            font-weight: 800;
+            margin: 0;
+            background: linear-gradient(to bottom, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .unit-label {
+            font-size: 1rem;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .velocity-badge {
+            margin-top: 10px;
+            padding: 4px 12px;
+            border-radius: 100px;
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent-blue);
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
+
+        .stat-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* Horizon Chart */
+        .chart-container {
+            flex: 1;
+            min-height: 200px;
+        }
+
+        .hud-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+            display: inline-block;
+            margin-right: 5px;
+            box-shadow: 0 0 10px #22c55e;
+        }
+    </style>
+</head>
+<body>
+    <div class="hud-header">
+        <div><span class="status-dot"></span></div>
+        <div id="last-update">LIVE</div>
+    </div>
+
+    <div class="hud-container">
+        <!-- Core Gauge -->
+        <div class="glass-card gauge-section" id="main-gauge">
+            <h1 class="glucose-value" id="glucose-val">--.-</h1>
+            <span class="unit-label">mmol/L</span>
+            <div class="velocity-badge" id="velocity-val">↑ +0.0 min</div>
+        </div>
+
+        <!-- Meta Stats -->
+        <div class="stats-grid">
+            <div class="glass-card stat-item">
+                <span class="stat-label">Active Carbs</span>
+                <span class="stat-value" id="carbs-val">0g</span>
+            </div>
+            <div class="glass-card stat-item">
+                <span class="stat-label">Insulin (IOB)</span>
+                <span class="stat-value" id="insulin-val">0.00U</span>
+            </div>
+        </div>
+
+        <!-- Predictive Horizon -->
+        <div class="glass-card chart-container">
+            <span class="stat-label">Metabolic Horizon (4h)</span>
+            <canvas id="horizonChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Telegram WebApp
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        // Chart Initialization
+        const ctx = document.getElementById('horizonChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(24).fill(''),
+                datasets: [{
+                    label: 'Predicted Path',
+                    data: [],
+                    borderColor: '#38bdf8',
+                    borderWidth: 3,
+                    fill: true,
+                    backgroundColor: 'rgba(56, 189, 248, 0.05)',
+                    tension: 0.4,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { display: false },
+                    y: { 
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#64748b' }
+                    }
+                }
+            }
+        });
+
+        // Data Polling Logic
+        async function updateHUD() {
+            try {
+                // In production, this calls our FastAPI Bridge
+                const response = await fetch('/api/v1/hud');
+                if (!response.ok) throw new Error('Network error');
+                const data = await response.json();
+                
+                document.getElementById('glucose-val').innerText = data.glucose.toFixed(1);
+                
+                const velStr = data.velocity > 0 ? '+' : '';
+                document.getElementById('velocity-val').innerText = `${data.trend} ${velStr}${data.velocity.toFixed(2)} min`;
+                
+                document.getElementById('carbs-val').innerText = `${data.active_carbs.toFixed(1)}g`;
+                document.getElementById('insulin-val').innerText = `${data.active_insulin.toFixed(2)}U`;
+                
+            } catch (e) {
+                console.error("TWA Bridge Offline", e);
+            }
+        }
+
+        async function updateForecast() {
+            try {
+                const response = await fetch('/api/v1/forecast');
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data.horizon && data.horizon.length > 0) {
+                    chart.data.datasets[0].data = data.horizon;
+                    chart.update();
+                }
+            } catch (e) {
+                console.error("Forecast Offline", e);
+            }
+        }
+
+        setInterval(() => {
+            updateHUD();
+            updateForecast();
+        }, 5000);
+        
+        updateHUD();
+        updateForecast();
+    </script>
+</body>
+</html>

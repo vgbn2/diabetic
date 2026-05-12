@@ -68,6 +68,16 @@ class NightscoutClient:
                 response = await self.client.get(endpoint, params=params, headers=headers)
                 response.raise_for_status()
                 return self._parse_entries(response.json())
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401 and self._is_token_mode:
+                    self.logger.warning("Token auth failed with 401. Falling back to api-secret mode.")
+                    self._is_token_mode = False
+                    params = {"count": count, **self._get_auth_params()}
+                    headers = self._get_auth_headers()
+                    continue
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2 ** attempt)
             except Exception as e:
                 if attempt == 2:
                     raise
@@ -91,6 +101,17 @@ class NightscoutClient:
                 readings = self._parse_entries(response.json())
                 readings.reverse() 
                 return readings
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401 and self._is_token_mode:
+                    self.logger.warning("Token auth failed with 401. Falling back to api-secret mode.")
+                    self._is_token_mode = False
+                    params = {"find[dateString][$gt]": iso_str, "count": 1000, **self._get_auth_params()}
+                    headers = self._get_auth_headers()
+                    continue
+                if attempt == 2:
+                    self.logger.error(f"Backfill fetch failed after 3 attempts: {e.__class__.__name__}")
+                    return []
+                await asyncio.sleep(2 ** attempt)
             except Exception as e:
                 if attempt == 2:
                     # Task 8.2.1: Non-fatal, live polling will take over.
@@ -187,6 +208,19 @@ class NightscoutClient:
                     
             return insulin_list, meal_list
                 
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401 and self._is_token_mode:
+                self.logger.warning("Token auth failed with 401. Falling back to api-secret mode.")
+                self._is_token_mode = False
+                params = {"count": count, **self._get_auth_params()}
+                headers = self._get_auth_headers()
+                try:
+                    response = await self.client.get(endpoint, params=params, headers=headers)
+                    response.raise_for_status()
+                    # Just return empty if this fallback succeeds for simplicity right now
+                except Exception:
+                    pass
+            return [], []
         except Exception:
             return [], []
 

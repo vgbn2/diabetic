@@ -215,24 +215,31 @@ class DigitalTwin:
             curve = np.full_like(t, drop_per_min * resolution_mins, dtype=float)
             return np.cumsum(curve)
 
-        tau = mc.INSULIN_PEAK_TAU_RAPID
+        # 2-Compartment biexponential distribution (Fast redistribution + Slow elimination)
+        tau1 = mc.INSULIN_PEAK_TAU_RAPID * 0.8  # ~44 mins
+        tau2 = mc.INSULIN_ACTION_WINDOW_MINS / 1.8 # ~133 mins
+        w = 0.4 # Weight of fast compartment
+
         onset = mc.INSULIN_ONSET_LAG_MINS
 
         if stochastic:
-            tau *= np.random.uniform(0.9, 1.1)
+            tau1 *= np.random.uniform(0.9, 1.1)
+            tau2 *= np.random.uniform(0.9, 1.1)
             onset *= np.random.uniform(0.8, 1.5)
             units *= np.random.uniform(0.95, 1.05)
 
-        # Cumulative Insulin Action (S-Curve)
-        x = t / tau
-        impact = 1.0 - (1.0 + x) * np.exp(-x)
+        # Calculate remaining IOB at each time step `t`
+        iob_fraction = w * np.exp(-t / tau1) + (1 - w) * np.exp(-t / tau2)
+        iob_fraction = np.clip(iob_fraction, 0.0, 1.0)
+        
+        # The impact curve is the rate of *change* in IOB
+        differential_impact = -np.diff(iob_fraction, prepend=1.0)
         
         # Apply onset lag ramp
         onset_ramp = 1.0 / (1.0 + np.exp(-(t - onset) / 3.0))
-        impact *= onset_ramp
-
+        
         total_drop = units * effective_isf * self.regime_multiplier
-        curve = impact * total_drop
+        curve = differential_impact * onset_ramp * total_drop
         return curve
 
 # =============================================================================

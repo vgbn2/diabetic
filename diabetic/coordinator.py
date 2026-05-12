@@ -49,11 +49,21 @@ class Coordinator:
     """
     The Orchestrator. Connects ingestion, smoothing, prediction, and alerting.
     """
+    _instance: Optional["Coordinator"] = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(Coordinator, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     @classmethod
     async def create(cls, audit_logger: Optional['AuditLogger'] = None) -> "Coordinator":
-        self = cls.__new__(cls)
-        self.logger = logging.getLogger("Bio-Quant.Coordinator")
+        self = cls()
+        if self._initialized:
+            return self
 
+        self.logger = logging.getLogger("Bio-Quant.Coordinator")
         self.background_tasks = set()
         self.audit = audit_logger or AuditLogger()
         self.client = NightscoutClient()
@@ -123,9 +133,32 @@ class Coordinator:
         )
 
         self.is_running = False
+        self._initialized = True
+        
+        # Sovereign Atlas Level 2: Async ingestion queue
+        self.ingestion_queue = asyncio.Queue(maxsize=120)
+        self.worker_task: Optional[asyncio.Task] = None
+        
         return self
 
-# =============================================================================
+    async def _worker_loop(self):
+        """Sovereign Atlas Level 2: Async ingestion queue worker."""
+        self.logger.info("Coordinator ingestion worker loop started.")
+        while True:
+            try:
+                # Wait for a reading to arrive in the queue
+                reading = await self.ingestion_queue.get()
+                
+                # Process the reading through the heavy neural/kalman pipeline
+                await self._process_reading(reading)
+                
+                # Mark the task as done
+                self.ingestion_queue.task_done()
+            except asyncio.CancelledError:
+                self.logger.info("Coordinator ingestion worker shut down.")
+                break
+            except Exception as e:
+                self.logger.error(f"Error in ingestion worker loop: {e}")# =============================================================================
 # 📡 [DATA SYNTHESIS PIPELINE]
 # =Focus: Signal Quality, Smoothing (Kalman), and Multi-Stream Ingestion
 # =============================================================================
@@ -253,7 +286,8 @@ class Coordinator:
             self.logger.info(f"NEURAL_BRAIN: Pred Glu={prediction_30m:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
         else:
             # Wave 2 Hardening: Kinematic Fallback
-            velocity, _ = MetabolicMath.extract_kinematics(list(self.snapshots) + [snapshot])
+            velocity = snapshot.velocity
+            acceleration = snapshot.acceleration
             
             # [H1-P1] Apply BasalOracle correction to kinematic fallback
             oracle_offset = 0.0
@@ -460,7 +494,7 @@ class Coordinator:
             await asyncio.sleep(24 * 3600)  # 24 hours
             if len(self.snapshots) >= 2:
                 try:
-                    self.oracle.fit(list(self.snapshots))
+                    await asyncio.to_thread(self.oracle.fit, list(self.snapshots))
                     if self.oracle.params is not None:
                         self.logger.info(
                             "[C2] BasalOracle fit successful. Params: A=%.2f, phi=%.2f, C=%.2f",
@@ -485,6 +519,11 @@ class Coordinator:
         task_hud = asyncio.create_task(self.hud.run_live(self))
         self.background_tasks.add(task_hud)
         task_hud.add_done_callback(self.background_tasks.discard)
+
+        # Sovereign Atlas Level 2: Async Worker
+        self.worker_task = asyncio.create_task(self._worker_loop())
+        self.background_tasks.add(self.worker_task)
+        self.worker_task.add_done_callback(self.background_tasks.discard)
 
         task_pusher = asyncio.create_task(self.pusher.heartbeat())
         self.background_tasks.add(task_pusher)
@@ -511,6 +550,7 @@ class Coordinator:
             await task_bot
             task_bot = asyncio.create_task(self.bot_app.app.updater.start_polling())
             self.background_tasks.add(task_bot)
+            task_bot.add_done_callback(self.background_tasks.discard)
 
         # 0. Stateful Backfill (Hardened for Neural Warm-up)
         # STAGE 1: Blocking Priority (Neural Engine Saturation)
@@ -569,7 +609,13 @@ class Coordinator:
                     if (now - r_ts).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
                         self.logger.warning(f"Poll returned stale data ({r_ts}). Waiting for fresh reading...")
                     else:
-                        await self._process_reading(reading)
+                        try:
+                            self.ingestion_queue.put_nowait(reading)
+                        except asyncio.QueueFull:
+                            self.logger.warning("Ingestion queue flooded (>120). Dropping oldest packet to maintain realtime processing.")
+                            _ = self.ingestion_queue.get_nowait()
+                            self.ingestion_queue.task_done()
+                            self.ingestion_queue.put_nowait(reading)
             except (ValueError, ConnectionError) as e:
                 # Only crash if both backends fail with fatal Auth errors
                 if ("URL" in str(e) or "token" in str(e).lower() or "Unauthorized" in str(e)) and self.mongo.entries is None:

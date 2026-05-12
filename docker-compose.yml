@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: bio-quant-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+  bio-quant-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bio-quant-core
+    env_file:
+      - .env
+    depends_on:
+      - mongodb
+    command: python -m diabetic.main live
+    restart: unless-stopped
+
+  bio-quant-twa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bio-quant-twa
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    command: uvicorn twa.twa_api:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:

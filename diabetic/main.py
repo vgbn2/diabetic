@@ -1,6 +1,9 @@
 import asyncio
 import logging
 import sys
+import os
+import atexit
+import psutil
 from datetime import datetime, timedelta, timezone
 from diabetic.config import config
 from diabetic.coordinator import Coordinator
@@ -127,6 +130,37 @@ async def main():
         handlers=[logging.StreamHandler(sys.stdout)]
     )
     
+    # Process Isolation (Singleton Check)
+    LOCK_FILE = ".bot.lock"
+    
+    def cleanup_lock():
+        if os.path.exists(LOCK_FILE):
+            try:
+                os.remove(LOCK_FILE)
+            except OSError:
+                pass
+
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            
+            # Check if process is still running
+            if psutil.pid_exists(old_pid):
+                logging.fatal(f"CONFLICT: Another instance of Bio-Quant is already running (PID: {old_pid}). Exiting to prevent Split-Brain.")
+                sys.exit(1)
+            else:
+                logging.warning(f"Found stale lock file for PID {old_pid}. Cleaning up.")
+        except (ValueError, OSError):
+            logging.warning("Found corrupted lock file. Cleaning up.")
+            
+    try:
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+        atexit.register(cleanup_lock)
+    except OSError as e:
+        logging.error(f"Failed to create lock file: {e}")
+
     config.validate_config()
     await db_manager.ensure_indices()
     await _run_command_loop()

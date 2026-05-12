@@ -246,8 +246,12 @@ class MetabolicInferenceRunner:
         with torch.inference_mode():
             output = self.model(temp_x, static_y)[0]
             
+        from diabetic.medical_constants import PHYSIO_FLOOR, FAINT_GLUCOSE
         g_pred = float(output[0]) * 20.0
+        g_pred = max(PHYSIO_FLOOR, min(g_pred, FAINT_GLUCOSE + 5.0))
+        
         hr_pred = (float(output[1]) * 120.0) + 60.0
+        hr_pred = max(40.0, min(hr_pred, 200.0))
 
         return {
             "glucose": g_pred,

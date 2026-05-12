@@ -31,8 +31,8 @@ class Settings(BaseSettings):
 # PATIENT PROFILE: Physiological Baselines
 # -----------------------------------------------------------------------------
     PATIENT_AGE: int = Field(30, validation_alias="PATIENT_AGE")
-    PATIENT_WEIGHT_KG: float = Field(75.0, validation_alias="PATIENT_WEIGHT_KG")
-    PATIENT_HEIGHT_CM: float = Field(175.0, validation_alias="PATIENT_HEIGHT_CM")
+    PATIENT_WEIGHT_KG: float = Field(45.0, validation_alias="PATIENT_WEIGHT_KG")
+    PATIENT_HEIGHT_CM: float = Field(158.0, validation_alias="PATIENT_HEIGHT_CM")
     PATIENT_ETHNICITY: str = Field("UNKNOWN", validation_alias="PATIENT_ETHNICITY")
     PATIENT_NATIONALITY: str = Field("UNKNOWN", validation_alias="PATIENT_NATIONALITY")
     PATIENT_RELIGION: str = Field("NON_RELIGIOUS", validation_alias="PATIENT_RELIGION")

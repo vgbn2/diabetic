@@ -63,6 +63,7 @@ venv.bak/
 # Project specific
 .gsd/
 .agent/
+graphify-out/
 mempalace/
 mempalace.yaml
 data/raw/*

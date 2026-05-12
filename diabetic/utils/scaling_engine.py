@@ -63,7 +63,7 @@ class ScalingEngine:
             cls.ETHNICITY_MAP.get(config.PATIENT_ETHNICITY, 0.0),
             cls.DIABETES_TYPE_MAP.get(config.PATIENT_DIABETES_TYPE, 0.0),
             (now.year - config.PATIENT_DIAGNOSIS_YEAR) / 50.0,
-            cls.ACTIVITY_LEVEL_MAP.get(config.PATIENT_ACTIVITY_LEVEL, 0.5),
+            cls.ACTIVITY_LEVEL_MAP.get(config.PATIENT_ACTIVITY_LEVEL.upper(), 0.5),
             config.PATIENT_FRUCTOSAMIN / 500.0,
             1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
             1.0 if is_sick else 0.0, # is_sick (Dynamic state flag)
