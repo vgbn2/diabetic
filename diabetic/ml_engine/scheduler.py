@@ -19,7 +19,7 @@ class MetabolicScheduler:
 
     def _get_last_training_time(self) -> datetime:
         """Checks the modification time of the current weights file."""
-        weights_path = getattr(config, "ML_WEIGHTS_PATH", "diabetic/ml_engine/weights/diabetic_cnn_v15.pth")
+        weights_path = config.ML_WEIGHTS_PATH
         if os.path.exists(weights_path):
             try:
                 mtime = os.path.getmtime(weights_path)
@@ -57,11 +57,23 @@ class MetabolicScheduler:
                 staleness = datetime.now(timezone.utc) - self.last_training_time
                 if staleness.days >= 7:
                     logger.warning(f"[Scheduler] Model is STALE ({staleness.days} days). Initiating autonomous retraining...")
-                    # We run it in the main event loop but wrapped in a try/except
                     try:
-                        await train_metabolic_cnn(source="mongo", epochs=20, weight_version="v15")
+                        # 1. Train new weights
+                        await train_metabolic_cnn(
+                            source="mongo", 
+                            epochs=20, 
+                            weight_version=config.ML_WEIGHTS_VERSION
+                        )
+                        
+                        # 2. Signal Coordinator to Hot-Reload
+                        from diabetic.coordinator import Coordinator
+                        from pathlib import Path
+                        coord = Coordinator._instance
+                        if coord and coord.neural_runner:
+                            coord.neural_runner.reload_weights(Path(config.ML_WEIGHTS_PATH))
+                        
                         self.last_training_time = datetime.now(timezone.utc)
-                        logger.info("[Scheduler] Autonomous training cycle complete.")
+                        logger.info("[Scheduler] Autonomous training and hot-reload complete.")
                     except Exception as te:
                         logger.error(f"[Scheduler] Training failed: {te}")
                 else:

@@ -103,7 +103,8 @@ async def _run_command_loop():
                     
                     # Start Background Training Scheduler
                     scheduler = MetabolicScheduler()
-                    asyncio.create_task(scheduler.run_forever())
+                    scheduler_task = asyncio.create_task(scheduler.run_forever())
+                    coordinator._scheduler_task = scheduler_task
                     
                     await coordinator.start_live_mode()
                 elif cmd in ["export", "cleanup"]:

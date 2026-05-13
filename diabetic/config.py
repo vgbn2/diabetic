@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     BACKFILL_MAX_HOURS: int = 24
     LOCAL_GUI_ENABLED: bool = True
     
+    # ML Engine (Phase 3 Evolution)
+    ML_WEIGHTS_VERSION: str = "v15"
+    ML_WEIGHTS_PATH: str = "diabetic/ml_engine/weights/diabetic_cnn_v15.pth"
+    
     # --- WAVE 5: UI & Network parameters ---
     LIVE_HISTORY_HOURS: float = 8.0
     BLE_RECONNECT_SECS: int = 30
@@ -127,7 +131,8 @@ class Settings(BaseSettings):
             "API_SECRET": self.API_SECRET,
             "TELEGRAM_TOKEN": self.TELEGRAM_TOKEN,
             "USER_ID": self.USER_ID,
-            "MONGO_URI/MONGODB_URI": active_mongo
+            "MONGO_URI/MONGODB_URI": active_mongo,
+            "ML_WEIGHTS_PATH": self.ML_WEIGHTS_PATH
         }
         
         missing = [k for k, v in critical_keys.items() if not v or v == "0"]

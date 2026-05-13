@@ -791,6 +791,15 @@ class Coordinator:
         """Graceful shutdown of background tasks and clients."""
         self.logger.info("Coordinator shutting down...")
         
+        # Phase 3: Cancel Autonomous Scheduler
+        if hasattr(self, '_scheduler_task') and self._scheduler_task:
+            self.logger.info("Cancelling Autonomous Scheduler task...")
+            self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
+
         # Cancel all background tasks
         for task in list(self.background_tasks):
             task.cancel()

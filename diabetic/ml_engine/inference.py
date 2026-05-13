@@ -29,17 +29,28 @@ class MetabolicInferenceRunner:
         self.device = torch.device('cpu') # Default to CPU
         
         # Load Personalized Weights (Phase 14+)
-        weight_path = Path(__file__).parent / "weights" / "diabetic_cnn_v14.pth"
+        weight_path = Path(config.ML_WEIGHTS_PATH)
         if weight_path.exists():
             try:
                 self.model.load_state_dict(torch.load(weight_path, map_location=self.device, weights_only=True))
-                logger.info(f"Personalized CNN Multi-Task v14 Weights Loaded: {weight_path}")
+                logger.info(f"Personalized CNN Multi-Task {config.ML_WEIGHTS_VERSION} Weights Loaded: {weight_path}")
             except Exception as e:
                 logger.warning(f"Warning: Failed to load multi-task weights: {e}. Running in Cold Mode.")
         else:
             logger.warning(f"Warning: No weights found at {weight_path}. Running in Cold Mode.")
             
         self.model.eval() # Inference mode
+
+    def reload_weights(self, path: Path):
+        """Phase 3: Hot-reloading weights after autonomous retraining."""
+        try:
+            self.model.load_state_dict(
+                torch.load(path, map_location=self.device, weights_only=True)
+            )
+            self.model.eval()
+            logger.info(f"[HotReload] Weights reloaded from {path}")
+        except Exception as e:
+            logger.error(f"[HotReload] Failed to reload weights: {e}. Keeping current weights.")
 
         # P1-2: Sampling Rate Guard
         if config.SAMPLING_INTERVAL_MINS != 5:
@@ -116,13 +127,16 @@ class MetabolicInferenceRunner:
                     # Scale based on feature index
                     if feat_idx == 0: # Glucose
                         interp_row.append(scaling_engine.scale_glucose(val))
+                    elif feat_idx == 1: # Velocity
+                        interp_row.append(np.clip(val, -0.5, 0.5))
+                    elif feat_idx == 2: # Acceleration
+                        interp_row.append(np.clip(val, -0.1, 0.1))
                     elif feat_idx == 3: # HR
                         interp_row.append(scaling_engine.scale_heart_rate(val))
-                    else:
-                        # Other features (velocity, acceleration, iob, cob) 
-                        # should ideally be scaled but we'll pass them raw for now
-                        # as they were likely trained that way or are small.
-                        interp_row.append(val)
+                    elif feat_idx == 4: # IOB
+                        interp_row.append(np.clip(val / 10.0, 0.0, 1.0))
+                    elif feat_idx == 5: # COB
+                        interp_row.append(np.clip(val / 100.0, 0.0, 1.0))
                 data.append(interp_row)
         else:
             window = snapshots[-self.seq_len:]
