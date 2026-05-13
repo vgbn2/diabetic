@@ -116,13 +116,21 @@ class GlucoseFilter:
 
     def _initialize_from_reading(self, reading: GlucoseReading) -> MetabolicSnapshot:
         """Sets internal state to match the very first available reading."""
-        self.kf.x = np.array([[reading.value], [0.0], [0.0]])
+        # Safety: clamp any spurious CGM spike before accepting as initial state.
+        # A reading of 36 mmol/L after sustained hypo is a known sensor artifact.
+        safe_value = float(np.clip(reading.value, medical_constants.PHYSIO_FLOOR, medical_constants.FAINT_GLUCOSE + 5.0))
+        if safe_value != reading.value:
+            self.logger.warning(
+                f"Kalman re-init: raw reading {reading.value:.1f} outside physiological bounds. "
+                f"Clamped to {safe_value:.1f} mmol/L."
+            )
+        self.kf.x = np.array([[safe_value], [0.0], [0.0]])
         self.last_ts = reading.timestamp
         self.initialized = True
         self._update_matrices(self.dt)
         return MetabolicSnapshot(
             glucose=reading,
-            filtered_value=float(reading.value),
+            filtered_value=safe_value,
             velocity=0.0,
             acceleration=0.0
         )

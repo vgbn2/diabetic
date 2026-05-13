@@ -52,8 +52,12 @@ class DigitalTwin:
         except Exception:
             self.cycle_start = datetime(2026, 4, 1, tzinfo=timezone.utc)
         
-        self.liquid_tau = mc.CARB_ABS_LIQUID_TAU
-        self.starch_tau = mc.CARB_ABS_STARCH_TAU
+        self.tau_table = {
+            "LIQUID": mc.CARB_ABS_LIQUID_TAU,          # 15.0 min — fast GI peak
+            "STARCH": mc.CARB_ABS_STARCH_TAU,          # 60.0 min — slow GI peak
+            "SLOW_STARCH": mc.CARB_ABS_STARCH_TAU * 1.5, # 90.0 min — oats/beans/lentils
+            "PROTEIN": mc.CARB_ABS_STARCH_TAU * 2.2,   # 132.0 min — protein-heavy meals
+        }
         self.regime_multiplier = 1.0
 
     def get_hormonal_multiplier(self, timestamp: datetime) -> float:
@@ -91,69 +95,58 @@ class DigitalTwin:
 
         return np.clip(resistance, 0.7, 1.5)
 
-    def get_iob_fraction(self, minutes_ago: float) -> float:
-        """
-        [L1] Calculates remaining Insulin On Board fraction using a biexponential
-        pharmacological decay model (Bergman rapid-acting insulin kinetics).
-
-        Model: IOB(t) = A * exp(-t/tau1) - B * exp(-t/tau2)
-        
-        Calibrated to a clinical Rapid-Acting insulin profile:
-          - Onset: ~10-15 min
-          - Peak activity: ~60-75 min
-          - Duration: ~240 min (mc.INSULIN_ACTION_WINDOW_MINS)
-        """
+    def get_iob_fraction(self, minutes_ago: float, insulin_type: str = "RAPID") -> float:
         if minutes_ago < 0:
             return 1.0
-        if minutes_ago >= mc.INSULIN_ACTION_WINDOW_MINS:
+
+        params = {
+            "RAPID": dict(tau1=44, tau2=133, w=0.5, onset=mc.INSULIN_ONSET_LAG_MINS),
+            "LONG":  dict(tau1=540, tau2=1200, w=0.7, onset=120),
+        }
+        p = params.get(insulin_type.upper(), params["RAPID"])
+
+        action_window = mc.INSULIN_ACTION_WINDOW_MINS if insulin_type == "RAPID" else mc.BASAL_DURATION_HOURS * 60
+        if minutes_ago >= action_window:
             return 0.0
 
-        # [L1] 2-compartment pharmacokinetic decay model (Sum of Exponentials)
-        # Calibrated for Novorapid/Humalog (~4h duration)
-        tau1 = mc.INSULIN_PEAK_TAU_RAPID * 0.8  # fast redistribution (~44 min)
-        tau2 = mc.INSULIN_ACTION_WINDOW_MINS / 1.8 # slow elimination (~133 min)
-        w = 0.4 # redistribution weight
+        raw = p["w"] * np.exp(-minutes_ago / p["tau1"]) + \
+              (1 - p["w"]) * np.exp(-minutes_ago / p["tau2"])
         
-        raw = w * np.exp(-minutes_ago / tau1) + (1 - w) * np.exp(-minutes_ago / tau2)
-        return float(np.clip(raw, 0.0, 1.0))
+        # Match the onset ramp from simulate_insulin_impact
+        onset_ramp = 1.0 / (1.0 + np.exp(-(minutes_ago - p["onset"]) / 3.0))
+        
+        return float(np.clip(raw * onset_ramp, 0.0, 1.0))
 
     def get_environmental_multiplier(self, env: Optional[MetabolicSnapshot]) -> float:
         """
         Calculates Layer 2 forcing: How weather and air quality shift ISF/CSF.
-        Formula: Baseline (1.0) + (Heat Shift) + (Pollution Shift)
         """
         if not env or not env.environment:
             return 1.0
         
         e = env.environment
-        multiplier = 1.0
+        mult = 1.0
         
-        # 1. Heat-Induced Absorption Shift (ISF up / Resistance down)
-        # Baseline: mc.ENVIRONMENT_TEMP_BASELINE. +10°C -> mc.ENVIRONMENT_Q10_COEFFICIENT boost
-        if e.temperature > mc.ENVIRONMENT_TEMP_BASELINE:
-            heat_delta = e.temperature - mc.ENVIRONMENT_TEMP_BASELINE
-            absorption_boost = (heat_delta / 10.0) * mc.ENVIRONMENT_Q10_COEFFICIENT
-            multiplier -= absorption_boost # Less resistance
+        # [L2] Temperature Factor (Q10 rule)
+        # For every 10C deviation from 25C, metabolic rate shifts by ~5%
+        temp_delta = (e.temperature - 25.0) / 10.0
+        mult *= (1.0 + (temp_delta * 0.05))
+        
+        # [L2] Air Quality Damping
+        # High AQI (pollution) reduces insulin sensitivity by inflammatory stress
+        if e.aqi > 100:
+            mult *= (1.0 - (e.aqi - 100) * 0.0002)
             
-        # 2. Pollution-Induced Inflammation (AQI/PM2.5)
-        # WHO baseline: mc.ENVIRONMENT_AQI_BASELINE. 
-        # Every 10µg/m³ above increases resistance by mc.ENVIRONMENT_POLLUTION_RESISTANCE
-        if e.aqi and e.aqi > mc.ENVIRONMENT_AQI_BASELINE:
-            aqi_delta = e.aqi - mc.ENVIRONMENT_AQI_BASELINE
-            pollution_resistance = (aqi_delta / 10.0) * mc.ENVIRONMENT_POLLUTION_RESISTANCE
-            multiplier += pollution_resistance
-            
-        # 3. Humidity Friction (Heat Stress)
+        # [L2] Humidity Friction (Heat Stress)
         if e.humidity > 85.0 and e.temperature > 28.0:
-            multiplier += 0.05 # +5% fixed penalty for high heat index stress, why 5%
+            mult *= 1.05
             
-        # 4. Exposure Awareness (Indoor/Outdoor Damping)
+        # [L2] Exposure Awareness (Indoor/Outdoor Damping)
         if not e.is_outdoor:
-            # If indoors, reduce the entire environmental forcing (forcing = multiplier - 1.0)
-            forcing = multiplier - 1.0
-            multiplier = 1.0 + (forcing * mc.ENVIRONMENT_INDOOR_DAMPING)
+            forcing = mult - 1.0
+            mult = 1.0 + (forcing * mc.ENVIRONMENT_INDOOR_DAMPING)
             
-        return np.clip(multiplier, 0.7, 1.4)
+        return np.clip(mult, 0.7, 1.4)
 
 # =============================================================================
 # 🧪 [PHARMACODYNAMIC ENGINE]
@@ -167,7 +160,8 @@ class DigitalTwin:
                             csf_override: Optional[float] = None) -> np.ndarray:
         if resolution_mins is None:
             resolution_mins = mc.SAMPLING_INTERVAL_MINS
-        tau = self.liquid_tau if gi_type.upper() == "LIQUID" else self.starch_tau
+        
+        tau = self.tau_table.get(gi_type.upper(), self.tau_table["STARCH"])
         
         timestamp = snapshot.glucose.timestamp if snapshot else None
         hormonal_mult = self.get_hormonal_multiplier(timestamp) if timestamp else 1.0
@@ -178,14 +172,9 @@ class DigitalTwin:
             carbs_g *= np.random.uniform(0.85, 1.15)
 
         t = np.arange(0, 240 + resolution_mins, resolution_mins)
-        # Integral of (t/tau)*exp(1-t/tau) is used to create a persistent S-curve (Cumulative Appearance)
-        # Formula: 1 - (1 + t/tau)*exp(-t/tau) * e^1
         x = t / tau
-        # Normalize so that at infinity it reaches 1.0
-        # The integral of x*e^(1-x) from 0 to inf is e. So we divide by e.
         impact = 1.0 - (1.0 + x) * np.exp(-x) 
         
-        # Layer 2 & 3 Synthesis: Behavior * (Physiological + Environmental state)
         csf = csf_override if csf_override is not None else self.csf
         total_rise = carbs_g * csf * self.regime_multiplier * hormonal_mult * env_mult
         curve = impact * total_rise
@@ -206,20 +195,19 @@ class DigitalTwin:
         isf = isf_override if isf_override is not None else self.isf
         effective_isf = isf / (hormonal_mult * env_mult)
 
-        duration = mc.INSULIN_ACTION_WINDOW_MINS
+        duration = mc.INSULIN_ACTION_WINDOW_MINS if insulin_type.upper() == "RAPID" else mc.BASAL_DURATION_HOURS * 60
         t = np.arange(0, duration + resolution_mins, resolution_mins)
 
         if insulin_type.upper() == "LONG":
             total_drop = units * effective_isf
-            drop_per_min = total_drop / (mc.BASAL_DURATION_HOURS * 60.0)
+            drop_per_min = total_drop / duration
             curve = np.full_like(t, drop_per_min * resolution_mins, dtype=float)
             return np.cumsum(curve)
 
-        # 2-Compartment biexponential distribution (Fast redistribution + Slow elimination)
-        tau1 = mc.INSULIN_PEAK_TAU_RAPID * 0.8  # ~44 mins
-        tau2 = mc.INSULIN_ACTION_WINDOW_MINS / 1.8 # ~133 mins
-        w = 0.4 # Weight of fast compartment
-
+        # 2-Compartment biexponential distribution
+        tau1 = 44.0
+        tau2 = 133.0
+        w = 0.5
         onset = mc.INSULIN_ONSET_LAG_MINS
 
         if stochastic:
@@ -228,14 +216,10 @@ class DigitalTwin:
             onset *= np.random.uniform(0.8, 1.5)
             units *= np.random.uniform(0.95, 1.05)
 
-        # Calculate remaining IOB at each time step `t`
         iob_fraction = w * np.exp(-t / tau1) + (1 - w) * np.exp(-t / tau2)
         iob_fraction = np.clip(iob_fraction, 0.0, 1.0)
         
-        # The impact curve is the rate of *change* in IOB
         differential_impact = -np.diff(iob_fraction, prepend=1.0)
-        
-        # Apply onset lag ramp
         onset_ramp = 1.0 / (1.0 + np.exp(-(t - onset) / 3.0))
         
         total_drop = units * effective_isf * self.regime_multiplier
@@ -273,14 +257,7 @@ class DigitalTwin:
             for meal in meals:
                 if not meal.carbs: continue
                 dt_meal_mins = (latest.glucose.timestamp - meal.timestamp).total_seconds() / 60.0
-                # [L2] Guard: skip future-dated meals (clock drift or TWA pre-log)
-                # Without this, `max(0, negative // dt)` = 0, injecting a peak at t=0
-                if dt_meal_mins < 0:
-                    continue
-                # Guard: skip zombie meals older than 24h (stale Nightscout entries)
-                if dt_meal_mins > 1440:
-                    continue
-                if dt_meal_mins > 240.0: continue
+                if dt_meal_mins < 0 or dt_meal_mins > 1440 or dt_meal_mins > 240.0: continue
 
                 full_meal_curve = self.simulate_carb_impact(meal.carbs, meal.gi_type, snapshot=latest, csf_override=csf_override)
                 start_idx = int(dt_meal_mins // dt)
@@ -294,7 +271,8 @@ class DigitalTwin:
             for dose in insulin_doses:
                 if dose.units <= 0: continue
                 dt_insulin_mins = (latest.glucose.timestamp - dose.timestamp).total_seconds() / 60.0
-                if dt_insulin_mins > mc.INSULIN_ACTION_WINDOW_MINS: continue
+                action_window = mc.INSULIN_ACTION_WINDOW_MINS if dose.type.upper() == "RAPID" else mc.BASAL_DURATION_HOURS * 60
+                if dt_insulin_mins > action_window: continue
 
                 full_insulin_curve = self.simulate_insulin_impact(dose.units, dose.type, snapshot=latest, isf_override=isf_override)
                 start_idx = int(max(0, dt_insulin_mins // dt))
@@ -319,9 +297,6 @@ class DigitalTwin:
         for _ in range(N):
             local_isf = self.isf * np.random.uniform(0.85, 1.15)
             local_csf = self.csf * np.random.uniform(0.9, 1.1)
-            
-            # Note: liquid_tau/starch_tau stochasticity is handled inside simulate_carb_impact 
-            # if we passed stochastic=True. For now we use the stateless override pattern.
             traj = self.predict_4h_trajectory(history, meals, insulin, basal_drift, 
                                             csf_override=local_csf, isf_override=local_isf)
             all_sims.append(traj)
@@ -331,7 +306,6 @@ class DigitalTwin:
         p50_traj  = np.percentile(stack, 50, axis=0)
         p95_traj  = np.percentile(stack, 95, axis=0)
 
-        # Slice to 60 minutes (12 points at 5 min intervals + 1 for current state)
         pts_60 = int(60 / mc.SAMPLING_INTERVAL_MINS) + 1
         return p5_traj[:pts_60], p50_traj[:pts_60], p95_traj[:pts_60]
 
@@ -355,11 +329,9 @@ class DigitalTwin:
         recent_samples = int(360 / mc.SAMPLING_INTERVAL_MINS)
         recent_avg = np.mean([s.filtered_value for s in history[-recent_samples:]])
         
-        # [L4] Dynamic 24-hour horizon instead of unbounded full-history
         latest_ts = history[-1].glucose.timestamp
         horizon_24h = latest_ts - timedelta(hours=24)
         
-        # Filter for the last 24 hours
         history_24h = [s.filtered_value for s in history if s.glucose.timestamp >= horizon_24h]
         if not history_24h:
             return "NORMAL"

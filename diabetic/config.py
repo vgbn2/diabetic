@@ -102,11 +102,22 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    def validate_patient_params(self):
+        """H3: Physiological input bounds — reject implausible values."""
+        assert 12 <= self.PATIENT_WEIGHT_KG <= 300, f"Implausible weight: {self.PATIENT_WEIGHT_KG}"
+        assert 60 <= self.PATIENT_HEIGHT_CM <= 250, f"Implausible height: {self.PATIENT_HEIGHT_CM}"
+        assert 5 <= self.PATIENT_AGE <= 110, f"Implausible age: {self.PATIENT_AGE}"
+        assert self.PATIENT_DIABETES_TYPE in ("Type1", "Type2", "LADA", "MODY"), \
+            f"Unknown diabetes type: {self.PATIENT_DIABETES_TYPE}"
+        assert self.PATIENT_GENDER in ("male", "female", "other"), \
+            f"Unknown gender: {self.PATIENT_GENDER}"
+
     def validate_config(self):
         """
         Wave 1 Hardening: Verifies required metadata and connectivity secrets at boot.
         Prevents silent degraded operation in production.
         """
+        self.validate_patient_params()
         # Prioritize MONGODB_URI (Heroku Addons) over MONGO_URI (Local/Manual)
         active_mongo = self.MONGODB_URI or self.MONGO_URI
         

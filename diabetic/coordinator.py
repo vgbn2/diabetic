@@ -125,6 +125,7 @@ class Coordinator:
         # compares actual glucose against the real 4h meal prediction, not
         # snapshot.predict_30m which is a short-horizon kinematic value.
         self.pending_meal_forecast_peak: Optional[float] = None
+        self._confidence_smoothed: float = 1.0
         
         # O1: Consolidated Tactical Forecaster (physiology-aware)
         self.forecaster = TacticalForecaster(
@@ -271,7 +272,8 @@ class Coordinator:
 
         if snapshot.last_insulin and snapshot.last_insulin.units is not None:
             dt_i = (now - snapshot.last_insulin.timestamp).total_seconds() / 60.0
-            snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i))
+            insulin_type = snapshot.last_insulin.type or "RAPID"
+            snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i, insulin_type=insulin_type))
 
         # 4. Feature Extraction
         snapshot.atr_14 = MetabolicMath.calculate_atr(list(self.snapshots) + [snapshot], period=14)
@@ -279,25 +281,35 @@ class Coordinator:
         # 5. Forecasting
         # Strategy: Use Multi-Task Neural Engine as primary, fallback to kinematics if warming up.
         neural_res = self.neural_runner.run_inference_on_snapshots(list(self.snapshots) + [snapshot])
+        cnn_prediction = None
         if neural_res:
-            prediction_30m = neural_res["glucose"]
-            snapshot.predict_30m = prediction_30m
+            cnn_prediction = neural_res["glucose"]
             snapshot.predicted_hr = neural_res["heart_rate"]
-            self.logger.info(f"NEURAL_BRAIN: Pred Glu={prediction_30m:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
-        else:
-            # Wave 2 Hardening: Kinematic Fallback
-            velocity = snapshot.velocity
-            acceleration = snapshot.acceleration
+            self.logger.info(f"NEURAL_BRAIN: Pred Glu={cnn_prediction:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
+
+        # Wave 2 Hardening: Kinematic Fallback
+        velocity = snapshot.velocity
+        acceleration = snapshot.acceleration
+        
+        # [H1-P1] Apply BasalOracle correction to kinematic fallback
+        # FIX: Oracle returns absolute basal glucose, so compute DELTA from current filtered value.
+        # FIX: Use filtered_value (Kalman-smoothed), not raw glucose.value (susceptible to CGM spikes).
+        oracle_offset = 0.0
+        if self.oracle.params is not None:
+            oracle_absolute = self.oracle.get_expected_basal(now + timedelta(minutes=30), now)
+            oracle_offset = oracle_absolute - snapshot.filtered_value  # delta only
+            self.logger.info(f"ORACLE_BIAS: Expected={oracle_absolute:.2f}, Current={snapshot.filtered_value:.2f}, Delta={oracle_offset:+.2f}")
             
-            # [H1-P1] Apply BasalOracle correction to kinematic fallback
-            oracle_offset = 0.0
-            if self.oracle.params is not None:
-                oracle_offset = self.oracle.get_expected_basal(now + timedelta(minutes=30), now)
-                self.logger.info(f"ORACLE_BIAS: Applying {oracle_offset:+.2f} drift to kinematic forecast.")
-                
-            prediction_30m = snapshot.glucose.value + (velocity * 30.0) + oracle_offset
-            snapshot.predict_30m = prediction_30m
+        kinematic_prediction = snapshot.filtered_value + (velocity * 30.0) + oracle_offset
+        
+        # Blend CNN + Kinematic (50/50 if CNN available)
+        if cnn_prediction is not None:
+            prediction_30m = 0.5 * kinematic_prediction + 0.5 * cnn_prediction
+        else:
+            prediction_30m = kinematic_prediction
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
+        
+        snapshot.predict_30m = prediction_30m
 
         # 5b. Tactical Forecaster — 15/30/60m regression-based horizons
         points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
@@ -316,7 +328,10 @@ class Coordinator:
         snapshot.predict_15m = tactical["p15m"]
         snapshot.predict_60m = tactical["p60m"]
         snapshot.velocity_score = tactical["velocity"]
-        snapshot.confidence_index = compute_confidence_index(confidence_history)
+        
+        raw_confidence = compute_confidence_index(confidence_history)
+        self._confidence_smoothed = 0.8 * self._confidence_smoothed + 0.2 * raw_confidence
+        snapshot.confidence_index = self._confidence_smoothed
 
         # 5c. Context Classification
         snapshot.activity_label = classify_context(snapshot).value
@@ -374,23 +389,12 @@ class Coordinator:
             self.logger.info(f"Metabolic Regime Detected: {regime} (Step: {self.regime_step_count})")
 
         # 8. Meal Window Auto-Tune
-        # FIX C2: track actual peak and compare against predicted forecast peak.
-        if self.last_meal and self.meal_window_start and self.meal_tune_pending:
-            self.actual_meal_peak = max(self.actual_meal_peak, reading.value)
-            
-            dt_meal = (reading.timestamp - self.meal_window_start).total_seconds() / 60.0
-            if dt_meal >= 230:
-                self.logger.info(f"Meal window closed (dt={dt_meal:.1f}m). Triggering Twin Auto-Tune via observed peak: {self.actual_meal_peak:.1f}...")
-                if self.pending_meal_forecast_peak and self.pending_meal_forecast_peak > 0.1:
-                    # Logic: use the ACTUAL Highest glucose reached vs the PREDICTED Highest glucose.
-                    self.twin.auto_tune(self.actual_meal_peak, self.pending_meal_forecast_peak)
-                else:
-                    self.logger.warning("No stored meal forecast peak — auto_tune skipped.")
-                
-                # Reset window
+        if self.meal_tune_pending and self.meal_window_start:
+            elapsed = (snapshot.glucose.timestamp - self.meal_window_start).total_seconds() / 60.0
+            if elapsed >= 230:
+                await self._auto_tune_meal(snapshot)
                 self.meal_tune_pending = False
-                self.pending_meal_forecast_peak = None
-                self.actual_meal_peak = 0.0
+                self.meal_window_start = None
 
         # 9. Push to Frontend
         if not is_backfill:
@@ -734,6 +738,32 @@ class Coordinator:
                 await asyncio.sleep(60)
 
 
+    async def _auto_tune_meal(self, snapshot: MetabolicSnapshot):
+        """Compares actual peak vs forecast peak; adjusts CSF."""
+        if self.pending_meal_forecast_peak is None:
+            return
+        
+        # Find actual peak in 230-min window post-meal
+        since_meal = [
+            s for s in self.snapshots
+            if s.glucose.timestamp >= self.meal_window_start
+        ]
+        actual_peak = max((s.glucose.value for s in since_meal), default=None)
+        if actual_peak is None:
+            return
+        
+        forecast_peak = self.pending_meal_forecast_peak
+        ratio = actual_peak / forecast_peak if forecast_peak > 0 else 1.0
+        ratio = np.clip(ratio, 0.6, 1.4)  # Limit aggressive corrections
+        
+        # Damped update (don't overcorrect in one meal)
+        ALPHA = 0.2
+        self.twin.csf *= (1 + ALPHA * (ratio - 1.0))
+        self.twin.csf = float(np.clip(self.twin.csf, 0.1, 5.0))
+        
+        self.logger.info(f"[AutoTune] CSF adjusted: ratio={ratio:.2f}, new CSF={self.twin.csf:.3f}")
+        self.pending_meal_forecast_peak = None
+
 # =============================================================================
 # 🛑 [TERMINATION]
 # =Focus: Graceful Shutdown of Background Tasks and Services
@@ -741,34 +771,39 @@ class Coordinator:
     async def stop(self):
         """Graceful shutdown of all services."""
         self.is_running = False
-        self.hr_client.is_running = False
-        if self.bot_app:
-            self.logger.info("Stopping Telegram Bot...")
-            try:
-                if self.bot_app.app.updater and self.bot_app.app.updater.running:
-                    await self.bot_app.app.updater.stop()
-                await self.bot_app.app.stop()
-                await self.bot_app.app.shutdown()
-            except Exception as e:
-                self.logger.debug(f"Bot shutdown warning: {e}")
-
-        if self.background_tasks:
-            self.logger.info(f"Awaiting {len(self.background_tasks)} background tasks before shutdown...")
-            # Wave 6 Hardening: Filter out current task if we are running in one
-            tasks = [t for t in self.background_tasks if t is not asyncio.current_task()]
-            if tasks:
-                await asyncio.wait(tasks, timeout=5.0)
-
-        # Wave 0 Hardening: Close persistent clients
-        self.logger.info("Closing persistent network and database resources...")
-        await self.client.close()
-        await self.weather_client.close()
-        await self.pusher.close()
-        
-        from diabetic.utils.db import db_manager
-        await db_manager.close()
-        
+        await self.shutdown()
         self.logger.info("Bio-Quant Orchestrator stopped.")
+
+    async def shutdown(self):
+        """Graceful shutdown of background tasks and clients."""
+        self.logger.info("Coordinator shutting down...")
+        
+        # Cancel all background tasks
+        for task in list(self.background_tasks):
+            task.cancel()
+        if self.background_tasks:
+            await asyncio.gather(*self.background_tasks, return_exceptions=True)
+        
+        # Stop bot polling
+        if self.bot_app and self.bot_app.app.updater and self.bot_app.app.updater.running:
+            await self.bot_app.app.updater.stop()
+            await self.bot_app.app.stop()
+            await self.bot_app.app.shutdown()
+        
+        # Close ingestion clients
+        if hasattr(self.client, 'close'):
+            await self.client.close()
+        if hasattr(self.mongo, 'close'):
+            await self.mongo.close()
+        if hasattr(self.weather_client, 'close'):
+            await self.weather_client.close()
+        if hasattr(self.pusher, 'close'):
+            await self.pusher.close()
+        
+        from diabetic.storage.engine import close_db as close_storage_db
+        await close_storage_db()
+        
+        self.logger.info("Coordinator shutdown complete.")
 
 if __name__ == "__main__":
     async def main():

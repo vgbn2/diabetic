@@ -221,8 +221,20 @@ class TelegramApp:
             import re
             desc = re.sub(r'[^a-zA-Z0-9\s]', '', " ".join(context.args[:-1])).strip().lower()[:100]
 
-            fast_keywords = ["honey", "sugar", "juice", "liquid", "soda", "gel"]
-            gi_type = "LIQUID" if any(k in desc for k in fast_keywords) else "STARCH"
+            LIQUID_KEYWORDS = {
+                "honey", "sugar", "juice", "liquid", "soda", "gel",
+                "energy drink", "sports drink", "syrup", "smoothie", "shake"
+            }
+            SLOW_KEYWORDS = {
+                "oats", "beans", "lentils", "chickpea", "barley", "quinoa"
+            }
+
+            if any(k in desc for k in LIQUID_KEYWORDS):
+                gi_type = "LIQUID"
+            elif any(k in desc for k in SLOW_KEYWORDS):
+                gi_type = "SLOW_STARCH"
+            else:
+                gi_type = "STARCH"
 
             await update.message.reply_text(f"Logged {grams}g of {desc} ({gi_type} profile). Syncing with Nightscout...")
 

@@ -163,10 +163,19 @@ async def main():
 
     config.validate_config()
     await db_manager.ensure_indices()
-    await _run_command_loop()
+    try:
+        await _run_command_loop()
+    except KeyboardInterrupt:
+        logger.info("Interrupted.")
+    finally:
+        # Retrieve singleton and shut down cleanly
+        coordinator = Coordinator._instance
+        if coordinator:
+            await coordinator.shutdown()
+        cleanup_lock()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("System stopped by user.")
+        pass
