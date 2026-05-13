@@ -337,5 +337,13 @@ The system is now fully autonomous regarding model optimization. The next step i
 - **Model Agility**: Implemented hot-reload mechanism (`reload_weights`) to enable seamless model updates without service interruption.
 - **Signal Fidelity**: Resolved resampling channel skew by aligning velocity/acceleration scaling in `inference.py` with training distribution.
 - **Config Standardization**: Centralized weight path management in `config.py` with boot-time validation.
+- **Path Hardening**: Migrated `ML_WEIGHTS_PATH` to an absolute path resolution based on the project root to prevent CWD-dependent failures in the scheduler.
 
-**System Status**: Production-Hardened. Ready for Phase 4 (Alpha Gating).
+**System Status**: Production-Hardened (Absolute Pathing). Ready for Phase 4 (Alpha Gating).
+
+### Technical Insights & Learnings (Session 2026-05-13)
+- **Environmental Anchoring**: Integrating weather data into training via `pd.merge_asof` with a 60m tolerance solves the temporal alignment gap between bio-telemetry and environmental drift.
+- **Inference-Training Parity**: Identified and fixed "Resampling Drift" where secondary channels (velocity/acceleration) required explicit scaling in the inference path to match training distributions.
+- **Defensive ML Protocols**: Implemented a "Loss Floor" (MSE > 2.0) in the training pipeline to automatically purge divergent or overfit models, prioritizing safety over convergence.
+- **Lifecycle Orchestration**: Anchored autonomous background tasks to the `Coordinator` lifecycle to prevent "zombie" training processes and ensure clean shutdowns.
+- **Hot-Reload Architecture**: Developed a weight-reloading pattern that picks up nightly optimizations without interrupting the 24/7 ingestion loop.

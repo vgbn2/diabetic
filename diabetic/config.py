@@ -6,6 +6,8 @@ from typing import Optional, Dict
 from diabetic import medical_constants
 
 class Settings(BaseSettings):
+    _ROOT_DIR = Path(__file__).resolve().parent.parent
+
 # -----------------------------------------------------------------------------
 # CORE SETTINGS: API & Alerting Credentials
 # -----------------------------------------------------------------------------
@@ -86,7 +88,7 @@ class Settings(BaseSettings):
     
     # ML Engine (Phase 3 Evolution)
     ML_WEIGHTS_VERSION: str = "v15"
-    ML_WEIGHTS_PATH: str = "diabetic/ml_engine/weights/diabetic_cnn_v15.pth"
+    ML_WEIGHTS_PATH: str = str(Path(__file__).resolve().parent.parent / "diabetic/ml_engine/weights/diabetic_cnn_v15.pth")
     
     # --- WAVE 5: UI & Network parameters ---
     LIVE_HISTORY_HOURS: float = 8.0
