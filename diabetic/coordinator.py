@@ -180,6 +180,9 @@ class Coordinator:
         if SignalQuality.is_compression_low(history):
             self.logger.warning(f"Signal artifact detected at {reading.timestamp}. Skipping.")
             return
+        if SignalQuality.is_compression_spike(history):
+            self.logger.warning(f"Post-hypo spike artifact detected at {reading.timestamp} (value={reading.value:.1f}). Skipping.")
+            return
 
         # 1b. Freshness Check
         # FIX C1: always use UTC-aware now; normalise incoming timestamp if naive.
@@ -227,10 +230,15 @@ class Coordinator:
                 snapshot.cardiac = None
             
             we_res = results[2]
-            if not isinstance(we_res, Exception):
+            if not isinstance(we_res, Exception) and we_res:
                 snapshot.environment = we_res
+                # PERSISTENCE (Phase 3): Anchor local weather to historical readings
+                if not is_backfill:
+                    persist_task = asyncio.create_task(self.mongo.save_environment_reading(we_res))
+                    self.background_tasks.add(persist_task)
+                    persist_task.add_done_callback(self.background_tasks.discard)
             else:
-                self.logger.warning(f"Weather ingestion failed: {we_res}")
+                self.logger.warning(f"Weather ingestion failed or returned null: {we_res}")
                 snapshot.environment = None
 
             ms_res = results[3]
@@ -337,7 +345,12 @@ class Coordinator:
         snapshot.activity_label = classify_context(snapshot).value
 
         # 6. Alert Decision
+        # Guard: filtered_value < 0.5 indicates an uninitialized snapshot — skip alerting.
         # Strategy: Skip alerting during backfill/sync.
+        if snapshot.filtered_value < 0.5:
+            self.logger.warning("Skipping alert: filtered_value not yet initialized.")
+            self.snapshots.append(snapshot)
+            return
         if is_backfill:
             self.snapshots.append(snapshot)
             return

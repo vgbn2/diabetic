@@ -30,6 +30,7 @@ class DatabaseSingleton:
         self.entries = None
         self.treatments = None
         self.audit_logs = None
+        self.environment_history = None
         
         if self.uri:
             try:
@@ -53,6 +54,7 @@ class DatabaseSingleton:
                 
                 # Bio-Quant Specific Collections (can be in same DB for consolidation)
                 self.audit_logs = self.db["audit_logs"]
+                self.environment_history = self.db["environment_history"]
                 
                 self.logger.info(f"MongoDB Singleton initialized: {db_name} (Pool: 10)")
                 self._initialized = True
@@ -75,6 +77,9 @@ class DatabaseSingleton:
             
             # Audit Logs: event_type and timestamp
             await self.audit_logs.create_index([("event_type", 1), ("timestamp", -1)])
+            
+            # Environment History: timestamp for joining/windowing
+            await self.environment_history.create_index([("timestamp", -1)])
             
             self.logger.info("MongoDB indices verified/created.")
         except Exception as e:

@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from diabetic.config import config
-from diabetic.registry import GlucoseReading, InsulinDose, MealEvent
+from diabetic.registry import GlucoseReading, InsulinDose, MealEvent, EnvironmentReading
 from diabetic.utils.db import db_manager
 
 # =============================================================================
@@ -22,6 +22,7 @@ class MongoDBClient:
         # Reference collections from singleton
         self.entries = self.db_manager.entries
         self.treatments = self.db_manager.treatments
+        self.environment_history = self.db_manager.environment_history
         
         if self.db_manager.entries is None:
             self.logger.warning("MongoDB Singleton not initialized or entries collection missing. Ingestion limited.")
@@ -104,6 +105,21 @@ class MongoDBClient:
             
         return latest_insulin, latest_meal
 
+    async def save_environment_reading(self, reading: EnvironmentReading):
+        """Persists environmental context for historical anchoring (Phase 3)."""
+        if self.environment_history is None: return
+        
+        try:
+            doc = {
+                "timestamp": reading.timestamp,
+                "temperature": reading.temperature,
+                "humidity": reading.humidity,
+                "aqi": reading.aqi
+            }
+            await self.environment_history.insert_one(doc)
+        except Exception as e:
+            self.logger.error(f"Failed to save environment reading: {e}")
+
 # =============================================================================
 # 📊 [TRAINING & CLINICAL ANALYSIS]
 # =Focus: High-Volume Data Retrieval for Model Optimization
@@ -166,7 +182,33 @@ class MongoDBClient:
                 df["meal"] = 0
 
             df = df.fillna(0)
-            self.logger.info(f"Successfully retrieved {len(df)} training samples from MongoDB.")
+
+            # 3. Fetch Environment (Weather) - Anchor Step
+            env_cursor = self.environment_history.find({"timestamp": {"$gte": cutoff}})
+            env_raw = await env_cursor.to_list(length=5000)
+            if env_raw:
+                df_env = pd.DataFrame([{
+                    "timestamp": e["timestamp"],
+                    "temperature": e.get("temperature", 25.0),
+                    "humidity": e.get("humidity", 60.0),
+                    "aqi": e.get("aqi", 50.0)
+                } for e in env_raw])
+                
+                # Merge logic (deterministic anchor)
+                df = pd.merge_asof(
+                    df.sort_values("timestamp"),
+                    df_env.sort_values("timestamp"),
+                    on="timestamp",
+                    direction="backward",
+                    tolerance=timedelta(minutes=60) # 1-hour anchor window
+                )
+            
+            # Fill missing weather with Baseline (Regional Hanoi)
+            df['temperature'] = df['temperature'].fillna(26.5)
+            df['humidity'] = df['humidity'].fillna(80.0)
+            df['aqi'] = df['aqi'].fillna(45.0)
+
+            self.logger.info(f"Successfully retrieved {len(df)} training samples from MongoDB (Anchored with Env).")
             return df
 
         except Exception as e:

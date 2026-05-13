@@ -39,7 +39,6 @@ async def run_simulation(scenario: str):
         # Rapid drop from normal to hypoglycemia
         logger.info("SIMULATION: Initiating Rapid Hypoglycemic Crash...")
         for i in range(10):
-            val = 110 - (i * 10) # dropping fast (mg/dL internally for logic? No, registry says mmol/L)
             val_mmol = 6.1 - (i * 0.5) 
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="DoubleDown"))
     elif scenario == "faint":
@@ -99,7 +98,13 @@ async def _run_command_loop():
                     await run_simulation(scenario)
                     break
                 elif cmd == "live":
+                    from diabetic.ml_engine.scheduler import MetabolicScheduler
                     coordinator = await Coordinator.create()
+                    
+                    # Start Background Training Scheduler
+                    scheduler = MetabolicScheduler()
+                    asyncio.create_task(scheduler.run_forever())
+                    
                     await coordinator.start_live_mode()
                 elif cmd in ["export", "cleanup"]:
                     await handle_admin_commands(cmd)

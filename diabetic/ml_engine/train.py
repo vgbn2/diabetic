@@ -134,27 +134,33 @@ async def train_metabolic_cnn(
                 logger.info(f"EARLY STOPPING: Validation loss stagnated for {PATIENCE_LIMIT} epochs.")
                 break
 
-    logger.info(f"\nSUCCESS: Best Weights Saved to {weight_path} (Val Loss: {best_val:.6f})")
+    # 7. ANTI-HALLUCINATION GUARD (Phase 3)
+    # Strategy: Enforce clinical boundaries and error floors before allowing deployment.
+    LOSS_FLOOR = 2.0  # Max allowable MSE for deployment
+    if best_val > LOSS_FLOOR:
+        logger.error(f"[Guard] TRAINING REJECTED: Final Val Loss ({best_val:.4f}) exceeds safety floor ({LOSS_FLOOR}). Potential divergence or data corruption.")
+        if weight_path.exists(): weight_path.unlink()
+        return None
+        
+    # Physiological Clipping Check
+    try:
+        model.load_state_dict(torch.load(weight_path))
+        model.eval()
+        with torch.no_grad():
+            x_sample, s_sample, _ = next(iter(val_loader))
+            preds = model(x_sample.to(device), s_sample.to(device)).cpu().numpy()
+            
+            # Check for extreme hallucinations (outside 2.0 - 25.0 mmol/L)
+            if np.any(preds < 2.0) or np.any(preds > 25.0):
+                logger.error(f"[Guard] TRAINING REJECTED: Model produced non-physiological predictions (Range: {preds.min():.1f} - {preds.max():.1f}). Weights purged.")
+                if weight_path.exists(): weight_path.unlink()
+                return None
+    except Exception as ge:
+        logger.error(f"[Guard] Safety check failed with error: {ge}")
+        if weight_path.exists(): weight_path.unlink()
+        return None
 
-    # 6. Plot Loss (Thread-Safe Figure API Fix H3)
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    
-    fig = Figure(figsize=(10, 6))
-    ax = fig.add_subplot(111)
-    ax.plot(history["train_loss"], label="Train Loss")
-    ax.plot(history["val_loss"], label="Val Loss")
-    ax.set_title(f"Metabolic CNN Training Convergence ({weight_version})")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("MSE Loss")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    plot_path = f"storage/data/processed/plots/training_loss_{weight_version}.png"
-    Path("storage/data/processed/plots").mkdir(parents=True, exist_ok=True)
-    FigureCanvasAgg(fig).print_png(plot_path)
-    logger.info(f"Convergence Plot Saved: {plot_path}")
-
+    logger.info(f"[Guard] Anti-hallucination checks PASSED. Weights {weight_version} verified for production.")
     return model
 
 if __name__ == "__main__":
