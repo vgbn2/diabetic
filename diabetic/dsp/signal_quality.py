@@ -49,3 +49,23 @@ class SignalQuality:
         from diabetic.dsp.metabolic_math import MetabolicMath
         dt = MetabolicMath.get_dt(last_readings[-1].timestamp, last_readings[-2].timestamp)
         return dt > max_gap_mins
+
+    @staticmethod
+    def is_compression_spike(last_readings: List[GlucoseReading], hypo_ceiling: float = 4.0, spike_threshold: float = 10.0) -> bool:
+        """
+        Detects post-hypo recovery spike artifacts.
+        A CGM sensor that has been recording sustained hypo will sometimes
+        overshoot and report a falsely-high reading (e.g. 36 mmol/L).(this happens once)
+        Logic: previous reading was in hypo range AND current jump is non-physiological.
+        """
+        if len(last_readings) < 2:
+            return False
+
+        r_curr = last_readings[-1]
+        r_prev = last_readings[-2]
+
+        # Only flag if we were in hypo range and just jumped massively upward
+        if r_prev.value < hypo_ceiling and (r_curr.value - r_prev.value) > spike_threshold:
+            return True
+
+        return False

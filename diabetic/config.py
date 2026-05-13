@@ -107,9 +107,10 @@ class Settings(BaseSettings):
         assert 12 <= self.PATIENT_WEIGHT_KG <= 300, f"Implausible weight: {self.PATIENT_WEIGHT_KG}"
         assert 60 <= self.PATIENT_HEIGHT_CM <= 250, f"Implausible height: {self.PATIENT_HEIGHT_CM}"
         assert 5 <= self.PATIENT_AGE <= 110, f"Implausible age: {self.PATIENT_AGE}"
-        assert self.PATIENT_DIABETES_TYPE in ("Type1", "Type2", "LADA", "MODY"), \
+        # Note: twin.py calls .upper() on these, so we validate uppercase forms.
+        assert self.PATIENT_DIABETES_TYPE.upper() in ("T1D", "T2D", "LADA", "MODY", "PREDIABETES"), \
             f"Unknown diabetes type: {self.PATIENT_DIABETES_TYPE}"
-        assert self.PATIENT_GENDER in ("male", "female", "other"), \
+        assert self.PATIENT_GENDER.upper() in ("MALE", "FEMALE", "OTHER"), \
             f"Unknown gender: {self.PATIENT_GENDER}"
 
     def validate_config(self):
