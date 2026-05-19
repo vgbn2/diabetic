@@ -1,6 +1,10 @@
 import torch
 import unittest
+from datetime import datetime, timezone, timedelta
+
+from diabetic.registry import GlucoseReading, MetabolicSnapshot
 from diabetic.ml_engine.convolutional_layer import DiabeticCNN
+from diabetic.ml_engine.inference import MetabolicInferenceRunner
 
 class TestDiabeticCNN(unittest.TestCase):
     def setUp(self):
@@ -16,7 +20,7 @@ class TestDiabeticCNN(unittest.TestCase):
         )
 
     def test_forward_dims(self):
-        """Verify the model outputs a single scalar residue per batch item."""
+        """Verify the model outputs glucose and heart-rate predictions per batch item."""
         # [Batch, Channels, Time]
         X_temp = torch.randn(self.batch_size, self.temporal_channels, self.seq_len)
         # [Batch, StaticFeatures]
@@ -24,13 +28,13 @@ class TestDiabeticCNN(unittest.TestCase):
         
         output = self.model(X_temp, X_static)
         
-        self.assertEqual(output.shape, (self.batch_size, 1))
+        self.assertEqual(output.shape, (self.batch_size, 2))
 
     def test_gradient_flow(self):
         """Verify that gradients propagate to the weights."""
         X_temp = torch.randn(self.batch_size, self.temporal_channels, self.seq_len)
         X_static = torch.randn(self.batch_size, self.static_features)
-        target = torch.randn(self.batch_size, 1)
+        target = torch.randn(self.batch_size, 2)
         
         output = self.model(X_temp, X_static)
         loss = torch.nn.MSELoss()(output, target)
@@ -41,6 +45,48 @@ class TestDiabeticCNN(unittest.TestCase):
             if param.requires_grad:
                 self.assertIsNotNone(param.grad, f"Gradient for {name} is None")
                 break
+
+
+class TestMetabolicInferenceRunner(unittest.TestCase):
+    def test_short_window_before_hot_reload(self):
+        """Fresh runners must initialize sampling mode before first inference."""
+        runner = MetabolicInferenceRunner()
+        snapshot = MetabolicSnapshot(
+            glucose=GlucoseReading(
+                timestamp=datetime.now(timezone.utc),
+                value=6.5,
+                trend="Flat",
+            )
+        )
+
+        tensor = runner._prepare_temporal_tensor([snapshot])
+
+        self.assertFalse(runner._resample_to_5min)
+        self.assertIsNone(tensor)
+
+    def test_full_window_matches_model_channels(self):
+        """Live inference windows must match the two-channel training contract."""
+        runner = MetabolicInferenceRunner()
+        start = datetime.now(timezone.utc) - timedelta(minutes=145)
+        snapshots = [
+            MetabolicSnapshot(
+                glucose=GlucoseReading(
+                    timestamp=start + timedelta(minutes=5 * idx),
+                    value=6.0 + (idx * 0.01),
+                    trend="Flat",
+                ),
+                predicted_hr=72.0,
+            )
+            for idx in range(runner.seq_len)
+        ]
+
+        tensor = runner._prepare_temporal_tensor(snapshots)
+        result = runner.run_inference_on_snapshots(snapshots)
+
+        self.assertEqual(tensor.shape, (1, runner.config.temporal_channels, runner.seq_len))
+        self.assertEqual(runner.config.temporal_channels, 2)
+        self.assertIn("glucose", result)
+        self.assertIn("heart_rate", result)
 
 if __name__ == "__main__":
     unittest.main()

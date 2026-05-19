@@ -20,6 +20,7 @@ import os
 
 from diabetic.ml_engine.convolutional_layer import DiabeticCNN, CNNConfig
 from diabetic.ml_engine.metabolic_dataset import MetabolicDataset
+from diabetic.config import config
 
 logger = logging.getLogger("Bio-Quant.ML.Train")
 
@@ -68,8 +69,8 @@ async def train_metabolic_cnn(
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
 
     # 3. Model Initialization
-    config = CNNConfig()
-    model = DiabeticCNN(config=config).to(device)
+    cnn_config = CNNConfig()
+    model = DiabeticCNN(config=cnn_config).to(device)
     
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -82,9 +83,15 @@ async def train_metabolic_cnn(
     patience_count = 0
     PATIENCE_LIMIT = 10
 
-    weight_dir = Path("diabetic/ml_engine/weights")
-    weight_dir.mkdir(parents=True, exist_ok=True)
-    weight_path = weight_dir / f"diabetic_cnn_{weight_version}.pth"
+    weight_path = Path(config.ML_WEIGHTS_PATH)
+    weight_path.parent.mkdir(parents=True, exist_ok=True)
+    if weight_version != config.ML_WEIGHTS_VERSION:
+        logger.warning(
+            "Requested weight_version %s, but configured deployment path is %s. "
+            "Saving to ML_WEIGHTS_PATH for scheduler/inference parity.",
+            weight_version,
+            config.ML_WEIGHTS_PATH,
+        )
 
     for epoch in range(epochs):
         model.train()
@@ -150,9 +157,12 @@ async def train_metabolic_cnn(
             x_sample, s_sample, _ = next(iter(val_loader))
             preds = model(x_sample.to(device), s_sample.to(device)).cpu().numpy()
             
+            # Rescale for guard check (Glucose is idx 0)
+            g_preds = preds[:, 0] * 20.0
+            
             # Check for extreme hallucinations (outside 2.0 - 25.0 mmol/L)
-            if np.any(preds < 2.0) or np.any(preds > 25.0):
-                logger.error(f"[Guard] TRAINING REJECTED: Model produced non-physiological predictions (Range: {preds.min():.1f} - {preds.max():.1f}). Weights purged.")
+            if np.any(g_preds < 2.0) or np.any(g_preds > 25.0):
+                logger.error(f"[Guard] TRAINING REJECTED: Model produced non-physiological predictions (Range: {g_preds.min():.1f} - {g_preds.max():.1f}). Weights purged.")
                 if weight_path.exists(): weight_path.unlink()
                 return None
     except Exception as ge:
@@ -161,6 +171,27 @@ async def train_metabolic_cnn(
         return None
 
     logger.info(f"[Guard] Anti-hallucination checks PASSED. Weights {weight_version} verified for production.")
+
+    # 8. Convergence Visualization
+    try:
+        plt.figure(figsize=(10, 6))
+        plt.plot(history["train_loss"], label="Train Loss")
+        plt.plot(history["val_loss"], label="Val Loss")
+        plt.title(f"Metabolic CNN Training Convergence ({weight_version})")
+        plt.xlabel("Epoch")
+        plt.ylabel("MSE Loss")
+        plt.legend()
+        plt.grid(True)
+        
+        charts_dir = Path(__file__).resolve().parents[2] / "charts"
+        charts_dir.mkdir(parents=True, exist_ok=True)
+        plot_path = charts_dir / "latest_training_convergence.png"
+        plt.savefig(plot_path)
+        plt.close()
+        logger.info(f"[Visualization] Convergence plot saved to {plot_path}")
+    except Exception as e:
+        logger.warning(f"[Visualization] Failed to generate convergence plot: {e}")
+
     return model
 
 if __name__ == "__main__":

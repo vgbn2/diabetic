@@ -40,7 +40,7 @@ class DiabeticCNN(nn.Module):
     Architecture (Phase 10.1):
     1. Temporal Path (Layer 1): Input(B, C, T) -> Conv1d -> ReLU -> MaxPool1d -> LSTM -> Hidden
     2. Static Path (Layer 1-2): Input(B, S) -> Linear -> ReLU -> Linear -> Embedding
-    3. Head: Concat(Hidden, Embedding) -> Linear -> Output(B, 1)
+    3. Head: Concat(Hidden, Embedding) -> Linear -> Output(B, 2)
     """
     # --- Metadata for Inference (Phase 15.2) ---
     STATIC_FEATURE_LABELS = [
@@ -110,7 +110,7 @@ class DiabeticCNN(nn.Module):
             temporal_x: (Batch, Channels, TimeSteps)
             static_y: (Batch, StaticFeatures)
         Returns:
-            Output: (Batch, 1) scalar residue
+            Output: (Batch, 2) normalized [glucose, heart_rate] forecast
         """
         # --- Temporal Path ---
         x = self.conv1(temporal_x)

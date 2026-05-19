@@ -22,9 +22,9 @@ class AuditLogger:
     Persistent Audit Logger using MongoDB and local SQLite.
     Tracks all alerts, system status changes, and user feedback.
     """
-    def __init__(self):
+    def __init__(self, local_db_path: Optional[str] = None):
         self.db_manager = db_manager
-        self.local_db_path = config.LOCAL_DB_PATH
+        self.local_db_path = local_db_path or config.LOCAL_DB_PATH
         self.logger = logging.getLogger("Bio-Quant.Audit")
         
         # Initialize Collections from Singleton
@@ -187,12 +187,13 @@ class AuditLogger:
 
     async def log_feedback(self, alert_type: str, action: str):
         """Logs user feedback on alerts (Task 7.1.4)."""
+        normalized_action = action.strip().lower()
         await self.log_event("USER_FEEDBACK", {
             "alert_type": alert_type,
             "action": action,
-            "is_false_alarm": action == "false",
-            "is_confirmed": action == "confirm",
-            "is_neutral": action == "neutral"
+            "is_false_alarm": normalized_action in {"false", "false_alarm"},
+            "is_confirmed": normalized_action in {"confirm", "confirmed"},
+            "is_neutral": normalized_action == "neutral"
         })
 
     async def get_recent_feedback(self, alert_type: str, hours: int = 24) -> List[dict]:

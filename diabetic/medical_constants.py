@@ -18,6 +18,15 @@ Sections:
 MMOL_TO_MGDL = 18.018                      # exact SI factor
 MGDL_TO_MMOL = 1 / 18.018
 
+# ── Alpha Gating & Boundary Constraints ──────────────────────────────────────
+# Maximum plausible glucose change over 30 minutes (mmol/L)
+MAX_PHYSIO_DROP_30M = 3.0
+MAX_PHYSIO_RISE_30M = 4.0
+
+# Alpha Gating Thresholds
+ALPHA_GATE_DIVERGENCE_LIMIT = 2.5 # mmol/L difference between CNN and Kinematic
+ALPHA_GATE_CONFIDENCE_THRESHOLD = 0.7 # Minimum confidence to trust a diverging CNN
+
 # ── Hardware & Sampling ──────────────────────────────────────────────────────
 SAMPLING_INTERVAL_MINS   = 5
 STALE_DATA_TIMEOUT_SECS  = 3600    # 60 minutes — beyond this, data is unreliable, harder to predict

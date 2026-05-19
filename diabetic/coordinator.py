@@ -3,11 +3,11 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
-from typing import List, Optional
+from typing import Any, List, Optional
 import numpy as np
 from collections import deque
 from diabetic.config import config
-from diabetic.registry import GlucoseReading, MetabolicSnapshot, MealEvent
+from diabetic.registry import GlucoseReading, InsulinDose, MetabolicSnapshot, MealEvent
 from diabetic import medical_constants
 
 from diabetic.ingestion.nightscout import NightscoutClient
@@ -163,6 +163,25 @@ class Coordinator:
 # 📡 [DATA SYNTHESIS PIPELINE]
 # =Focus: Signal Quality, Smoothing (Kalman), and Multi-Stream Ingestion
 # =============================================================================
+    async def _fetch_recent_treatments(self, count: int = 10):
+        """Fetch treatments from Mongo when direct access is available; otherwise use REST."""
+        if getattr(self.mongo, "treatments", None) is not None:
+            return await self.mongo.fetch_recent_treatments(count=count)
+        return await self.client.fetch_recent_treatments(count=count)
+
+    @staticmethod
+    def _latest_treatment(value: Any, expected_type: type):
+        """Normalize ingestion clients that return either one item or a list."""
+        if value is None:
+            return None
+        if isinstance(value, expected_type):
+            return value
+        if isinstance(value, (list, tuple)):
+            candidates = [item for item in value if isinstance(item, expected_type)]
+            if candidates:
+                return max(candidates, key=lambda item: item.timestamp)
+        return None
+
     async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
         """Standard processing pipeline for a single reading."""
         self.regime_step_count += 1
@@ -207,7 +226,7 @@ class Coordinator:
 
         # 3. Treatment & Cardiac Ingestion
         try:
-            tr_task = self.client.fetch_recent_treatments(count=10)
+            tr_task = self._fetch_recent_treatments(count=10)
             hr_task = self.hr_client.fetch_latest()
             we_task = self.weather_client.fetch_current(config.LATITUDE, config.LONGITUDE)
             ms_task = self.vessel_registry.get_medical_state(config.USER_ID)
@@ -216,6 +235,8 @@ class Coordinator:
             tr_res = results[0]
             if not isinstance(tr_res, Exception) and isinstance(tr_res, tuple):
                 ns_insulin, ns_meal = tr_res
+                ns_insulin = self._latest_treatment(ns_insulin, InsulinDose)
+                ns_meal = self._latest_treatment(ns_meal, MealEvent)
                 snapshot.last_insulin = ns_insulin
                 snapshot.last_meal = self._active_meal(ns_meal)
             else:
@@ -310,11 +331,20 @@ class Coordinator:
             
         kinematic_prediction = snapshot.filtered_value + (velocity * 30.0) + oracle_offset
         
-        # Blend CNN + Kinematic (50/50 if CNN available)
+        prediction_30m = kinematic_prediction # Default
+
         if cnn_prediction is not None:
-            prediction_30m = 0.5 * kinematic_prediction + 0.5 * cnn_prediction
+            # --- PHASE 4.1: Alpha Gating ---
+            divergence = abs(cnn_prediction - kinematic_prediction)
+            
+            if divergence > medical_constants.ALPHA_GATE_DIVERGENCE_LIMIT and snapshot.confidence_index < medical_constants.ALPHA_GATE_CONFIDENCE_THRESHOLD:
+                self.logger.warning(f"ALPHA GATE REJECTION: CNN ({cnn_prediction:.1f}) diverged from Kinematic ({kinematic_prediction:.1f}) by {divergence:.1f}. Confidence: {snapshot.confidence_index:.2f}. Falling back to Kinematic.")
+                prediction_30m = kinematic_prediction
+            else:
+                # Standard blend if gate is passed
+                prediction_30m = 0.5 * kinematic_prediction + 0.5 * cnn_prediction
+            # -------------------------------
         else:
-            prediction_30m = kinematic_prediction
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
         
         snapshot.predict_30m = prediction_30m

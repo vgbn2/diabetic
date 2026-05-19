@@ -125,6 +125,14 @@ class Settings(BaseSettings):
         Prevents silent degraded operation in production.
         """
         self.validate_patient_params()
+        
+        # Phase 4.1 Hardening: Validate Timezone
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(self.USER_TIMEZONE)
+        except Exception as e:
+            raise ValueError(f"CRITICAL BOOT FAILURE: Invalid USER_TIMEZONE '{self.USER_TIMEZONE}': {e}")
+            
         # Prioritize MONGODB_URI (Heroku Addons) over MONGO_URI (Local/Manual)
         active_mongo = self.MONGODB_URI or self.MONGO_URI
         

@@ -27,6 +27,7 @@ class MetabolicInferenceRunner:
         self.config = CNNConfig()
         self.model = DiabeticCNN(config=self.config)
         self.device = torch.device('cpu') # Default to CPU
+        self._resample_to_5min = False
         
         # Load Personalized Weights (Phase 14+)
         weight_path = Path(config.ML_WEIGHTS_PATH)
@@ -38,8 +39,20 @@ class MetabolicInferenceRunner:
                 logger.warning(f"Warning: Failed to load multi-task weights: {e}. Running in Cold Mode.")
         else:
             logger.warning(f"Warning: No weights found at {weight_path}. Running in Cold Mode.")
-            
+
+        self._refresh_sampling_mode()
         self.model.eval() # Inference mode
+
+    def _refresh_sampling_mode(self):
+        """Align inference resampling with the configured training cadence."""
+        if config.SAMPLING_INTERVAL_MINS != 5:
+            logger.warning(
+                f"CNN trained on 5-min grids. Config uses {config.SAMPLING_INTERVAL_MINS}min. "
+                "Resampling to 5-min before inference."
+            )
+            self._resample_to_5min = True
+        else:
+            self._resample_to_5min = False
 
     def reload_weights(self, path: Path):
         """Phase 3: Hot-reloading weights after autonomous retraining."""
@@ -52,15 +65,7 @@ class MetabolicInferenceRunner:
         except Exception as e:
             logger.error(f"[HotReload] Failed to reload weights: {e}. Keeping current weights.")
 
-        # P1-2: Sampling Rate Guard
-        if config.SAMPLING_INTERVAL_MINS != 5:
-            logger.warning(
-                f"CNN trained on 5-min grids. Config uses {config.SAMPLING_INTERVAL_MINS}min. "
-                "Resampling to 5-min before inference."
-            )
-            self._resample_to_5min = True
-        else:
-            self._resample_to_5min = False
+        self._refresh_sampling_mode()
 
     def _infer_exposure(self, now: datetime) -> bool:
         """Heuristic to guess Indoor/Outdoor state."""
@@ -106,8 +111,8 @@ class MetabolicInferenceRunner:
             for s in snapshots:
                 hr = s.bpm if s.bpm else (s.predicted_hr if s.predicted_hr else 75.0)
                 raw_vals.append([
-                    s.glucose.value, s.velocity, s.acceleration,
-                    hr, s.active_insulin, s.active_carbs
+                    s.glucose.value,
+                    hr
                 ])
             
             latest_ts = timestamps[-1]
@@ -120,23 +125,15 @@ class MetabolicInferenceRunner:
             for t in target_ts:
                 # Linear interpolation for each feature
                 interp_row = []
-                for feat_idx in range(6):
+                for feat_idx in range(2):
                     feat_series = [v[feat_idx] for v in raw_vals]
                     val = np.interp(t, timestamps, feat_series)
                     
                     # Scale based on feature index
                     if feat_idx == 0: # Glucose
                         interp_row.append(scaling_engine.scale_glucose(val))
-                    elif feat_idx == 1: # Velocity
-                        interp_row.append(np.clip(val, -0.5, 0.5))
-                    elif feat_idx == 2: # Acceleration
-                        interp_row.append(np.clip(val, -0.1, 0.1))
-                    elif feat_idx == 3: # HR
+                    elif feat_idx == 1: # HR
                         interp_row.append(scaling_engine.scale_heart_rate(val))
-                    elif feat_idx == 4: # IOB
-                        interp_row.append(np.clip(val / 10.0, 0.0, 1.0))
-                    elif feat_idx == 5: # COB
-                        interp_row.append(np.clip(val / 100.0, 0.0, 1.0))
                 data.append(interp_row)
         else:
             window = snapshots[-self.seq_len:]
@@ -145,14 +142,10 @@ class MetabolicInferenceRunner:
                 hr = s.bpm if s.bpm else (s.predicted_hr if s.predicted_hr else 75.0)
                 data.append([
                     scaling_engine.scale_glucose(s.glucose.value),
-                    s.velocity,
-                    s.acceleration,
-                    scaling_engine.scale_heart_rate(hr),
-                    s.active_insulin,
-                    s.active_carbs
+                    scaling_engine.scale_heart_rate(hr)
                 ])
 
-        # Torch expects (Batch, Channels, Time) -> (1, 6, 30)
+        # Torch expects (Batch, Channels, Time) -> (1, 2, 30)
         tensor = torch.tensor([data], dtype=torch.float32).transpose(1, 2)
         return tensor
 
@@ -174,8 +167,18 @@ class MetabolicInferenceRunner:
             output = self.model(tensor, static_y)[0]
             
         # Rescale: Glucose (0-1 -> 0-20), HR (0-1 -> 60-180)
-        g_pred = float(output[0]) * 20.0
-        g_pred = max(mc.PHYSIO_FLOOR, min(g_pred, mc.FAINT_GLUCOSE + 5.0))
+        raw_g_pred = float(output[0]) * 20.0
+        
+        # --- PHASE 4.1: Dynamic Inference Bounding ---
+        latest_val = latest.glucose.value
+        min_plausible = max(mc.PHYSIO_FLOOR, latest_val - mc.MAX_PHYSIO_DROP_30M)
+        max_plausible = min(mc.FAINT_GLUCOSE + 5.0, latest_val + mc.MAX_PHYSIO_RISE_30M)
+        
+        g_pred = max(min_plausible, min(raw_g_pred, max_plausible))
+        
+        if g_pred != raw_g_pred:
+             logger.debug(f"CNN Prediction clamped from {raw_g_pred:.1f} to {g_pred:.1f} (Bounds: {min_plausible:.1f} - {max_plausible:.1f})")
+        # ---------------------------------------------
         
         hr_pred = (float(output[1]) * 120.0) + 60.0
         hr_pred = max(40.0, min(hr_pred, 200.0))

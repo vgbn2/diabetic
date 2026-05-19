@@ -34,10 +34,7 @@ class MetabolicScheduler:
         logger.info("[Scheduler] Automated Metabolic Training Scheduler initialized.")
         
         # Regional timezone for 3 AM scheduling
-        try:
-            tz = ZoneInfo(config.USER_TIMEZONE or "Asia/Ho_Chi_Minh")
-        except Exception:
-            tz = timezone.utc
+        tz = ZoneInfo(config.USER_TIMEZONE)
             
         while self.is_running:
             try:
@@ -59,11 +56,14 @@ class MetabolicScheduler:
                     logger.warning(f"[Scheduler] Model is STALE ({staleness.days} days). Initiating autonomous retraining...")
                     try:
                         # 1. Train new weights
-                        await train_metabolic_cnn(
+                        trained_model = await train_metabolic_cnn(
                             source="mongo", 
                             epochs=20, 
                             weight_version=config.ML_WEIGHTS_VERSION
                         )
+                        if trained_model is None:
+                            logger.error("[Scheduler] Training did not produce deployable weights. Hot-reload skipped.")
+                            continue
                         
                         # 2. Signal Coordinator to Hot-Reload
                         from diabetic.coordinator import Coordinator

@@ -1,3 +1,4 @@
+import pandas as pd
 from pathlib import Path
 import logging
 from datetime import datetime, timedelta, timezone
@@ -71,7 +72,7 @@ class MongoDBClient:
             
         return readings
 
-    async def fetch_recent_treatments(self,count:int=10, hours: float = 4.0) -> tuple:
+    async def fetch_recent_treatments(self, count: int = 10, hours: float = 4.0) -> tuple:
         """
         Fetches the latest insulin and meal events for the last N hours.
         Returns Tuple[Optional[InsulinDose], Optional[MealEvent]] to match
@@ -92,11 +93,11 @@ class MongoDBClient:
             }).sort("created_at", -1).limit(count*2)  # Most recent first so we grab the latest
             
             async for doc in cursor:
-                event = self._map_treatment(doc)
-                if isinstance(event, InsulinDose) and not latest_insulin:
-                    latest_insulin = event
-                elif isinstance(event, MealEvent) and not latest_meal:
-                    latest_meal = event
+                insulin_event, meal_event = self._map_treatment(doc)
+                if isinstance(insulin_event, InsulinDose) and not latest_insulin:
+                    latest_insulin = insulin_event
+                if isinstance(meal_event, MealEvent) and not latest_meal:
+                    latest_meal = meal_event
                 # Stop early once both slots are filled
                 if latest_insulin and latest_meal:
                     break
@@ -124,12 +125,11 @@ class MongoDBClient:
 # 📊 [TRAINING & CLINICAL ANALYSIS]
 # =Focus: High-Volume Data Retrieval for Model Optimization
 # =============================================================================
-    async def fetch_training_data(self, days: int = 15) -> Optional["pd.DataFrame"]:
+    async def fetch_training_data(self, days: int = 15) -> Optional[pd.DataFrame]:
         """
         Retrieves joined glucose and treatment data for a training window.
         Returns a Pandas DataFrame formatted for MetabolicDataset.
         """
-        import pandas as pd
         if self.entries is None:
             return None
 
@@ -227,7 +227,6 @@ class MongoDBClient:
         if self.entries is None: return
         
         # Ensure output directory exists
-        from pathlib import Path
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         try:
@@ -266,7 +265,6 @@ class MongoDBClient:
         """
         if self.entries is None: return
         
-        from pathlib import Path
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         try:
@@ -385,27 +383,30 @@ class MongoDBClient:
             return None
 
     def _map_treatment(self, doc: dict):
-        """Maps a Nightscout treatment document to InsulinDose or MealEvent."""
+        """Maps a Nightscout treatment document to optional insulin and meal events."""
         try:
             ts_str = doc.get("created_at")
-            if not ts_str: return None
+            if not ts_str:
+                return None, None
             ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-            
+
+            insulin_event = None
+            meal_event = None
             insulin = doc.get("insulin")
             if insulin and float(insulin) > 0:
-                return InsulinDose(
+                insulin_event = InsulinDose(
                     timestamp=ts,
                     units=float(insulin),
                     type="rapid-acting"
                 )
-            
+
             carbs = doc.get("carbs")
             if carbs and float(carbs) > 0:
-                return MealEvent(
+                meal_event = MealEvent(
                     timestamp=ts,
                     carbs=float(carbs),
                     gi_type="STARCH"
                 )
+            return insulin_event, meal_event
         except Exception:
-            return None
-        return None
+            return None, None
