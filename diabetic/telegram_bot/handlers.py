@@ -9,6 +9,7 @@ from functools import wraps
 
 from diabetic.config import config
 from diabetic.telegram_bot.decision_matrix import Alert
+from diabetic.auth.authorization import is_authorized
 
 class TelegramNotifier:
     """
@@ -148,19 +149,10 @@ class TelegramApp:
         @wraps(func)
         async def wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
             user = update.effective_user
-            authorized_ids = [config.USER_ID]
-            if config.CAREGIVER_ID:
-                authorized_ids.append(config.CAREGIVER_ID)
-            
-            # [G3] SQL-Based Authorization Bridge
-            is_authorized = user.id in authorized_ids
-            
-            if not is_authorized and self.coordinator and hasattr(self.coordinator, 'vessel_registry'):
-                reg_user = await self.coordinator.vessel_registry.get_user(user.id)
-                if reg_user:
-                    is_authorized = True
+            # [G3] Authorization via shared helper (patient / caregiver / registry).
+            authorized = await is_authorized(user.id, self.coordinator)
 
-            if not is_authorized:
+            if not authorized:
                 self.logger.warning(f"UNAUTHORIZED ACCESS ATTEMPT: User {user.id} ({user.username}) tried to call {func.__name__}")
                 denied_msg = (
                     "⛔ <b>Access Denied</b>\n\n"

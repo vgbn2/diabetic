@@ -78,11 +78,11 @@ async def handle_admin_commands(cmd: str):
         await audit.log_admin_action("EXPORT_COMPLETE", {"scope": "all_sensor_periods"})
         
     elif cmd == "cleanup":
-        logger.info("[ADMIN] Enforcing 180-day retention policy cleanup...")
-        await audit.log_admin_action("CLEANUP_START", {"retention_days": 180})
-        await mongo.run_retention_cleanup(days=180)#limit days, this was hardcoded, fix later
+        logger.info(f"[ADMIN] Enforcing {config.RETENTION_DAYS}-day retention policy cleanup...")
+        await audit.log_admin_action("CLEANUP_START", {"retention_days": config.RETENTION_DAYS})
+        await mongo.run_retention_cleanup(days=config.RETENTION_DAYS)
         logger.info("[ADMIN] Cleanup complete.")
-        await audit.log_admin_action("CLEANUP_COMPLETE", {"retention_days": 180})
+        await audit.log_admin_action("CLEANUP_COMPLETE", {"retention_days": config.RETENTION_DAYS})
 
 # =============================================================================
 # 🚀 [SERVICE ORCHESTRATION]
@@ -110,9 +110,15 @@ async def _run_command_loop():
                 elif cmd in ["export", "cleanup"]:
                     await handle_admin_commands(cmd)
                     break
+                elif cmd == "health":
+                    import json
+                    from diabetic.utils.health import get_system_health
+                    snapshot = await get_system_health()
+                    print(json.dumps(snapshot, indent=2))
+                    break
                 else:
                     logger.error(f"Unknown command: {cmd}")
-                    logger.error("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup]")
+                    logger.error("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup|health|tui]")
                     break
             else:
                 # Default to regular simulation
@@ -135,7 +141,15 @@ async def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[logging.StreamHandler(sys.stdout)]
     )
-    
+
+    # Structured CLI/TUI surface — handled before the service singleton lock and
+    # strict boot validation so read-only commands (settings show, status) work
+    # without full env, and so the `live` it launches doesn't self-conflict on the lock.
+    if len(sys.argv) > 1 and sys.argv[1] == "tui":
+        from diabetic.cli.tui.engine import run as run_tui
+        await run_tui()
+        return
+
     # Process Isolation (Singleton Check)
     LOCK_FILE = ".bot.lock"
     

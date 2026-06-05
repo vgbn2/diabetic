@@ -17,6 +17,13 @@ from diabetic.storage.models import BioTraits, CulturalMarkers, MedicalStates, U
 
 logger = logging.getLogger("Bio-Quant.VesselRegistry")
 
+# Single source of truth for trait fields a client (TWA GUI) may write.
+# Anything outside this set is dropped before it reaches the ORM — the
+# mass-assignment guard for update_user_traits().
+_ALLOWED_TRAIT_FIELDS = frozenset(
+    {"age", "height_cm", "weight_kg", "diabetes_type", "diagnosis_year"}
+)
+
 
 class VesselRegistry:
     """
@@ -116,6 +123,21 @@ class VesselRegistry:
                 select(BioTraits).where(BioTraits.user_id == user.id)
             )
             return result.scalar_one_or_none()
+
+    async def update_user_traits(self, telegram_id: int, traits: dict) -> bool:
+        """
+        Whitelisted bio-trait update from the TWA GUI. Filters `traits` to known
+        BioTraits columns (drops unknown keys and None values — no mass-assignment),
+        then delegates to update_biometrics. Returns True iff something was written.
+        """
+        filtered = {
+            k: v for k, v in (traits or {}).items()
+            if k in _ALLOWED_TRAIT_FIELDS and v is not None
+        }
+        if not filtered:
+            return False
+        result = await self.update_biometrics(telegram_id, **filtered)
+        return result is not None
 
     # -------------------------------------------------------------------------
     # Medical States

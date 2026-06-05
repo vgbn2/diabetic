@@ -10,6 +10,24 @@ services:
       - mongodb_data:/data/db
     restart: unless-stopped
 
+  nightscout:
+    image: nightscout/cgm-remote-monitor:latest
+    container_name: bio-quant-nightscout
+    depends_on:
+      - mongodb
+    ports:
+      - "1337:1337"
+    environment:
+      - MONGO_CONNECTION=mongodb://mongodb:27017/nightscout
+      - API_SECRET=${NIGHTSCOUT_API_SECRET}
+      - BASE_URL=${NIGHTSCOUT_URL}
+      - DISPLAY_UNITS=mmol
+      - INSECURE_USE_HTTP=true       # set to false when behind HTTPS reverse proxy
+      - ENABLE=careportal rawbg iob cob bwp cage sage boluscalc pushover treatmentnotify
+      - ALARM_TYPES=simple
+      - TIME_FORMAT=24
+    restart: unless-stopped
+
   bio-quant-core:
     build:
       context: .
@@ -19,6 +37,9 @@ services:
       - .env
     depends_on:
       - mongodb
+    volumes:
+      - bio_quant_storage:/app/storage
+      - bio_quant_weights:/app/diabetic/ml_engine/weights
     command: python -m diabetic.main live
     restart: unless-stopped
 
@@ -31,8 +52,10 @@ services:
       - .env
     ports:
       - "8000:8000"
-    command: uvicorn twa.twa_api:app --host 0.0.0.0 --port 8000
+    command: uvicorn diabetic.telegram_bot.twa_api:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
 
 volumes:
   mongodb_data:
+  bio_quant_storage:    # audit.db, CSV exports — survives container restarts
+  bio_quant_weights:    # ML weights (diabetic_cnn_v15.pth) — survives retraining

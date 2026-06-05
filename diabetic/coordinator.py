@@ -22,6 +22,7 @@ from diabetic.dsp.context_classifier import classify_context
 
 from diabetic.ml_engine.twin import DigitalTwin
 from diabetic.ml_engine.inference import MetabolicInferenceRunner
+from diabetic.ml_engine.forecast import build_horizons, build_basal_drift
 
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix, CircuitBreaker, Alert, AlertSeverity
 from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
@@ -115,6 +116,10 @@ class Coordinator:
 
         self.snapshots: deque[MetabolicSnapshot] = deque(maxlen=medical_constants.SNAPSHOT_CAP)
         self.regime_step_count = 0  # FIX C1: Persistent counter independent of buffer length
+
+        # [F1] TWA forecast horizons, refreshed each live cycle by process_reading.
+        self.last_prediction_4h: list = []   # 4h tactical trajectory (twin)
+        self.last_prediction_1d: list = []   # 24h circadian projection (oracle)
 
         self.last_meal: Optional[MealEvent] = None
         self.meal_window_start: Optional[datetime] = None
@@ -407,6 +412,15 @@ class Coordinator:
 
         self.snapshots.append(snapshot)
 
+        # 6a. Refresh TWA forecast horizons (4h tactical + 1d circadian).
+        # Never let a forecast error break the processing/alert loop — retain last good.
+        try:
+            horizons = build_horizons(self.twin, self.oracle, list(self.snapshots), self.last_meal)
+            self.last_prediction_4h = horizons["h4"]
+            self.last_prediction_1d = horizons["h1d"]
+        except Exception as e:
+            self.logger.error(f"[F1] Forecast horizon refresh failed: {e.__class__.__name__}")
+
         # 6b. Semantic Memory (Layer 4/5)
         # Trapping anomalies: e.g., high prediction, high value, or HR distress
         if not is_backfill:
@@ -690,17 +704,11 @@ class Coordinator:
         history = list(self.snapshots)[-history_count:]
         if history:
             # [C2] Build basal drift array from Oracle for 4h projection
-            basal_drift = None
-            if self.oracle.params is not None:
-                dt = config.SAMPLING_INTERVAL_MINS
-                points = int(240 / dt) + 1
-                basal_drift = np.zeros(points)
-                # reference_start must match history[0].timestamp for correct phase alignment
-                ref_start = history[0].glucose.timestamp
-                now_utc = datetime.now(timezone.utc)
-                for i in range(points):
-                    target_t = now_utc + timedelta(minutes=i * dt)
-                    basal_drift[i] = self.oracle.get_expected_basal(target_t, ref_start)
+            dt = config.SAMPLING_INTERVAL_MINS
+            n_points = int(240 / dt) + 1
+            basal_drift = build_basal_drift(
+                self.oracle, history[0].glucose.timestamp, n_points, dt
+            )
 
             prediction_4h = self.twin.predict_4h_trajectory(
                 history, 

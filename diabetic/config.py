@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 from pydantic import Field
@@ -84,8 +85,14 @@ class Settings(BaseSettings):
     # Local High-Availability (Task 8.1.1)
     LOCAL_DB_PATH: str = "storage/audit.db"
     BACKFILL_MAX_HOURS: int = 24
+    RETENTION_DAYS: int = Field(180, validation_alias="BIO_RETENTION_DAYS")
     LOCAL_GUI_ENABLED: bool = True
-    
+
+    # TWA Web Auth (Telegram Mini App)
+    TWA_ALLOWED_ORIGINS: list[str] = []           # CORS allow-list; empty = same-origin only
+    TWA_DEV_TOKEN: str = ""                        # set to enable `Authorization: dev <token>` browser testing
+    TWA_AUTH_MAX_AGE_SECS: int = 86400            # reject initData older than this (replay window)
+
     # ML Engine (Phase 3 Evolution)
     ML_WEIGHTS_VERSION: str = "v15"
     ML_WEIGHTS_PATH: str = str(Path(__file__).resolve().parent.parent / "diabetic/ml_engine/weights/diabetic_cnn_v15.pth")
@@ -153,7 +160,7 @@ class Settings(BaseSettings):
         os.makedirs("storage", exist_ok=True)
         os.makedirs("storage/exports", exist_ok=True)
         
-        print("Configuration validated: System ready.")
+        logging.getLogger("Bio-Quant.Config").info("Configuration validated: System ready.")
 
 # Singleton instance
 config = Settings()

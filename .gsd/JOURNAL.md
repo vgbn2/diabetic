@@ -347,3 +347,30 @@ The system is now fully autonomous regarding model optimization. The next step i
 - **Defensive ML Protocols**: Implemented a "Loss Floor" (MSE > 2.0) in the training pipeline to automatically purge divergent or overfit models, prioritizing safety over convergence.
 - **Lifecycle Orchestration**: Anchored autonomous background tasks to the `Coordinator` lifecycle to prevent "zombie" training processes and ensure clean shutdowns.
 - **Hot-Reload Architecture**: Developed a weight-reloading pattern that picks up nightly optimizations without interrupting the 24/7 ingestion loop.
+
+---
+
+## Session: 2026-05-19
+
+### Objective
+Blast through the repo again, fix the remaining runtime bridge debt, refine the blast-through skill rules, and leave a clean handoff.
+
+### Accomplished
+- **Inference Contract**: Fixed the first-run inference bootstrap in `inference.py` and aligned live inference to the two-channel training contract.
+- **Training/Scheduler**: Removed `config` shadowing in `train.py` and made `scheduler.py` skip hot reload when training returns no deployable model.
+- **Treatment Bridge**: Normalized treatment shapes across coordinator and Mongo ingestion, and preserved combined insulin/carbs records.
+- **Test Isolation**: Moved the RLHF simulation test onto a temp SQLite database and kept cleanup isolated.
+- **Skill Governance**: Updated the `blast-through` skill, workflow reference, and hard copy with garbage-in/garbage-out and relevance filtering rules.
+- **Handoff State**: Updated `.gsd/STATE.md`, `.gsd/JOURNAL.md`, and the blast-through report to match the current posture.
+
+### Verification
+- [x] `compileall` passed on the edited runtime and test files.
+- [x] `pytest -q` passed: `5 passed, 2 skipped`.
+
+### Paused Because
+- Rate limit reached for this session.
+
+### Handoff Notes
+- The runtime bridge issues are fixed and verified.
+- The next pass should focus on graph debt only: 38 isolated nodes, 31 thin communities, and bridge-node noise in `graphify-out/GRAPH_REPORT.md`.
+- The `blast-through` skill now includes the relevance filter, so future audits should classify each file as `production`, `test`, `docs`, or `scratch` before graph transfer.

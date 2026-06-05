@@ -57,31 +57,42 @@ class NightscoutClient:
             headers["api-secret"] = self.hashed_secret
         return headers
 
-    async def fetch_recent_glucose(self, count: int = 20) -> List[GlucoseReading]:
-        """Fetches the last N glucose entries from Nightscout with exponential backoff."""
-        endpoint = f"{self.url}/api/v1/entries.json"
-        params = {"count": count, **self._get_auth_params()}
-        headers = self._get_auth_headers()
-
+    async def _request_with_auth_retry(self, endpoint: str, base_params: dict) -> httpx.Response:
+        """
+        GET request with up to 3 attempts, exponential backoff, and automatic
+        401 fallback from token auth to api-secret mode.
+        Auth params/headers are recomputed each attempt so the flip takes effect immediately.
+        Raises on final failure — callers decide whether to propagate or return empty.
+        """
         for attempt in range(3):
+            params = {**base_params, **self._get_auth_params()}
+            headers = self._get_auth_headers()
             try:
                 response = await self.client.get(endpoint, params=params, headers=headers)
                 response.raise_for_status()
-                return self._parse_entries(response.json())
+                return response
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 401 and self._is_token_mode:
                     self.logger.warning("Token auth failed with 401. Falling back to api-secret mode.")
                     self._is_token_mode = False
-                    params = {"count": count, **self._get_auth_params()}
-                    headers = self._get_auth_headers()
-                    continue
+                    continue  # Retry immediately with updated auth state; attempt increments
                 if attempt == 2:
                     raise
                 await asyncio.sleep(2 ** attempt)
-            except Exception as e:
+            except Exception:
                 if attempt == 2:
                     raise
                 await asyncio.sleep(2 ** attempt)
+
+        # All attempts exhausted (e.g. a 401 fallback consumed the final attempt).
+        # Never fall through to None — callers contract on httpx.Response.
+        raise RuntimeError(f"Auth retry exhausted for {endpoint} without a response")
+
+    async def fetch_recent_glucose(self, count: int = 20) -> List[GlucoseReading]:
+        """Fetches the last N glucose entries from Nightscout with exponential backoff."""
+        endpoint = f"{self.url}/api/v1/entries.json"
+        response = await self._request_with_auth_retry(endpoint, {"count": count})
+        return self._parse_entries(response.json())
 
     async def fetch_since(self, since_dt: datetime) -> List[GlucoseReading]:
         """
@@ -90,34 +101,17 @@ class NightscoutClient:
         """
         endpoint = f"{self.url}/api/v1/entries.json"
         iso_str = since_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        params = {"find[dateString][$gt]": iso_str, "count": 1000, **self._get_auth_params()}
-        headers = self._get_auth_headers()
-        
-        for attempt in range(3):
-            try:
-                response = await self.client.get(endpoint, params=params, headers=headers)
-                response.raise_for_status()
-                # Nightscout returns most recent first, we reverse to process chronologically
-                readings = self._parse_entries(response.json())
-                readings.reverse() 
-                return readings
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 401 and self._is_token_mode:
-                    self.logger.warning("Token auth failed with 401. Falling back to api-secret mode.")
-                    self._is_token_mode = False
-                    params = {"find[dateString][$gt]": iso_str, "count": 1000, **self._get_auth_params()}
-                    headers = self._get_auth_headers()
-                    continue
-                if attempt == 2:
-                    self.logger.error(f"Backfill fetch failed after 3 attempts: {e.__class__.__name__}")
-                    return []
-                await asyncio.sleep(2 ** attempt)
-            except Exception as e:
-                if attempt == 2:
-                    # Task 8.2.1: Non-fatal, live polling will take over.
-                    self.logger.error(f"Backfill fetch failed after 3 attempts: {e.__class__.__name__}")
-                    return []
-                await asyncio.sleep(2 ** attempt)
+        base_params = {"find[dateString][$gt]": iso_str, "count": 1000}
+        try:
+            response = await self._request_with_auth_retry(endpoint, base_params)
+            # Nightscout returns most recent first, we reverse to process chronologically
+            readings = self._parse_entries(response.json())
+            readings.reverse()
+            return readings
+        except Exception as e:
+            # Task 8.2.1: Non-fatal, live polling will take over.
+            self.logger.error(f"Backfill fetch failed after 3 attempts: {e.__class__.__name__}")
+            return []
 
     def _parse_entries(self, entries: List[dict]) -> List[GlucoseReading]:
         """Shared logic for parsing Nightscout entry JSON."""
@@ -161,27 +155,23 @@ class NightscoutClient:
     async def fetch_recent_treatments(self, count: int = 20) -> Tuple[List[InsulinDose], List[MealEvent]]:
         """Fetches all insulin and carb events from Nightscout within the 4-hour window."""
         endpoint = f"{self.url}/api/v1/treatments.json"
-        params = {"count": count, **self._get_auth_params()}
-        headers = self._get_auth_headers()
-
         try:
-            response = await self.client.get(endpoint, params=params, headers=headers)
-            response.raise_for_status()
+            response = await self._request_with_auth_retry(endpoint, {"count": count})
             treatments = response.json()
             now = datetime.now(timezone.utc)
-            
+
             insulin_list: List[InsulinDose] = []
             meal_list: List[MealEvent] = []
-            
+
             for t in treatments:
                 if 'created_at' not in t:
                     continue
-                
+
                 try:
                     ts = datetime.fromisoformat(t['created_at'].replace('Z', '+00:00'))
                 except ValueError:
                     continue
-                
+
                 # C3 Fix: Verify treatment is within 4-hour metabolic window
                 if (now - ts).total_seconds() > medical_constants.MEAL_WINDOW_MINS * 60:
                     continue
@@ -198,29 +188,16 @@ class NightscoutClient:
                         units=float(t['insulin']),
                         type=insulin_type
                     ))
-                
+
                 # Parse Carbs
                 if 'carbs' in t:
                     meal_list.append(MealEvent(
                         timestamp=ts,
                         carbs=float(t['carbs'])
                     ))
-                    
+
             return insulin_list, meal_list
-                
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401 and self._is_token_mode:
-                self.logger.warning("Token auth failed with 401. Falling back to api-secret mode.")
-                self._is_token_mode = False
-                params = {"count": count, **self._get_auth_params()}
-                headers = self._get_auth_headers()
-                try:
-                    response = await self.client.get(endpoint, params=params, headers=headers)
-                    response.raise_for_status()
-                    # Just return empty if this fallback succeeds for simplicity right now
-                except Exception:
-                    pass
-            return [], []
+
         except Exception:
             return [], []
 

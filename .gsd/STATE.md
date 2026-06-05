@@ -1,7 +1,7 @@
 ## Current Position
 - **Phase**: 4.1 (Alpha Gating / Safety Filter) - Completed
 - **Task**: Runtime Bridge Debt Cleanup
-- **Status**: Stabilized after blast-through follow-up
+- **Status**: Stabilized after blast-through follow-up, awaiting next session
 
 ## Last Session Summary
 Executed Blast Through follow-up for runtime bridge debt.
@@ -11,11 +11,12 @@ Executed Blast Through follow-up for runtime bridge debt.
 - **Test Isolation:** `test_c3.py` now uses a temp SQLite audit DB instead of deleting shared `USER_FEEDBACK` rows.
 
 ## In-Progress Work
-- None. Observability and path alignment tasks are implemented.
+- None. Runtime bridge fixes are implemented and verified.
 
 ## Blockers
 - Windows Sandbox: Previously blocked command execution in some sessions; validate empirically whenever the shell is available.
 - MCP Git timeouts: Occasional failures when interacting with GitKraken tools.
+- Session rate limit reached; resume in the next turn.
 
 ## Context Dump
 ### Decisions Made
@@ -27,3 +28,4 @@ Executed Blast Through follow-up for runtime bridge debt.
 ## Next Steps
 1. Phase 5: Stress test the background scheduler in a long-running live instance to verify MongoDB thread pooling limits.
 2. Regenerate or relabel the graph report so the remaining isolated nodes and inferred bridge edges are tracked as explicit architecture debt.
+3. Resume with graph-only cleanup using the updated blast-through relevance filter: production files first, tests/docs/scratch only as supporting evidence.

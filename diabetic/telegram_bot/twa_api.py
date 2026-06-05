@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
@@ -6,38 +6,68 @@ from fastapi.responses import FileResponse
 import uvicorn
 import logging
 import os
+from pathlib import Path
 from datetime import datetime, timezone
 
 from diabetic.config import config
 from diabetic.registry import MetabolicSnapshot
+from diabetic.auth.dependencies import require_twa_user
 
 # --- [SKILL-LIKE LOGIC: DATA INTERFACE] ---
 # This bridge follows the 'Passive Sentinel to Active HUD' transformation.
 # It exposes the internal Coordinator state to the Telegram Web App (TWA).
 
+logger = logging.getLogger("Bio-Quant.TWA")
 app = FastAPI(title="Bio-Quant TWA Bridge")
 
 # Enable CORS for TWA hosting (usually on GitHub Pages or Cloud Run)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to your TWA domain
+    allow_origins=config.TWA_ALLOWED_ORIGINS,  # empty = same-origin only; set for cross-origin hosting
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- [STATIC HUD SERVING] ---
 # In production, this allows Heroku to serve the 'Face' of the app.
-TWA_DIR = os.path.join(os.getcwd(), "twa")
-if os.path.exists(TWA_DIR):
-    app.mount("/assets", StaticFiles(directory=os.path.join(TWA_DIR, "assets")), name="assets")
+# Resolved from project root (not CWD) so non-Docker / non-root launches still
+# find the static pages — mirrors config.py's absolute ML-weight pathing.
+TWA_DIR = str(Path(__file__).resolve().parents[2] / "twa")
+_ASSETS_DIR = os.path.join(TWA_DIR, "assets")
+# Guard on the assets subdir: StaticFiles raises at construction if it is missing.
+if os.path.isdir(_ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
+
+
+def _serve_page(name: str):
+    path = os.path.join(TWA_DIR, name)
+    if os.path.exists(path):
+        return FileResponse(path)
+    return {"error": f"{name} not found"}
+
 
 @app.get("/")
 async def serve_hud():
-    """Serves the main Glassmorphism HUD."""
-    index_path = os.path.join(TWA_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return {"error": "HUD Assets Not Found"}
+    """Serves the main Glassmorphism HUD (dashboard)."""
+    return _serve_page("index.html")
+
+
+@app.get("/login")
+async def serve_login():
+    """Auth gate shown when opened outside Telegram or unauthorized."""
+    return _serve_page("login.html")
+
+
+@app.get("/settings")
+async def serve_settings():
+    """Bio-traits editor page."""
+    return _serve_page("settings.html")
+
+
+@app.get("/history")
+async def serve_history():
+    """Recent-glucose history page."""
+    return _serve_page("history.html")
 
 class HUDState(BaseModel):
     glucose: float
@@ -51,7 +81,7 @@ class HUDState(BaseModel):
 # Shared state reference (will be injected by the Coordinator)
 COORDINATOR_REF = None
 
-@app.get("/api/v1/hud")
+@app.get("/api/v1/hud", dependencies=[Depends(require_twa_user)])
 async def get_hud_data():
     """Returns the real-time metabolic frame for the glassmorphism HUD."""
     if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
@@ -77,21 +107,21 @@ async def get_hud_data():
         last_update=latest.timestamp.strftime("%H:%M:%S")
     )
 
-@app.get("/api/v1/forecast")
+@app.get("/api/v1/forecast", dependencies=[Depends(require_twa_user)])
 async def get_forecast():
     """Returns the 4h trajectory for the 'Metabolic Horizon' chart."""
     if not COORDINATOR_REF:
         return {"error": "Engine Offline"}
     
-    # Logic: Pull from the latest Digital Twin projection
-    # Placeholder for actual trajectory array
     history_pts = int(150 / config.SAMPLING_INTERVAL_MINS)
     return {
         "points": [s.filtered_value for s in COORDINATOR_REF.snapshots[-history_pts:]],
-        "horizon": getattr(COORDINATOR_REF, 'last_prediction_4h', [])
+        "horizon": getattr(COORDINATOR_REF, "last_prediction_4h", []),
+        "horizon_1d": getattr(COORDINATOR_REF, "last_prediction_1d", []),
+        "resolution_mins": config.SAMPLING_INTERVAL_MINS,
     }
 
-@app.post("/api/v1/calibration")
+@app.post("/api/v1/calibration", dependencies=[Depends(require_twa_user)])
 async def update_calibration(traits: dict):
     """Allows the user to update Bio-Traits (Weight, Age, Sensitivity) via GUI."""
     if not COORDINATOR_REF:
@@ -101,7 +131,7 @@ async def update_calibration(traits: dict):
     success = await COORDINATOR_REF.vessel_registry.update_user_traits(config.USER_ID, traits)
     if success:
         return {"status": "success", "message": "Bio-Traits Recalibrated"}
-    return {"status": "error", "message": "Database Lock"}
+    return {"status": "error", "message": "Profile not found or no valid fields"}
 
 def start_api(coordinator_instance):
     """Helper to launch the API in a background thread or separate process."""
@@ -110,10 +140,10 @@ def start_api(coordinator_instance):
     log_config = uvicorn.config.LOGGING_CONFIG
     log_config["formatters"]["access"]["fmt"] = "%(asctime)s - TWA_BRIDGE - %(message)s"
     
-    # In production, this would run on config.API_PORT
+    # Binds 0.0.0.0:8000 (matches the docker-compose bio-quant-twa service).
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
 if __name__ == "__main__":
     # Test launch
-    print("🚀 Bio-Quant TWA Bridge Interface Loaded.")
+    logger.info("Bio-Quant TWA Bridge Interface Loaded.")
     uvicorn.run(app, host="127.0.0.1", port=8000)
