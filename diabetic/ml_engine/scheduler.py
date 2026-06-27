@@ -40,7 +40,7 @@ class MetabolicScheduler:
             try:
                 now = datetime.now(tz)
                 # Next 3:00 AM window
-                target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+                target = now.replace(hour=config.MAINTENANCE_LOCAL_HOUR, minute=0, second=0, microsecond=0)
                 if now >= target:
                     target += timedelta(days=1)
                 

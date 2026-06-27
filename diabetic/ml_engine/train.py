@@ -151,7 +151,7 @@ async def train_metabolic_cnn(
         
     # Physiological Clipping Check
     try:
-        model.load_state_dict(torch.load(weight_path))
+        model.load_state_dict(torch.load(weight_path, weights_only=True))
         model.eval()
         with torch.no_grad():
             x_sample, s_sample, _ = next(iter(val_loader))

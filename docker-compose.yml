@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mongodb:
     image: mongo:latest
@@ -37,22 +35,12 @@ services:
       - .env
     depends_on:
       - mongodb
+    ports:
+      - "8000:8000"
     volumes:
       - bio_quant_storage:/app/storage
       - bio_quant_weights:/app/diabetic/ml_engine/weights
     command: python -m diabetic.main live
-    restart: unless-stopped
-
-  bio-quant-twa:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: bio-quant-twa
-    env_file:
-      - .env
-    ports:
-      - "8000:8000"
-    command: uvicorn diabetic.telegram_bot.twa_api:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
 
 volumes:

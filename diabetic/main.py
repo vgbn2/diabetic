@@ -38,20 +38,20 @@ async def run_simulation(scenario: str):
     if scenario == "crash":
         # Rapid drop from normal to hypoglycemia
         logger.info("SIMULATION: Initiating Rapid Hypoglycemic Crash...")
-        for i in range(10):
-            val_mmol = 6.1 - (i * 0.5) 
+        for i in range(35):
+            val_mmol = max(2.5, 8.5 - (i * 0.18))
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="DoubleDown"))
     elif scenario == "faint":
         # High hyperglycemia with suspected faint risk factors (Rapid climb)
         logger.info("SIMULATION: Initiating Hyperglycemic Faint Risk (High + Rapid Rise)...")
-        for i in range(10):
-            val_mmol = 15.0 + (i * 0.8) # starting high and rising fast
+        for i in range(35):
+            val_mmol = min(25.0, 8.0 + (i * 0.46))
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="FortyFiveUp"))
     else:
         # 'simulation' or 'normal' stress test
         logger.info("SIMULATION: Normal Metabolic Stress Test...")
-        for i in range(10):
-            val_mmol = 8.0 + (i * 0.1)
+        for i in range(35):
+            val_mmol = 8.0 + (i * 0.05)
             readings.append(GlucoseReading(timestamp=start_time + timedelta(minutes=i*5), value=val_mmol, trend="Flat"))
 
     for r in readings:
@@ -100,12 +100,18 @@ async def _run_command_loop():
                 elif cmd == "live":
                     from diabetic.ml_engine.scheduler import MetabolicScheduler
                     coordinator = await Coordinator.create()
-                    
+
+                    # Start TWA bridge in a background thread so COORDINATOR_REF
+                    # is set in the same process — fixes the Docker split-container gap.
+                    import threading
+                    from diabetic.telegram_bot.twa_api import start_api
+                    threading.Thread(target=start_api, args=(coordinator,), daemon=True).start()
+
                     # Start Background Training Scheduler
                     scheduler = MetabolicScheduler()
                     scheduler_task = asyncio.create_task(scheduler.run_forever())
                     coordinator._scheduler_task = scheduler_task
-                    
+
                     await coordinator.start_live_mode()
                 elif cmd in ["export", "cleanup"]:
                     await handle_admin_commands(cmd)
