@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bio-Quant — Settings</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+    <div class="hud-header">
+        <div><span class="status-dot"></span> BIO-TRAITS</div>
+        <div id="status"></div>
+    </div>
+
+    <div class="hud-container">
+        <div class="glass-card">
+            <div class="form-row">
+                <label for="age">Age (years)</label>
+                <input id="age" type="number" inputmode="decimal" placeholder="e.g. 30">
+            </div>
+            <div class="form-row">
+                <label for="weight">Weight (kg)</label>
+                <input id="weight" type="number" inputmode="decimal" placeholder="e.g. 60">
+            </div>
+            <div class="form-row">
+                <label for="height">Height (cm)</label>
+                <input id="height" type="number" inputmode="decimal" placeholder="e.g. 165">
+            </div>
+            <button class="btn" id="save-btn">Save Bio-Traits</button>
+            <p class="muted" style="font-size: 0.78rem; margin-top: 12px;">
+                Updates are applied to your live metabolic twin and re-sync the forecast.
+            </p>
+        </div>
+    </div>
+
+    <nav class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/history">History</a>
+        <a href="/settings" class="active">Settings</a>
+    </nav>
+
+    <script src="/assets/auth.js"></script>
+    <script src="/assets/api.js"></script>
+    <script src="/assets/settings.js"></script>
+</body>
+</html>

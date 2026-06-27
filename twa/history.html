@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bio-Quant — History</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+    <div class="hud-header">
+        <div><span class="status-dot"></span> HISTORY</div>
+        <div id="count">Loading…</div>
+    </div>
+
+    <div class="hud-container">
+        <div class="glass-card chart-container" style="min-height: 320px;">
+            <span class="stat-label">Recent Glucose Trace</span>
+            <canvas id="histChart"></canvas>
+        </div>
+    </div>
+
+    <nav class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/history" class="active">History</a>
+        <a href="/settings">Settings</a>
+    </nav>
+
+    <script src="/assets/auth.js"></script>
+    <script src="/assets/api.js"></script>
+    <script src="/assets/history.js"></script>
+</body>
+</html>

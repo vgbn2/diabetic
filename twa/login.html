@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bio-Quant — Sign in</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+    <div class="gate">
+        <div class="glass-card" style="max-width: 380px; text-align: center;">
+            <h2>Bio-Quant</h2>
+            <p class="muted">
+                This dashboard is private. Open it from the
+                <b>Bio-Quant Telegram bot</b> to sign in automatically — your
+                Telegram identity is verified server-side.
+            </p>
+            <details style="margin-top: 18px; text-align: left;">
+                <summary class="muted">Developer access</summary>
+                <div class="form-row">
+                    <label for="dev-token">Dev token</label>
+                    <input id="dev-token" type="password" placeholder="TWA_DEV_TOKEN">
+                </div>
+                <button class="btn" id="dev-btn">Use dev token</button>
+                <p class="muted" style="font-size: 0.75rem;">
+                    Only works when the server has <code>TWA_DEV_TOKEN</code> set.
+                </p>
+            </details>
+        </div>
+    </div>
+
+    <script src="/assets/auth.js"></script>
+    <script>
+        // Already inside Telegram? Go straight to the dashboard.
+        if (BioAuth.initData()) { location.href = "/"; }
+        document.getElementById("dev-btn").addEventListener("click", function () {
+            var t = document.getElementById("dev-token").value.trim();
+            if (t) { localStorage.setItem("bq_dev_token", t); location.href = "/"; }
+        });
+    </script>
+</body>
+</html>
