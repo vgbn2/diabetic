@@ -201,3 +201,40 @@ Added `VesselRegistry.update_user_traits(telegram_id, traits: dict) -> bool` (`v
 
 ### [R8] CLEARED — 2026-06-05
 `twa_api.py` `TWA_DIR` now `str(Path(__file__).resolve().parents[2] / "twa")` (project root, matches `config.py` ML-weight pattern). Verified CWD-independence: from `C:\Users\Lenovo`, resolves to repo `twa/` with `index.html` present (old `os.getcwd()` form would have produced the nonexistent `C:\Users\Lenovo\twa`).
+
+---
+
+## 2026-07-18 Research -> Plan -> Mass-Implement
+
+### [R14] CLEARED (`a8bd5f4`) — configured v15 artifact absent from clean HEAD
+**Files:** `diabetic/config.py`, `diabetic/ml_engine/weights/diabetic_cnn_v15.pth`, `diabetic/ml_engine/inference.py`, `ops/lab/test_runtime_contract.py`
+
+**Why:** `config.ML_WEIGHTS_VERSION` selected v15, but `git archive HEAD` contained only v14. The runner continued with random weights when the selected file was absent. Official Docker documentation confirms an empty named volume copies existing image content by default, so the first-boot root cause was the absent source artifact, not volume initialization.
+
+**Implementation:** Added v15 to the scoped batch; introduced `weights_loaded`; neural inference now returns the existing sentinel fallback when weights are missing or invalid.
+
+**Evidence:** `torch.load(..., weights_only=True)` produced 14 keys; `DiabeticCNN.load_state_dict` reported zero missing and zero unexpected keys. Missing-weight regression test passes.
+
+**Verification:** Committed `HEAD` archive passed `python -m pytest ops/lab -q`: 70 passed in 5.70s.
+
+### [R15] CLEARED (`a8bd5f4`) — runtime and test dependencies were undeclared
+**Files:** `requirements.txt`, `requirements-dev.txt`, `diabetic/main.py`, `diabetic/telegram_bot/twa_api.py`
+
+**Why:** Production directly imports `psutil`, `fastapi`, and `uvicorn`; tests require `pytest` and `pytest-asyncio`. The corresponding manifests did not directly declare them.
+
+**Implementation:** Declared all direct runtime dependencies; made `requirements-dev.txt` include runtime requirements plus the test runner.
+
+**Evidence:** Isolated Python 3.11.15 environment resolved 130 packages; compatibility check passed; 70 tests passed.
+
+**Verification gate:** Fresh environment install from `requirements-dev.txt`, dependency compatibility check, and full suite.
+
+### [R16] PARTIAL — repository status polluted by line-ending and generated-artifact drift
+**Files:** `.gitattributes`, `.gitignore`, tracked text files, `run_graphify.py`, `.graphifyignore`
+
+**Why:** Seventy files contained no semantic source delta but produced 7,805 whitespace findings. Local Claude settings and graph chunk lists were unignored.
+
+**Implementation:** Added LF policy with Windows-script exceptions, normalized CRLF-only changes, and ignored confirmed local residue.
+
+**Remaining decision:** Decide whether `run_graphify.py` and `.graphifyignore` are canonical tooling or disposable generated artifacts. They were left untracked and unchanged.
+
+**Verification gate:** `git diff --check` is clean; after commit, `git status --short` contains only intentionally retained untracked tooling.

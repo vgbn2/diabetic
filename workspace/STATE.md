@@ -115,3 +115,18 @@ Scope: files in `git diff HEAD` + same-section new files. Untouched sections car
 3. Resolve MetabolicScheduler: delete or wire it (R11)
 4. `train.py:154` add `weights_only=True` (R12 — one line)
 5. `scheduler.py:34` replace `hour=3` with `config.MAINTENANCE_LOCAL_HOUR` (R13 — only if scheduler is kept)
+
+## 2026-07-18 Mass-Implement Correction
+
+- **Scope**: ML artifact contract, fail-closed inference, dependency reproducibility, README and line-ending hygiene
+- **Status**: Implemented and committed as `a8bd5f4`
+- **Tests**: 70 passed in isolated CPython 3.11.15; committed `HEAD` archive also 70 passed
+- **Artifact proof**: v15 state dictionary loads 14 keys with no missing/unexpected keys
+- **Dependency proof**: 130 installed packages pass compatibility check
+- **Grade movement**:
+  - ML artifact/inference contract: D -> A
+  - runtime dependency contract: C -> A
+  - test reproducibility: C -> A
+  - repository hygiene: C -> B (generated graph script/config still unresolved)
+- **DCS**: 0.72 -> 0.947. Still below the strict 0.95 promotion threshold until current Docker/graph freshness is verified.
+- **Next gate**: validate Docker/Compose on a capable host.

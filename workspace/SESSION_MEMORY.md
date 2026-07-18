@@ -61,4 +61,49 @@ _Cumulative. Never delete; append corrections._
 - **FIXED (forecast, 2026-06-05):** `/api/v1/forecast` 4h + 1d horizons wired. New pure module `diabetic/ml_engine/forecast.py` — `build_horizons/project_4h/project_24h/build_basal_drift`. `coordinator.py` stores `self.last_prediction_4h` / `self.last_prediction_1d`, refreshed each live cycle (try/except guard — forecast errors can't break the alert loop). Meal handler deduped to use `build_basal_drift`. Endpoint returns `horizon` (now populated, ~97 pts), `horizon_1d` (25 pts after oracle fits at ~24h), `resolution_mins`. Dashboard: 4h⇄1d toggle added (`chart-head` + `seg-btn`); 1d shows "learning" note pre-fit. 15 new unit tests (`test_forecast.py`). Suite **66 passed**.
 - **FIXED (blast-through 2026-06-05, [R7] + [R8]):** `POST /api/v1/calibration` was calling the **non-existent** `vessel_registry.update_user_traits(...)` → guaranteed 500. Now `VesselRegistry.update_user_traits(telegram_id, traits)` exists as a **whitelisting** wrapper over `update_biometrics` (`_ALLOWED_TRAIT_FIELDS` frozenset = mass-assignment guard; unknown keys would otherwise `TypeError` in `update_biometrics(**...)`). Frontend `insulin_sensitivity` dropped (ISF is twin-learned, not a `BioTraits` column). Integration test `ops/lab/test_twa_calibration.py` (temp-SQLite, no mock) drives the real write path — closed the gap where auth probes ran with `COORDINATOR_REF=None`. [R8]: `TWA_DIR` now `Path(__file__).resolve().parents[2]/"twa"` (CWD-independent). `twa_api.py` **D→A, ungated**. Suite **51 passed**.
 - **Sandbox quirk**: this environment blocks `socket.socketpair()`, so bare `asyncio.run` entrypoints, the interactive TUI, and occasionally the async test loop fail *here only* — they work on the real machine. Verify async paths empirically.
-- **NOTHING COMMITTED** — the entire session is in the working tree. Next action: commit in logical chunks.
+- **FIXED (2026-06-27):** All Phase 5 work committed in 5 logical commits. Working tree clean.
+
+## Session 2026-06-27 — Blast-Through Audit + Mass-Implement
+
+### Live data verified
+- MongoDB has **288 real readings** (CGM syncing continuously to MongoDB even while coordinator was offline 22 days)
+- CNN fires on real data: `Pred Glu=5.11 mmol/L` from 288-snapshot window
+- Oracle fit confirmed: `A=2.39, φ=−1.70, C=8.36` (low amplitude = stable circadian pattern; C=8.36 is elevated fasting baseline — watch if sustained)
+- Both forecast horizons populated: 4h (49 pts, peak 5.12) and 1d (25 pts, range 5.99–10.74)
+- Latest BG at time of test: 4.38 mmol/L, velocity −0.003 (flat), alpha gate NOT fired, blended 30m pred = 4.62
+
+### Corrections to earlier notes
+- **R11 was false alarm**: `MetabolicScheduler` IS started from `main.py:105-107` before `start_live_mode()`. `coordinator._scheduler_task` is assigned there. Coordinator.shutdown() is correct.
+- **COORDINATOR_REF Docker gap (R10) FIXED**: TWA API now starts as daemon thread inside `main.py live` branch. `bio-quant-twa` standalone service removed from docker-compose.
+- **Simulation CNN gap FIXED**: all three sim scenarios now generate 35 readings; CNN activates from reading 31.
+
+### Architecture facts
+- **TWA serving pattern**: `twa_api.py` uses `threading.Thread(target=start_api, daemon=True)` started from `main.py`. This is the correct pattern — same process = same `COORDINATOR_REF`. Do NOT put TWA back in a separate container.
+- **docker-compose services**: 3 services only — `mongodb`, `nightscout`, `bio-quant-core`. Core exposes port 8000 for TWA.
+- **ML weights staleness**: weights age tracked in `health.py` via `Path.stat().st_mtime`. Stale threshold = 7 days. At 39 days stale — retrain needed on next live run.
+
+### Cautions
+- **Oracle C=8.36 elevated**: the fasting baseline the oracle learned is high for a T1D patient. Could reflect dawn phenomenon, meals during the 24h window, or sensor drift. Monitor over multiple days.
+- **Graph STALE**: ~1500+ new LOC from Phases 4-5 unrepresented in graphify-out. Do not use graph for structural queries until refreshed. Needs `GEMINI_API_KEY`.
+- **Heroku vs local**: user plans to move from Heroku to local Ubuntu deployment on old Asus laptop. docker-compose is ready; CGM uploader (phone app) needs to be pointed at local IP. Discussed but not executed.
+
+## Session 2026-07-18 — Deployment Reproducibility
+
+### Corrections
+- Docker empty named volumes copy existing image content into the volume by default. The weights volume was not the first-boot data-loss bug; the image built from clean `HEAD` lacked `diabetic_cnn_v15.pth`.
+- The v15 artifact in the working tree is a valid PyTorch state dictionary: `weights_only=True`, 14 keys, no missing or unexpected model keys.
+- Missing or invalid weights must never permit randomly initialized CNN output. `MetabolicInferenceRunner.weights_loaded` now gates inference and preserves the kinematic fallback.
+- `inference_active` is true only when the snapshot buffer is saturated and validated neural weights are loaded.
+
+### Verification
+- Isolated CPython 3.11.15 environment created under `.venv`
+- 130 declared packages installed; dependency compatibility check passed
+- Full working-tree suite: 70 passed in 5.19s
+- Pre-commit clean-HEAD candidate archive plus intended implementation files: 70 passed in 5.22s
+- Committed `HEAD` archive: 70 passed in 5.70s
+- Standard-library contract gate: 3 passed
+
+### Cautions
+- The implementation is committed as `a8bd5f4` and passed the clean committed-archive suite.
+- Docker/Compose runtime verification is still host-blocked because Docker is unavailable.
+- The sandbox can stall the aiosqlite integration tests; the identical suite passes outside the sandbox.
