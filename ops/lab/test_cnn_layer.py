@@ -1,7 +1,11 @@
 import torch
 import unittest
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+from diabetic.config import config
 from diabetic.registry import GlucoseReading, MetabolicSnapshot
 from diabetic.ml_engine.convolutional_layer import DiabeticCNN
 from diabetic.ml_engine.inference import MetabolicInferenceRunner
@@ -51,6 +55,7 @@ class TestMetabolicInferenceRunner(unittest.TestCase):
     def test_short_window_before_hot_reload(self):
         """Fresh runners must initialize sampling mode before first inference."""
         runner = MetabolicInferenceRunner()
+        self.assertTrue(runner.weights_loaded)
         snapshot = MetabolicSnapshot(
             glucose=GlucoseReading(
                 timestamp=datetime.now(timezone.utc),
@@ -87,6 +92,29 @@ class TestMetabolicInferenceRunner(unittest.TestCase):
         self.assertEqual(runner.config.temporal_channels, 2)
         self.assertIn("glucose", result)
         self.assertIn("heart_rate", result)
+
+    def test_missing_weights_disable_neural_inference(self):
+        """Missing deployment weights must fall back instead of using random parameters."""
+        with TemporaryDirectory() as tmpdir:
+            missing_path = Path(tmpdir) / "missing-v15.pth"
+            with patch.object(config, "ML_WEIGHTS_PATH", str(missing_path)):
+                runner = MetabolicInferenceRunner()
+
+        start = datetime.now(timezone.utc) - timedelta(minutes=145)
+        snapshots = [
+            MetabolicSnapshot(
+                glucose=GlucoseReading(
+                    timestamp=start + timedelta(minutes=5 * idx),
+                    value=6.0 + (idx * 0.01),
+                    trend="Flat",
+                ),
+                predicted_hr=72.0,
+            )
+            for idx in range(runner.seq_len)
+        ]
+
+        self.assertFalse(runner.weights_loaded)
+        self.assertIsNone(runner.run_inference_on_snapshots(snapshots))
 
 if __name__ == "__main__":
     unittest.main()

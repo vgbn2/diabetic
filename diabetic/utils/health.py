@@ -55,18 +55,22 @@ async def get_system_health() -> dict:
         }
 
     # --- 4. Snapshot buffer (only meaningful when Coordinator is running) ---
+    weights_loaded = False
     try:
         from diabetic.coordinator import Coordinator
         coord = Coordinator._instance
         if coord and getattr(coord, "_initialized", False):
             buf_size = len(coord.snapshots)
+            runner = getattr(coord, "neural_runner", None)
+            weights_loaded = bool(getattr(runner, "weights_loaded", False))
         else:
             buf_size = 0
     except Exception:
         buf_size = 0
 
     health["snapshot_buffer"] = buf_size
-    health["inference_active"] = buf_size >= 30
+    health["inference_weights_loaded"] = weights_loaded
+    health["inference_active"] = buf_size >= 30 and weights_loaded
 
     # --- 5. Last reading timestamp (from local SQLite audit log) ---
     last_ts: Optional[datetime] = None

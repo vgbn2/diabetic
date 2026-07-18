@@ -28,17 +28,26 @@ class MetabolicInferenceRunner:
         self.model = DiabeticCNN(config=self.config)
         self.device = torch.device('cpu') # Default to CPU
         self._resample_to_5min = False
+        self.weights_loaded = False
         
         # Load Personalized Weights (Phase 14+)
         weight_path = Path(config.ML_WEIGHTS_PATH)
         if weight_path.exists():
             try:
                 self.model.load_state_dict(torch.load(weight_path, map_location=self.device, weights_only=True))
+                self.weights_loaded = True
                 logger.info(f"Personalized CNN Multi-Task {config.ML_WEIGHTS_VERSION} Weights Loaded: {weight_path}")
             except Exception as e:
-                logger.warning(f"Warning: Failed to load multi-task weights: {e}. Running in Cold Mode.")
+                logger.error(
+                    "Failed to load multi-task weights (%s). Neural inference disabled; "
+                    "kinematic fallback remains active.",
+                    e.__class__.__name__,
+                )
         else:
-            logger.warning(f"Warning: No weights found at {weight_path}. Running in Cold Mode.")
+            logger.error(
+                "No weights found at %s. Neural inference disabled; kinematic fallback remains active.",
+                weight_path,
+            )
 
         self._refresh_sampling_mode()
         self.model.eval() # Inference mode
@@ -54,18 +63,24 @@ class MetabolicInferenceRunner:
         else:
             self._resample_to_5min = False
 
-    def reload_weights(self, path: Path):
+    def reload_weights(self, path: Path) -> bool:
         """Phase 3: Hot-reloading weights after autonomous retraining."""
         try:
             self.model.load_state_dict(
                 torch.load(path, map_location=self.device, weights_only=True)
             )
             self.model.eval()
+            self.weights_loaded = True
             logger.info(f"[HotReload] Weights reloaded from {path}")
+            return True
         except Exception as e:
-            logger.error(f"[HotReload] Failed to reload weights: {e}. Keeping current weights.")
-
-        self._refresh_sampling_mode()
+            logger.error(
+                "[HotReload] Failed to reload weights (%s). Keeping current weights state.",
+                e.__class__.__name__,
+            )
+            return False
+        finally:
+            self._refresh_sampling_mode()
 
     def _infer_exposure(self, now: datetime) -> bool:
         """Heuristic to guess Indoor/Outdoor state."""
@@ -153,6 +168,10 @@ class MetabolicInferenceRunner:
         """
         Bridges the live Coordinator memory to the Multi-Task Neural Engine.
         """
+        if not self.weights_loaded:
+            logger.debug("Neural inference skipped: no validated weights are loaded.")
+            return None
+
         tensor = self._prepare_temporal_tensor(snapshots)
         if tensor is None:
             return None

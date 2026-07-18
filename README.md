@@ -37,25 +37,39 @@ The engine moves through three temporal phases:
 
 ---
 
-## 🚀 Quick Start (One-Click Pipeline)
+## 🚀 Quick Start
 
-*Currently in development (Phase 1.1: The SQL Core)*
+Python 3.11 is the supported runtime.
 
-```powershell
-# Ingest historical data
-python -m diabetic.ingestion.offline.master_ingest
+```bash
+python3.11 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements-dev.txt
 
-# Train the hybrid ensemble
-python -m diabetic.ml_engine.retrain_all
+# Verify the repository contract and runtime behavior
+.venv/bin/python -m pytest ops/lab -q
 
-# Run the live monitor
-python -m diabetic.main live
+# Run a local simulation
+.venv/bin/python -m diabetic.main simulation
+
+# Start the live monitor after configuring .env
+.venv/bin/python -m diabetic.main live
 ```
+
+For the local container deployment:
+
+```bash
+docker compose up --build
+```
+
+The selected CNN state dictionary is versioned with the source tree. If it is
+missing or cannot be loaded, neural inference is disabled and the coordinator
+uses its non-neural fallback instead of running randomly initialized weights.
 
 ---
 
 ## 📑 Specialized Documentation
 
-- 📐 **[ARCHITECTURE.md](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/architecture.md)**: Deep-dive into modules and clinical math.
-- 🧠 **[ML_SPEC.md](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/ML_SPEC.md)**: Theoretical specification for the 5 tiers.
-- 🗺️ **[ROADMAP.md](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/ROADMAP.md)**: Current development status and upcoming milestones.
+- 📐 **[Architecture](docs/architecture.md)**: Deep-dive into modules and clinical math.
+- 🧠 **[ML specification](docs/ML_SPEC.md)**: Theoretical specification for the five layers.
+- 🗺️ **[Current handoff](workspace/HANDOFF.md)**: Verified state, deployment priorities, and remaining work.
