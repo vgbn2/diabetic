@@ -30,17 +30,12 @@ from diabetic.telegram_bot.handlers import TelegramNotifier, TelegramApp
 from diabetic.ui.cli_hud import RealTimeHUD
 from diabetic.ui.visualizer import MetabolicVisualizer
 
-from diabetic.utils.stateless_push import StatelessPush
 from diabetic.utils.audit_logger import AuditLogger
 from diabetic.utils.data_factory import TacticalForecaster, compute_confidence_index
 
 from diabetic.storage.engine import init_db, close_db as close_storage_db
 from diabetic.storage.vessel_registry import VesselRegistry
 from diabetic.ml_engine.oracle import BasalOracle
-try:
-    from diabetic.ml_engine.metabolic_palace import MetabolicPalace
-except ImportError:
-    MetabolicPalace = None
 
 # =============================================================================
 # 🏗️ [ORCHESTRATION ARCHITECTURE]
@@ -59,7 +54,12 @@ class Coordinator:
         return cls._instance
 
     @classmethod
-    async def create(cls, audit_logger: Optional['AuditLogger'] = None) -> "Coordinator":
+    async def create(
+        cls,
+        audit_logger: Optional['AuditLogger'] = None,
+        *,
+        allow_synthetic: bool = False,
+    ) -> "Coordinator":
         self = cls()
         if self._initialized:
             return self
@@ -69,8 +69,9 @@ class Coordinator:
         self.audit = audit_logger or AuditLogger()
         self.client = NightscoutClient()
         self.mongo = MongoDBClient()
-        self.hr_client = HeartRateIngestor()
-        self.weather_client = WeatherIngestor()
+        self.allow_synthetic = allow_synthetic
+        self.hr_client = HeartRateIngestor(allow_synthetic=allow_synthetic)
+        self.weather_client = WeatherIngestor(allow_synthetic=allow_synthetic)
         self.filter = GlucoseFilter()
 
         self.neural_runner = MetabolicInferenceRunner()
@@ -97,13 +98,6 @@ class Coordinator:
             cycle_start=config.PATIENT_CYCLE_START
         )
         self.visualizer = MetabolicVisualizer(output_dir="charts")
-        self.pusher = StatelessPush()
-        try:
-            self.palace = MetabolicPalace()
-        except Exception as e:
-            self.logger.warning(f"MetabolicPalace initialization failed: {e}. Semantic memory disabled.")
-            self.palace = None
-
         # [G1] Wire VesselRegistry — multi-tenant bio-trait persistence
         self.vessel_registry = VesselRegistry()
         await init_db()  # idempotent: creates tables if not present
@@ -251,12 +245,26 @@ class Coordinator:
             hr_res = results[1]
             if not isinstance(hr_res, Exception):
                 snapshot.cardiac = hr_res
+                if (
+                    hr_res is not None
+                    and hr_res.provenance == "real"
+                    and not is_backfill
+                ):
+                    persist_hr = asyncio.create_task(
+                        self.mongo.save_cardiac_reading(hr_res)
+                    )
+                    self.background_tasks.add(persist_hr)
+                    persist_hr.add_done_callback(self.background_tasks.discard)
             else:
                 self.logger.warning(f"Cardiac ingestion failed: {hr_res}")
                 snapshot.cardiac = None
             
             we_res = results[2]
-            if not isinstance(we_res, Exception) and we_res:
+            if (
+                not isinstance(we_res, Exception)
+                and we_res
+                and (self.allow_synthetic or we_res.provenance == "real")
+            ):
                 snapshot.environment = we_res
                 # PERSISTENCE (Phase 3): Anchor local weather to historical readings
                 if not is_backfill:
@@ -421,19 +429,6 @@ class Coordinator:
         except Exception as e:
             self.logger.error(f"[F1] Forecast horizon refresh failed: {e.__class__.__name__}")
 
-        # 6b. Semantic Memory (Layer 4/5)
-        # Trapping anomalies: e.g., high prediction, high value, or HR distress
-        if not is_backfill:
-            if prediction_30m > medical_constants.PALACE_ANOMALY_GLUCOSE \
-               or reading.value > medical_constants.PALACE_ANOMALY_GLUCOSE \
-               or (snapshot.bpm and snapshot.bpm > medical_constants.PALACE_ANOMALY_BPM):
-                if self.palace is not None:
-                    task = asyncio.create_task(asyncio.to_thread(
-                        self.palace.remember_snapshot, snapshot.model_dump(), room="l4_anomaly_audit"
-                    ))
-                    self.background_tasks.add(task)
-                    task.add_done_callback(self.background_tasks.discard)
-
         hr_val = snapshot.bpm if snapshot.bpm else "N/A"
         hr_max = snapshot.max_bpm if snapshot.max_bpm else hr_val
         hrv_val = f"{snapshot.hrv:.1f}" if snapshot.hrv else "N/A"
@@ -453,16 +448,7 @@ class Coordinator:
                 self.meal_tune_pending = False
                 self.meal_window_start = None
 
-        # 9. Push to Frontend
-        if not is_backfill:
-            task = asyncio.create_task(self.pusher.push_update({
-                "snapshot": snapshot.model_dump(),
-                "prediction": prediction_30m
-            }))
-            self.background_tasks.add(task)
-            task.add_done_callback(self.background_tasks.discard)
-
-        # 10. Update Continuous Chart
+        # 9. Update Continuous Chart
         self.visualizer.update_continuous(list(self.snapshots))
 
 # =============================================================================
@@ -525,19 +511,7 @@ class Coordinator:
                 await self.mongo.sync_current_period()
                 
                 # 2. Retention Policy Cleanup
-                await self.mongo.run_retention_cleanup(days=180)
-                
-                # 3. Nightscout-Direct Training (New Phase)
-                # Strategy: Retrain the CNN on the latest 15 days of real-world data
-                try:
-                    from diabetic.ml_engine.train import train_metabolic_cnn
-                    self.logger.info("MAINTENANCE: Initiating Nightscout-Direct Retraining (Source: MongoDB)...")
-                    # We use a smaller epoch count for daily calibration to prevent overfitting
-                    # and ensure the maintenance window isn't held open too long.
-                    await train_metabolic_cnn(source="mongo", epochs=20, weight_version="v15")
-                    self.logger.info("MAINTENANCE: Retraining complete. New weights saved to v15.")
-                except Exception as te:
-                    self.logger.error(f"Maintenance retraining failed: {te}")
+                await self.mongo.run_retention_cleanup(days=config.RETENTION_DAYS)
 
                 await self.audit.log_admin_action("AUTO_MAINTENANCE_COMPLETE", {"local_time": str(target)})
                 self.logger.info("Regional Maintenance Cycle complete.")
@@ -585,10 +559,6 @@ class Coordinator:
         self.worker_task = asyncio.create_task(self._worker_loop())
         self.background_tasks.add(self.worker_task)
         self.worker_task.add_done_callback(self.background_tasks.discard)
-
-        task_pusher = asyncio.create_task(self.pusher.heartbeat())
-        self.background_tasks.add(task_pusher)
-        task_pusher.add_done_callback(self.background_tasks.discard)
 
         task_hr = asyncio.create_task(self.hr_client.start_ble_client())
         self.background_tasks.add(task_hr)
@@ -720,16 +690,6 @@ class Coordinator:
             # FIX L1: store peak now for use by auto_tune at t+230 min
             self.pending_meal_forecast_peak = float(prediction_4h.max())
 
-            task = asyncio.create_task(self.pusher.push_update({
-                "type": "meal_forecast",
-                "description": desc,
-                "grams": grams,
-                "gi_type": gi_type,
-                "prediction_4h": prediction_4h.tolist()
-            }))
-            self.background_tasks.add(task)
-            task.add_done_callback(self.background_tasks.discard)
-
             chart_path = self.visualizer.plot_forecast(
                 history=[s.glucose.value for s in history],
                 prediction=prediction_4h,
@@ -857,9 +817,6 @@ class Coordinator:
             await self.mongo.close()
         if hasattr(self.weather_client, 'close'):
             await self.weather_client.close()
-        if hasattr(self.pusher, 'close'):
-            await self.pusher.close()
-        
         from diabetic.storage.engine import close_db as close_storage_db
         await close_storage_db()
         

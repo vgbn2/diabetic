@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Literal, Optional
 
 from diabetic.config import config
 from diabetic.registry import MetabolicSnapshot
@@ -70,13 +71,18 @@ async def serve_history():
     return _serve_page("history.html")
 
 class HUDState(BaseModel):
-    glucose: float
-    velocity: float
+    state: Literal["waiting", "live", "stale", "degraded"]
+    ready: bool
+    fresh: bool
+    glucose: Optional[float]
+    velocity: Optional[float]
     trend: str
     active_carbs: float
     active_insulin: float
     confidence: float
-    last_update: str
+    timestamp: Optional[str]
+    age_seconds: Optional[float]
+    degraded_reasons: list[str]
 
 # Shared state reference (will be injected by the Coordinator)
 COORDINATOR_REF = None
@@ -86,40 +92,82 @@ async def get_hud_data():
     """Returns the real-time metabolic frame for the glassmorphism HUD."""
     if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
         return HUDState(
-            glucose=0.0,
-            velocity=0.0,
+            state="waiting",
+            ready=False,
+            fresh=False,
+            glucose=None,
+            velocity=None,
             trend="FLAT",
             active_carbs=0.0,
             active_insulin=0.0,
             confidence=0.0,
-            last_update="Waiting for Engine..."
+            timestamp=None,
+            age_seconds=None,
+            degraded_reasons=["no_metabolic_snapshot"],
         )
     
     latest: MetabolicSnapshot = COORDINATOR_REF.snapshots[-1]
+    timestamp = latest.glucose.timestamp
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    age = max(0.0, (datetime.now(timezone.utc) - timestamp).total_seconds())
+    fresh = age <= config.HUD_STALE_AFTER_SECS
     
     return HUDState(
+        state="live" if fresh else "stale",
+        ready=fresh,
+        fresh=fresh,
         glucose=latest.filtered_value,
         velocity=latest.velocity,
-        trend=latest.trend_label,
+        trend=latest.glucose.trend,
         active_carbs=latest.active_carbs,
         active_insulin=latest.active_insulin,
         confidence=latest.confidence_index,
-        last_update=latest.timestamp.strftime("%H:%M:%S")
+        timestamp=timestamp.isoformat(),
+        age_seconds=round(age, 1),
+        degraded_reasons=[] if fresh else ["stale_metabolic_snapshot"],
     )
 
 @app.get("/api/v1/forecast", dependencies=[Depends(require_twa_user)])
 async def get_forecast():
     """Returns the 4h trajectory for the 'Metabolic Horizon' chart."""
-    if not COORDINATOR_REF:
-        return {"error": "Engine Offline"}
+    if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
+        return {"state": "waiting", "points": [], "horizon": [], "horizon_1d": []}
     
     history_pts = int(150 / config.SAMPLING_INTERVAL_MINS)
+    timestamp = COORDINATOR_REF.snapshots[-1].glucose.timestamp
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    fresh = (
+        datetime.now(timezone.utc) - timestamp
+    ).total_seconds() <= config.HUD_STALE_AFTER_SECS
     return {
+        "state": "live" if fresh else "stale",
+        "timestamp": timestamp.isoformat(),
         "points": [s.filtered_value for s in COORDINATOR_REF.snapshots[-history_pts:]],
         "horizon": getattr(COORDINATOR_REF, "last_prediction_4h", []),
         "horizon_1d": getattr(COORDINATOR_REF, "last_prediction_1d", []),
         "resolution_mins": config.SAMPLING_INTERVAL_MINS,
     }
+
+
+@app.get("/healthz")
+async def healthz():
+    """Liveness only: the HTTP process can answer."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz():
+    """Detail-free freshness gate for local orchestration."""
+    if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
+        raise HTTPException(status_code=503, detail="not ready")
+    latest = COORDINATOR_REF.snapshots[-1].glucose.timestamp
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    if (datetime.now(timezone.utc) - latest).total_seconds() > config.HUD_STALE_AFTER_SECS:
+        raise HTTPException(status_code=503, detail="not ready")
+    return {"status": "ready"}
 
 @app.post("/api/v1/calibration", dependencies=[Depends(require_twa_user)])
 async def update_calibration(traits: dict):

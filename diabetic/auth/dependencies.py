@@ -31,7 +31,11 @@ async def require_twa_user(authorization: str = Header(default="")) -> dict:
 
     # Dev bypass for plain-browser testing (disabled unless TWA_DEV_TOKEN is set).
     if scheme == "dev":
-        if config.TWA_DEV_TOKEN and hmac.compare_digest(credential, config.TWA_DEV_TOKEN):
+        if (
+            config.BIO_ENVIRONMENT == "development"
+            and config.TWA_DEV_TOKEN
+            and hmac.compare_digest(credential, config.TWA_DEV_TOKEN)
+        ):
             return {"id": int(config.USER_ID), "first_name": "Dev", "dev": True}
         raise HTTPException(status_code=401, detail="Invalid dev token")
 

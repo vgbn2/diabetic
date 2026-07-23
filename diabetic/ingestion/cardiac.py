@@ -29,7 +29,7 @@ class HeartRateIngestor:
     Asynchronous ingestor for cardiac data (BPM/HRV).
     Supports BLE sensor polling and Mock data fallback.
     """
-    def __init__(self):
+    def __init__(self, *, allow_synthetic: bool = False):
         self.logger = logging.getLogger("Bio-Quant.Ingestor.HR")
         
         # Rolling buffer for stable RMSSD (Task 8.4.1)
@@ -41,10 +41,19 @@ class HeartRateIngestor:
         self.is_running = True
 
         self.address = getattr(config, "HEART_RATE_SENSOR_ADDRESS", None)
-        self.is_mock = not self.address or self.address.upper() == "MOCK"
+        self.enabled = bool(config.CARDIAC_ENABLED)
+        mock_requested = not self.address or self.address.upper() == "MOCK"
+        self.is_mock = bool(self.enabled and allow_synthetic and mock_requested)
+        self.is_available = bool(self.enabled and (self.is_mock or not mock_requested))
         
-        if self.is_mock:
+        if not self.enabled:
+            self.logger.info("Cardiac ingestion disabled.")
+        elif self.is_mock:
             self.logger.info("Initializing in MOCK mode (No BLE address configured).")
+        elif not self.is_available:
+            self.logger.warning(
+                "Cardiac provider unavailable: a real BLE address is not configured."
+            )
         else:
             self.logger.info(f"Initializing BLE Ingestor for address: {self.address}")
 
@@ -61,6 +70,8 @@ class HeartRateIngestor:
         Returns a CardiacReading enriched with aggregate statistics 
         since the last call. (Task 8.4.2)
         """
+        if not self.is_available:
+            return None
         if self.is_mock:
             for _ in range(5):
                 self._last_reading_Snapshot = self._generate_mock_reading()
@@ -99,7 +110,9 @@ class HeartRateIngestor:
         return CardiacReading(
             timestamp=datetime.now(timezone.utc),
             bpm=int(hr),
-            hrv=round(rmssd, 2)
+            hrv=round(rmssd, 2),
+            source="simulation",
+            provenance="synthetic",
         )
 
     async def start_ble_client(self):
@@ -107,7 +120,7 @@ class HeartRateIngestor:
         Background task to connect to BLE sensor and update rr_buffer.
         Requires 'bleak' to be installed.
         """
-        if self.is_mock:
+        if not self.is_available or self.is_mock:
             return
 
         HR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"

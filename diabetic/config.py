@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional, Dict
+from typing import Optional, Dict, Literal
 from diabetic import medical_constants
 
 class Settings(BaseSettings):
@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     NIGHTSCOUT_URL: str = ""
     API_SECRET: str = Field("", validation_alias="NIGHTSCOUT_API_SECRET")
     OPENWEATHER_API_KEY: str = ""
-    WEATHER_MOCK_MODE: bool = True
+    WEATHER_MOCK_MODE: bool = False
     
     # Alerting (Telegram)
     TELEGRAM_TOKEN: str = Field("", validation_alias="TELEGRAM_BOT_TOKEN")
@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 # RUNTIME SETTINGS: Polling & Logging
 # -----------------------------------------------------------------------------
     LOG_LEVEL: str = "INFO"
+    BIO_ENVIRONMENT: Literal["production", "development", "test"] = "production"
     DATA_POLLING_INTERVAL: int = 150  # 2.5 minutes
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
@@ -79,13 +80,15 @@ class Settings(BaseSettings):
     # Infrastructure
     MONGO_URI: str = ""
     MONGODB_URI: str = "" # Heroku Add-on standard
-    RENDER_EXTERNAL_URL: str = ""#change to heroku
     HEART_RATE_SENSOR_ADDRESS: str = "MOCK" # Set to XX:XX... for BLE
+    WEATHER_ENABLED: bool = True
+    CARDIAC_ENABLED: bool = True
     
     # Local High-Availability (Task 8.1.1)
     LOCAL_DB_PATH: str = "storage/audit.db"
     BACKFILL_MAX_HOURS: int = 24
     RETENTION_DAYS: int = Field(180, validation_alias="BIO_RETENTION_DAYS")
+    HUD_STALE_AFTER_SECS: int = Field(900, validation_alias="BIO_HUD_STALE_AFTER_SECS")
     LOCAL_GUI_ENABLED: bool = True
 
     # TWA Web Auth (Telegram Mini App)
@@ -96,15 +99,12 @@ class Settings(BaseSettings):
     # ML Engine (Phase 3 Evolution)
     ML_WEIGHTS_VERSION: str = "v15"
     ML_WEIGHTS_PATH: str = str(Path(__file__).resolve().parent.parent / "diabetic/ml_engine/weights/diabetic_cnn_v15.pth")
+    AUTO_TRAIN_ENABLED: bool = Field(False, validation_alias="BIO_AUTO_TRAIN_ENABLED")
+    TRAIN_STALE_DAYS: int = Field(7, validation_alias="BIO_TRAIN_STALE_DAYS")
     
     # --- WAVE 5: UI & Network parameters ---
     LIVE_HISTORY_HOURS: float = 8.0
     BLE_RECONNECT_SECS: int = 30
-    PUSH_TIMEOUT_SECS: float = 5.0
-    POLLING_INTERVAL_SECS: int = 300
-    
-    FRONTEND_PUSH_URL: str = ""
-    
     # Locate the .env file in the project root (one level up from diabetic/ folder)
     _BASE_DIR = Path(__file__).resolve().parent.parent
     _DOT_ENV = _BASE_DIR / ".env"

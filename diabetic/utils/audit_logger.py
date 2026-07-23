@@ -7,11 +7,6 @@ from typing import Optional, List
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
 from diabetic.utils.db import db_manager
-try:
-    from diabetic.ml_engine.metabolic_palace import MetabolicPalace
-    PALACE_ENABLED = True
-except (ImportError, ModuleNotFoundError):
-    PALACE_ENABLED = False
 
 # =============================================================================
 # 📖 [AUDIT CONNECTIVITY]
@@ -33,14 +28,6 @@ class AuditLogger:
              self.logger.info("MongoDB Audit Logging enabled via shared singleton.")
         else:
              self.logger.warning("MongoDB URI missing; audit logging restricted to local SQLite.")
-        
-        self.palace = None
-        if PALACE_ENABLED:
-            try:
-                self.palace = MetabolicPalace()
-            except Exception as e:
-                self.logger.warning(f"Failed to initialize Metabolic Palace: {e}")
-                self.palace = None
         
         # GC Protection for background tasks (Phase 0.5 Remediation)
         self.background_tasks = set()
@@ -134,24 +121,6 @@ class AuditLogger:
                     await asyncio.to_thread(_write_db)
             except Exception as e:
                 self.logger.error(f"Failed to persist log to SQLite: {e}")
-
-        # Semantic Indexing (Layer 4/5 Trigger)
-        if self.palace and (level in ["WARNING", "ERROR"] or event_type in ["USER_FEEDBACK", "REGIME_SHIFT"]):
-            try:
-                # Palace expect flat/simple dicts
-                task = asyncio.create_task(asyncio.to_thread(
-                    self.palace.remember_snapshot, {
-                        "event_type": event_type,
-                        "timestamp": timestamp.isoformat(),
-                        "level": str(level),
-                        **sanitized_data
-                    }, 
-                    room="l4_anomaly_audit" if level != "INFO" else "l5_user_feedback"
-                ))
-                self.background_tasks.add(task)
-                task.add_done_callback(self.background_tasks.discard)
-            except Exception as e:
-                self.logger.error(f"Failed to semantically index event: {e}")
 
 # =============================================================================
 # 🩸 [TELEMETRY & USER FEEDBACK]

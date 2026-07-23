@@ -71,6 +71,16 @@ async function updateHUD() {
     try {
         var data = await apiJson("/api/v1/hud");
         var gv = document.getElementById("glucose-val");
+        if (!data.ready || !data.fresh || data.glucose === null) {
+            gv.innerText = "--.-";
+            gv.className = "glucose-value";
+            document.getElementById("velocity-val").innerText = data.state.toUpperCase();
+            document.getElementById("carbs-val").innerText = "--";
+            document.getElementById("insulin-val").innerText = "--";
+            document.getElementById("last-update").innerText =
+                data.state === "stale" ? "STALE" : "WAITING";
+            return;
+        }
         gv.innerText = data.glucose.toFixed(1);
         gv.className = "glucose-value " + rangeClass(data.glucose);
 
@@ -79,7 +89,7 @@ async function updateHUD() {
             data.trend + " " + velStr + data.velocity.toFixed(2) + "/min";
         document.getElementById("carbs-val").innerText = data.active_carbs.toFixed(1) + "g";
         document.getElementById("insulin-val").innerText = data.active_insulin.toFixed(2) + "U";
-        document.getElementById("last-update").innerText = data.last_update || "LIVE";
+        document.getElementById("last-update").innerText = "LIVE";
 
         // Haptic warning on dangerous excursions.
         if (BioAuth.tg && (data.glucose < 4.0 || data.glucose > 13.0)) {
@@ -91,6 +101,11 @@ async function updateHUD() {
 async function updateForecast() {
     try {
         var data = await apiJson("/api/v1/forecast");
+        if (data.state !== "live") {
+            _lastForecast = { horizon: [], horizon_1d: [] };
+            renderHorizon();
+            return;
+        }
         _lastForecast = { horizon: data.horizon || [], horizon_1d: data.horizon_1d || [] };
         renderHorizon();
     } catch (e) { /* forecast optional */ }

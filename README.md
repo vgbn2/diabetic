@@ -24,7 +24,7 @@ The engine moves through three temporal phases:
 
 1.  **Forensic (Past)**: High-resolution PDF parsing (Libre/Ottai) to build historical metabolic baselines.
 2.  **Live (Present)**: Real-time synchronization with Nightscout/CGM for active Digital Twin simulation.
-3.  **Intelligence (Future)**: Hybrid 1D-CNN + XGBoost forecasting to proactively prevent faint-risk events.
+3.  **Intelligence (Future)**: Digital-twin and validated 1D-CNN forecasting to support conservative faint-risk alerts.
 
 ---
 
@@ -32,19 +32,21 @@ The engine moves through three temporal phases:
 
 - **`diabetic/ingestion/`**: Live and Offline data synchronization (Nightscout, high-res PDF).
 - **`diabetic/dsp/`**: Signal hardening via Kalman filtering and noise rejection.
-- **`diabetic/ml_engine/`**: The brain — containing the Digital Twin, XGBoost, and the 1D-CNN signal signatures.
+- **`diabetic/ml_engine/`**: The brain — containing the Digital Twin and 1D-CNN signal signatures.
 - **`diabetic/telegram_bot/`**: Interaction layer and decision matrix for conservative alerting.
 
 ---
 
 ## 🚀 Quick Start
 
-Python 3.11 is the supported runtime.
+Python 3.12 is the verified local and container runtime.
 
 ```bash
-python3.11 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pip install \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  -r requirements-dev.lock
 
 # Verify the repository contract and runtime behavior
 .venv/bin/python -m pytest ops/lab -q
@@ -59,8 +61,12 @@ python3.11 -m venv .venv
 For the local container deployment:
 
 ```bash
-docker compose up --build
+cp .env.example .env
+docker compose up -d --build
 ```
+
+See [the local Nightscout runbook](docs/local-nightscout.md) for safe LAN
+binding, migration staging, backup, and health checks.
 
 The selected CNN state dictionary is versioned with the source tree. If it is
 missing or cannot be loaded, neural inference is disabled and the coordinator

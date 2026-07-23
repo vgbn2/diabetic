@@ -21,12 +21,15 @@ class MetabolicDataset(Dataset):
         csv_path: Optional[str] = None, 
         df_input: Optional[pd.DataFrame] = None,
         seq_len: int = 30, 
-        prediction_offset: int = 6
+        prediction_offset: int = 6,
+        *,
+        allow_synthetic_cardiac: bool = True,
     ):
         self.csv_path = csv_path
         self.df_input = df_input
         self.seq_len = seq_len
         self.prediction_offset = prediction_offset # e.g. 6 ticks = 30 mins
+        self.allow_synthetic_cardiac = allow_synthetic_cardiac
         
         self.data, self.static_vector = self._preprocess()
         self.X, self.y = self._create_windows()
@@ -71,21 +74,28 @@ class MetabolicDataset(Dataset):
         df['glucose'] = df['glucose'].interpolate(method='linear')
         df = df.dropna(subset=['glucose'])  # Remove trailing/leading NaNs
 
-        # 3. Generate Synthetic Cardiac Channel
-        hrs = []
-        for i in range(len(df)):
-            g_val = df.iloc[i]['glucose']
-            # Calculate velocity if possible
-            vel = 0.0
-            if i > 0:
-                # Fix C3: Divide by actual sampling interval, not hardcoded 5.0
-                vel = (g_val - df.iloc[i-1]['glucose']) / config.SAMPLING_INTERVAL_MINS
-            
-            g_reading = GlucoseReading(timestamp=df.index[i], value=g_val, trend="NONE")
-            cardiac = cardiac_synthesizer.estimate(g_reading, velocity=vel)
-            hrs.append(cardiac.bpm)
-        
-        df['heart_rate'] = hrs
+        if "heart_rate" not in df:
+            if not self.allow_synthetic_cardiac:
+                raise ValueError(
+                    "Deployable training requires a real heart_rate channel."
+                )
+            hrs = []
+            for i in range(len(df)):
+                g_val = df.iloc[i]["glucose"]
+                vel = 0.0
+                if i > 0:
+                    vel = (
+                        g_val - df.iloc[i - 1]["glucose"]
+                    ) / config.SAMPLING_INTERVAL_MINS
+                g_reading = GlucoseReading(
+                    timestamp=df.index[i], value=g_val, trend="NONE"
+                )
+                cardiac = cardiac_synthesizer.estimate(g_reading, velocity=vel)
+                hrs.append(cardiac.bpm)
+            df["heart_rate"] = hrs
+        else:
+            df["heart_rate"] = df["heart_rate"].interpolate(method="linear")
+            df = df.dropna(subset=["heart_rate"])
 
         # 4. Feature Scaling (CNN best practices)
         df['glucose_scaled'] = df['glucose'] / 20.0

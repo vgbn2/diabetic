@@ -26,6 +26,7 @@ CATEGORIES = [
     {"id": "sim",      "label": "Simulation"},
     {"id": "admin",    "label": "Data & Admin"},
     {"id": "diag",     "label": "Diagnostics"},
+    {"id": "ml",       "label": "Model Training"},
     {"id": "settings", "label": "Settings & Preferences"},
 ]
 
@@ -84,6 +85,33 @@ COMMANDS = {
             "label": "Hot-Reload Inference Stress Test (100 iters)",
             "status": "partial",
             "notes": "Runs scripts.simulation.stress_scheduler. Cold-mode if weights absent.",
+        },
+    ],
+    "ml": [
+        {
+            "id": "status",
+            "label": "Last training result",
+            "status": "ok",
+            "notes": "Reads the local promotion manifest without starting training.",
+        },
+        {
+            "id": "train",
+            "label": "Train and promote a candidate",
+            "status": "partial",
+            "flags": {
+                "--source": {
+                    "type": "select",
+                    "label": "Training source",
+                    "options": ["mongo", "csv"],
+                    "default": "mongo",
+                },
+                "--epochs": {
+                    "type": "text",
+                    "label": "Epochs",
+                    "default": "20",
+                },
+            },
+            "notes": "Serialized, validated, atomic promotion. Mongo needs real cardiac telemetry.",
         },
     ],
     "settings": [

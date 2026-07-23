@@ -14,16 +14,27 @@ class WeatherIngestor:
     AIR_POLLUTION_URL = "https://api.openweathermap.org/data/2.5/air_pollution"
     FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
     #open weather or open meteor is fine
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, *, allow_synthetic: bool = False):
         self.api_key = api_key or config.OPENWEATHER_API_KEY
         self.logger = logging.getLogger("Bio-Quant.Weather")
-        self.mock_mode = not bool(self.api_key) or getattr(config, 'WEATHER_MOCK_MODE', True)
+        self.allow_synthetic = allow_synthetic
+        self.enabled = bool(config.WEATHER_ENABLED)
+        self.mock_mode = bool(
+            allow_synthetic
+            and (not self.api_key or getattr(config, "WEATHER_MOCK_MODE", False))
+        )
         
         # Wave 0 Hardening: Persistent client to prevent socket leaks
         self.client = httpx.AsyncClient(timeout=10.0)
         
-        if self.mock_mode:
+        if not self.enabled:
+            self.logger.info("Weather ingestion disabled.")
+        elif self.mock_mode:
             self.logger.warning("WEATHER_MOCK_MODE is active. Using regional baseline (Hanoi) for environmental factors.")
+        elif not self.api_key:
+            self.logger.warning(
+                "Weather provider unavailable: OPENWEATHER_API_KEY is not configured."
+            )
 
     async def close(self):
         """Closes the underlying HTTP client."""
@@ -34,8 +45,12 @@ class WeatherIngestor:
         Fetches current weather and AQI.
         If strict=True, raises exceptions on API failure instead of falling back to mock.
         """
+        if not self.enabled:
+            return None
         if self.mock_mode:
             return self._get_mock_reading()
+        if not self.api_key:
+            return None
 
         try:
             # 1. Fetch Weather
@@ -49,7 +64,7 @@ class WeatherIngestor:
                 resp.raise_for_status()
             elif resp.status_code != 200:
                 self.logger.error(f"Weather API Error: {resp.status_code}")
-                return self._get_mock_reading()
+                return None
             
             w_data = resp.json()
 
@@ -70,23 +85,26 @@ class WeatherIngestor:
                 timestamp=datetime.now(timezone.utc),
                 temperature=w_data['main']['temp'],
                 humidity=w_data['main']['humidity'],
-                aqi=aqi_val
+                aqi=aqi_val,
+                source="openweather",
+                provenance="real",
             )
 
         except Exception as e:
             if strict:
                 raise e
             self.logger.error(f"Weather fetch failed: {e}")
-            return self._get_mock_reading()
+            return None
 
     async def fetch_forecast_5d(self, lat: float, lon: float) -> List[EnvironmentReading]:
         """Provides 5-day forecast for climatological simulation (Fix M4)."""
+        if not self.enabled:
+            return []
         if self.mock_mode:
             return self._get_mock_forecast()
         
-        # Real forecast logic would go here
-        # FIX M4: Fallback to mock forecast even in prod if real logic is missing
-        return self._get_mock_forecast()
+        self.logger.warning("Real weather forecast ingestion is not implemented.")
+        return []
 
     def _get_mock_forecast(self) -> List[EnvironmentReading]:
         """Returns 5 days of 3-hour mock environmental readings."""
@@ -96,7 +114,9 @@ class WeatherIngestor:
                 timestamp=now + timedelta(hours=i*3),
                 temperature=26.5 + (i % 8 - 4) * 0.5, # Simulating daily oscillation
                 humidity=80.0,
-                aqi=45.0 + (i % 5) * 5.0 # PM2.5 flux
+                aqi=45.0 + (i % 5) * 5.0, # PM2.5 flux
+                source="hanoi_baseline",
+                provenance="synthetic",
             ) for i in range(40) # 5 days of 3-hour intervals
         ]
 
@@ -106,5 +126,7 @@ class WeatherIngestor:
             timestamp=datetime.now(timezone.utc),
             temperature=26.5,
             humidity=80.0,
-            aqi=45.0 # PM2.5 baseline
+            aqi=45.0, # PM2.5 baseline
+            source="hanoi_baseline",
+            provenance="synthetic",
         )

@@ -238,3 +238,195 @@ Added `VesselRegistry.update_user_traits(telegram_id, traits: dict) -> bool` (`v
 **Remaining decision:** Decide whether `run_graphify.py` and `.graphifyignore` are canonical tooling or disposable generated artifacts. They were left untracked and unchanged.
 
 **Verification gate:** `git diff --check` is clean; after commit, `git status --short` contains only intentionally retained untracked tooling.
+
+---
+
+## 2026-07-23 Deep Blast-Through — Active Findings
+
+Audit mode: **full, review-only**. No application behavior was changed. Current
+promotion status is **blocked**.
+
+### [R17] Unlabelled low SGV values are inverted from severe hypo to extreme hyper
+**Severity:** **Critical**
+
+**Files:** `diabetic/ingestion/nightscout.py:116-132`,
+`diabetic/ingestion/mongo.py:150-153`, `diabetic/ingestion/mongo.py:365-381`
+
+**Why:** Both REST and Mongo paths infer `raw < 40` to mean mmol/L when units are
+absent. Nightscout-compatible SGV records are commonly stored in mg/dL. A
+legitimate `sgv=39` mg/dL severe low is therefore emitted as `39 mmol/L`, which
+can suppress the hypo path and present an extreme hyper value.
+
+**Decision required:** Make the source contract explicit. Treat Nightscout `sgv`
+as mg/dL by default, convert only when an authoritative unit field says mmol/L,
+and reject ambiguous/non-physiological input rather than guessing.
+
+**Verification gate:** Parameterized REST and Mongo parity tests for 39, 40, 41,
+70, and explicit mmol-labelled records; assert that 39 mg/dL becomes about
+2.16 mmol/L and still reaches the critical-hypo decision path.
+
+### [R18] `TWA_DEV_TOKEN` is disclosed by the CLI and MCP config surfaces
+**Severity:** **High**
+
+**Files:** `diabetic/cli/commands/settings.py:10-31`,
+`diabetic/mcp/server.py:36-47`, `diabetic/auth/dependencies.py:32-36`
+
+**Why:** `_SECRET_KEYS` omits `TWA_DEV_TOKEN`. Both `settings show` and
+`bio_config` return it in full. That same token is accepted as an authentication
+bypass and assumes the configured patient identity, including access to the
+mutating calibration endpoint.
+
+**Decision required:** Use deny-by-default secret serialization (Pydantic secret
+types or field metadata), include all credential-bearing fields, and disable the
+dev scheme outside an explicit development profile.
+
+**Verification gate:** Set unique sentinel values for every credential field;
+assert none appear in CLI JSON, rich output, MCP output, logs, or exceptions.
+
+### [R19] Synthetic weather and cardiac data enter clinical decisions as real telemetry
+**Severity:** **High**
+
+**Files:** `diabetic/config.py:17-18,83`,
+`diabetic/ingestion/weather.py:17-26,32-52,76-109`,
+`diabetic/ingestion/cardiac.py:43-47,59-103`,
+`diabetic/registry.py:30-38`, `diabetic/coordinator.py:232-265`,
+`diabetic/ingestion/mongo.py:109-120,186-209`,
+`diabetic/ml_engine/inference.py:127-160,179-186`,
+`diabetic/telegram_bot/decision_matrix.py:69-143`
+
+**Why:** Weather mock mode defaults on and API failures silently fall back to a
+Hanoi baseline. Heart-rate input defaults to `MOCK`, but generated readings keep
+the model default `source="ble"`. The coordinator persists and consumes these
+values without provenance gates; they influence context labels, neural features,
+training data, and alert suppression/escalation.
+
+**Decision required:** Add first-class provenance/quality fields, mark all mock
+readings explicitly, never persist them into the clinical training corpus, and
+make live mode fail closed or degrade visibly when real sensors/providers are
+unavailable.
+
+**Verification gate:** End-to-end tests proving mock/weather-fallback readings
+cannot be labeled BLE, cannot enter the deployable training set, and cannot
+change clinical alert behavior.
+
+### [R20] Retraining can block live monitoring and destroy the last-known-good model
+**Severity:** **High**
+
+**Files:** `diabetic/ml_engine/train.py:41-173`,
+`diabetic/ml_engine/scheduler.py:16-80`,
+`diabetic/coordinator.py:497-540`, `diabetic/main.py:100-115`
+
+**Why:** The async trainer performs the CPU/PyTorch training loop synchronously
+after its initial database await, blocking the live event loop. Best epochs are
+written directly to the deployed weight path before safety checks; rejection or
+guard errors then unlink that path. There is no temporary candidate, atomic
+promotion, rollback, or inter-owner lock. Both the scheduler and coordinator
+maintenance loop can train the same artifact around the same configured hour;
+only the scheduler hot-reloads it.
+
+**Decision required:** Establish one training owner. Run training off the live
+event loop, write a versioned candidate, validate it, atomically promote it under
+a lock, preserve last-known-good weights, and reload only the promoted artifact.
+
+**Verification gate:** Stress test concurrent scheduler/maintenance triggers,
+failed guards, interruption during save, continued ingestion during training,
+artifact checksum parity, and one successful hot reload.
+
+### [R21] Cold and stale HUD data are rendered as live clinical state
+**Severity:** **High**
+
+**Files:** `diabetic/telegram_bot/twa_api.py:84-108`,
+`twa/assets/dashboard.js:64-88`
+
+**Why:** A cold engine returns HTTP 200 with `glucose=0.0`; the dashboard renders
+it as a low and triggers haptic warning. Existing snapshots are returned
+indefinitely with no age, freshness, or ready field, so stale values look live.
+
+**Decision required:** Return an explicit availability/freshness contract and
+never use numeric clinical sentinels. The UI must display unavailable/stale state
+and suppress range classification and haptics unless the reading is fresh.
+
+**Verification gate:** Browser/API tests for cold start, fresh data, stale data,
+engine offline, and recovery.
+
+### [R22] Treatment retention compares BSON dates against ISO-string records
+**Severity:** **Medium**
+
+**Files:** `diabetic/ingestion/nightscout.py:204-214`,
+`diabetic/ingestion/mongo.py:157-165,337-359`,
+`diabetic/coordinator.py:524-528`, `diabetic/config.py:88`
+
+**Why:** Treatment ingestion and training expect `created_at` ISO strings, while
+retention deletes with a BSON `datetime` cutoff. MongoDB type matching means
+string-valued treatment records are not reliably selected by that date query.
+The scheduled cleanup also hardcodes 180 days instead of `RETENTION_DAYS`.
+
+**Decision required:** Normalize the stored schema or issue type-aware cleanup
+queries during migration, then use the configured retention value everywhere.
+
+**Verification gate:** Integration test with both ISO-string and BSON-date
+treatments on both sides of the cutoff.
+
+### [R23] Health reports configuration/handles as connectivity
+**Severity:** **Medium**
+
+**Files:** `diabetic/utils/db.py:35-60`, `diabetic/utils/health.py:21-47`
+
+**Why:** Creating Motor collection handles performs no server ping, yet health
+reports MongoDB `"ok"` whenever a handle exists. Nightscout is only reported as
+configured. Model freshness is based on artifact mtime, which can be updated by
+an unvalidated training candidate.
+
+**Decision required:** Separate `configured`, `reachable`, `ready`, and
+`degraded`; perform bounded live probes for readiness; identify the loaded model
+by validated checksum/version rather than path mtime alone.
+
+**Verification gate:** Health contract tests for invalid URI, unreachable host,
+auth failure, stale CGM, missing/invalid/candidate weights, and a healthy stack.
+
+### [R24] Deployment and repository reproducibility remain incomplete
+**Severity:** **Medium**
+
+**Files:** `README.md:40-67`, `docker-compose.yml:1-44`, `.gitignore:1-4`,
+`run_graphify.py`, `.graphifyignore`
+
+**Why:** `.env.example` is absent; the live `.env` uses `OPEN_WEATHER_KEY` while
+the application reads `OPENWEATHER_API_KEY`; both MongoDB and Nightscout use
+floating `latest` images and no healthchecks. The repository virtual environment
+points to a deleted `/tmp` Python. Four ignored `.pyc` files remain tracked.
+Graph tooling is untracked, has a `graphifyy` install typo, and will overwrite
+the semantic graph with AST-only output when no API key is exported.
+
+**Decision required:** Seal the environment contract, pin deployable image
+versions/digests, add healthchecks, rebuild a local Python 3.11 environment, purge
+tracked bytecode, and either harden/commit graph tooling or discard it.
+
+**Verification gate:** Fresh clone/archive bootstrap, full 70-test suite,
+Compose config plus healthy runtime on a Docker-capable host, and guarded
+semantic graph refresh.
+
+---
+
+## 2026-07-23 R17-R24 Remediation Status
+
+- **R17 CLEARED**: REST and Mongo use one SGV normalizer; missing units default
+  to mg/dL and 39 mg/dL reaches critical-hypo logic.
+- **R18 CLEARED**: config output is allowlisted and the dev token only works in
+  an explicit development profile.
+- **R19 CLEARED LOCALLY**: mock cardiac/weather readings carry synthetic
+  provenance and cannot enter persisted deployable telemetry.
+- **R20 CLEARED LOCALLY**: training runs off-loop, is serialized by process and
+  file locks, validates a candidate, atomically promotes, preserves a backup,
+  and exposes explicit CLI controls. Automatic training defaults off.
+- **R21 CLEARED**: HUD/forecast report waiting/live/stale state and the browser
+  suppresses clinical colors/haptics unless fresh.
+- **R22 CLEARED**: treatment timestamps support millis, BSON dates, and ISO;
+  cleanup batches legacy IDs and all retention owners use config.
+- **R23 CLEARED LOCALLY**: bounded Mongo/Nightscout probes, model manifest
+  checksum checks, and detail-free health/readiness endpoints are present.
+- **R24 PARTIAL**: environment, locks, pinned Compose images, healthchecks,
+  migration/backup tools, and cleanup are complete. Compose runtime and staged
+  restore remain blocked by Docker socket permissions.
+
+Verification: 85 tests plus 5 subtests passed; dependency check, compileall,
+Compose config, shell syntax, migration hashes, and diff hygiene passed.

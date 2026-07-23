@@ -1,5 +1,5 @@
 # 🏗️ STAGE 1: THE BUILDER
-FROM python:3.11-slim as builder
+FROM python:3.12-slim-bookworm AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
@@ -17,17 +17,19 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Install dependencies
-COPY requirements.txt .
+COPY requirements.lock .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      -r requirements.lock
 
 # 🚀 STAGE 2: THE RUNTIME
-FROM python:3.11-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
 # Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # Install runtime system dependencies for OpenCV and Torch
@@ -43,5 +45,4 @@ COPY . .
 ENV PYTHONPATH=/app
 
 # Default command to start the worker in Live mode
-# Cloud Run Tip: Use 'PORT' env var if deploying as a service
 CMD ["python", "-m", "diabetic.main", "live"]

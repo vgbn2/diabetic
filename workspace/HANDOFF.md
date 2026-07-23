@@ -1,12 +1,12 @@
 # Handoff — Current Objectives
 
-_Last updated: 2026-07-18_
+_Last updated: 2026-07-23_
 
 ## Current Phase
-**Phase 5 complete. Deployment reproducibility hardening committed in `a8bd5f4`.**
-The implementation passed clean committed-archive verification; Docker/Compose validation remains host-blocked.
+**R17-R24 remediation implemented; promotion remains blocked only on external
+runtime validation and current live-service readiness.**
 
-## Last Verified State
+## Last Historical Verified State (2026-07-18)
 - **Test baseline: `70 passed`** — isolated Python 3.11.15, `python -m pytest ops/lab -q` → 70 passed, 5.19s
 - Pre-commit clean-HEAD candidate archive with the implementation overlay → 70 passed, 5.22s
 - Committed `HEAD` archive → 70 passed, 5.70s
@@ -120,3 +120,67 @@ The implementation passed clean committed-archive verification; Docker/Compose v
 | `diabetic/coordinator.py` | B |
 | `twa/` frontend | B |
 | `docker-compose.yml / infra` | B |
+
+## 2026-07-23 Deep Blast-Through Handoff
+
+**Mode:** full repository audit, review-only. Application code was not changed.
+
+**Verdict:** promotion blocked. DCS was reassessed from the archived 0.947 to
+**0.720** after tracing current cross-boundary behavior.
+
+**Critical path:**
+1. R17 — fix Nightscout/Mongo SGV units; `sgv=39` must remain a severe low.
+2. R18 — stop CLI/MCP disclosure of `TWA_DEV_TOKEN`.
+3. R19 — add telemetry provenance and exclude synthetic inputs from clinical
+   alerts/training.
+4. R20 — establish single-owner, non-blocking, atomic model promotion with
+   last-known-good rollback.
+5. R21 — add explicit HUD availability and freshness; remove numeric sentinels.
+
+**Current verification:**
+- `git diff --check` passed.
+- Working tree and fresh committed archive compile under system Python 3.14.
+- The 70-test result remains historical committed-archive evidence from
+  2026-07-18; it could not be rerun because `.venv` points to a deleted `/tmp`
+  Python and system Python lacks the declared dependencies.
+- Compose CLI exists; Docker daemon access is denied.
+- Graph refresh was deliberately not run: graph tooling is absent and the
+  untracked runner would degrade semantic output without an exported API key.
+
+**Durable audit outputs:** `workspace/DEV_REVIEW.md`,
+`workspace/REVIEW_LEDGER.md`, and `workspace/DEV_COMMENTS.md`.
+
+**Next-session instruction:** use a scoped mass-implementation pass in the
+remediation order above. Do not claim production readiness until R17-R21 are
+closed and verified from a fresh Python 3.11 environment and Docker-capable host.
+
+## 2026-07-23 Implementation Handoff
+
+R17-R23 are closed in the working tree and R24 is code-complete. The full
+repository suite passes (**85 tests plus 5 subtests**) in the fresh Python
+3.12.13 environment. Dependency compatibility, compileall, Compose static
+validation, shell syntax, and diff hygiene all pass.
+
+The requested Mongo extraction is complete under
+`storage/migrations/from-2026-06-01/` (ignored): 7,204 entries and one profile,
+2.1 MiB, with all manifest hashes independently verified. The source contains
+no qualifying treatments, device-status, activity, or food rows. The first
+entry is June 5 and the latest is July 1.
+
+Current read-only health is intentionally not ready: MongoDB responds, the
+configured Nightscout endpoint does not, no coordinator is running, and the
+existing v15 artifact has no trusted promotion manifest. Automatic retraining
+is disabled by default and cannot promote without real aligned cardiac data.
+
+The remaining queue is external and ordered:
+
+1. Grant the local user Docker socket access, then run
+   `docker compose up -d --build` and inspect `docker compose ps`.
+2. Stage the verified export with
+   `python scripts/ops/migrate_nightscout.py stage-restore --source
+   storage/migrations/from-2026-06-01`; compare counts before any cutover.
+3. Verify Nightscout at port 1337, Bio-Quant `/healthz` and `/readyz`, then take
+   the first local backup.
+4. Add real cardiac telemetry before any deployable model retraining.
+5. Refresh the semantic graph only with credentialed graph tooling; do not let
+   the existing untracked AST fallback overwrite semantic evidence.

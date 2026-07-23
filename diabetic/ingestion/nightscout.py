@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 from diabetic.registry import GlucoseReading, InsulinDose, MealEvent
 from diabetic.config import config
 from diabetic import medical_constants
+from diabetic.ingestion.normalization import normalize_nightscout_sgv
 
 class NightscoutClient:
     """
@@ -118,17 +119,21 @@ class NightscoutClient:
         readings = []
         for entry in entries:
             if 'sgv' in entry:
-                raw = float(entry['sgv'])
-                units_in_entry = entry.get('units', '').lower()
-                # Safe check: Nightscout uses 'mmol' or 'mmol/L'. 
-                # Floor for mg/dL is typically 40. Values below 30 are almost certainly mmol.
-                is_already_mmol = ("mmol" in units_in_entry or (not units_in_entry and raw < 40))
-                
+                try:
+                    mmol_value = normalize_nightscout_sgv(
+                        entry["sgv"], entry.get("units")
+                    )
+                except ValueError as exc:
+                    self.logger.warning(
+                        "Rejected Nightscout SGV with invalid unit/value: %s", exc
+                    )
+                    continue
+
                 if config.PREFER_MMOL:
-                    value = raw if is_already_mmol else raw / medical_constants.MMOL_TO_MGDL
+                    value = mmol_value
                     unit = "mmol/L"
                 else:
-                    value = raw * medical_constants.MMOL_TO_MGDL if is_already_mmol else raw
+                    value = mmol_value * medical_constants.MMOL_TO_MGDL
                     unit = "mg/dL"
                 
                 # Robust timestamp parsing
@@ -206,11 +211,13 @@ class NightscoutClient:
         endpoint = f"{self.url}/api/v1/treatments.json"
         headers = self._get_auth_headers()
         
+        now = datetime.now(timezone.utc)
         payload = {
             "enteredBy": "Bio-Quant Metabolic Engine",
             "eventType": event_type,
             "notes": notes,
-            "created_at": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            "created_at": now.isoformat().replace('+00:00', 'Z'),
+            "mills": int(now.timestamp() * 1000),
         }
         if carbs:
             payload["carbs"] = carbs

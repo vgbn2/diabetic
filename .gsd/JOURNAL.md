@@ -341,6 +341,28 @@ The system is now fully autonomous regarding model optimization. The next step i
 
 **System Status**: Production-Hardened (Absolute Pathing). Ready for Phase 4 (Alpha Gating).
 
+---
+
+## Session: 2026-07-23 — Local Nightscout remediation
+
+### Accomplished
+- Implemented the R17-R24 audit plan and conservative legacy cleanup.
+- Built a fresh Python 3.12.13 environment with reproducible lockfiles.
+- Exported and hash-verified Nightscout data from June 1 onward.
+- Added a loopback-first Nightscout/Mongo/Bio-Quant Compose stack and runbook.
+
+### Verification
+- [x] 85 tests plus 5 subtests.
+- [x] Dependency compatibility, compileall, Compose config, shell syntax, and
+  diff hygiene.
+- [x] 7,204 exported entries plus one profile; all six collection hashes match.
+- [ ] Compose runtime and staging restore: Docker socket access denied.
+- [ ] Live readiness: configured Nightscout endpoint unreachable.
+
+### Handoff
+Start the Compose stack on a Docker-capable account, stage the verified export,
+compare counts, then verify `/healthz` and `/readyz` before any cutover.
+
 ### Technical Insights & Learnings (Session 2026-05-13)
 - **Environmental Anchoring**: Integrating weather data into training via `pd.merge_asof` with a 60m tolerance solves the temporal alignment gap between bio-telemetry and environmental drift.
 - **Inference-Training Parity**: Identified and fixed "Resampling Drift" where secondary channels (velocity/acceleration) required explicit scaling in the inference path to match training distributions.

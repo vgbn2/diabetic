@@ -1,6 +1,8 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
+
+TelemetryProvenance = Literal["real", "synthetic", "fallback"]
 
 # =============================================================================
 # 🩸 [LAYER 1: RAW PHYSIOLOGICAL TELEMETRY]
@@ -26,6 +28,8 @@ class EnvironmentReading(BaseModel):
     humidity: float
     aqi: Optional[float] = None
     is_outdoor: bool = False
+    source: str = "unknown"
+    provenance: TelemetryProvenance = "real"
 
 class CardiacReading(BaseModel):
     """Represents heart rate and variability data."""
@@ -36,6 +40,7 @@ class CardiacReading(BaseModel):
     max_bpm: Optional[int] = None
     signal_quality: float = 1.0
     source: str = "ble"  # Fix H1: data source tag (e.g. 'ble', 'mock', 'synthetic_v1')
+    provenance: TelemetryProvenance = "real"
 # =============================================================================
 # 💊 [LAYER 3: BEHAVIORAL INPUT EVENTS]
 # =Focus: User Agency and Pharmacodynamic Events
@@ -148,4 +153,3 @@ class MetabolicSnapshot(BaseModel):
         return self.cardiac.hrv if self.cardiac else None
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
-

@@ -107,3 +107,57 @@ _Cumulative. Never delete; append corrections._
 - The implementation is committed as `a8bd5f4` and passed the clean committed-archive suite.
 - Docker/Compose runtime verification is still host-blocked because Docker is unavailable.
 - The sandbox can stall the aiosqlite integration tests; the identical suite passes outside the sandbox.
+
+## Session 2026-07-23 — Deep Blast-Through Audit
+
+### Corrections
+- Nightscout `sgv` is not safely unit-detectable by numeric threshold. Current
+  REST and Mongo logic can invert a 39 mg/dL severe hypo to 39 mmol/L.
+- Mock cardiac readings currently inherit `source="ble"`; mock weather is
+  persisted without provenance and can enter training.
+- The deployed ML path is overwritten before post-training safety checks.
+  Failed guards delete the deployed path instead of preserving last-known-good.
+- Both scheduler and coordinator maintenance own retraining near the same daily
+  window; the synchronous PyTorch loop runs inside the live async event loop.
+- TWA cold state uses glucose `0.0`, which the frontend classifies as low and can
+  turn into a haptic warning. Snapshot freshness is not exposed.
+- Health `"mongodb": "ok"` means a Motor collection handle exists, not that
+  MongoDB was pinged successfully.
+
+### Verification
+- `git diff --check` passed.
+- System Python 3.14 compileall passed in the working tree and fresh HEAD archive.
+- Current pytest could not run: system Python lacks project dependencies and
+  `.venv/bin/python` is a broken link to deleted `/tmp` CPython 3.11.
+- Docker Compose 2.40.3 is installed; Docker daemon access is denied.
+- Graph remains stale; absent tooling/API credentials prevented a safe semantic
+  refresh.
+
+### Decision
+- Promotion remains blocked. Current DCS is 0.720.
+- Remediation order is R17 unit safety, R18 secret masking, R19 provenance,
+  R20 atomic/background training, then R21 HUD freshness.
+
+## Session 2026-07-23 — R17-R24 implementation
+
+### Durable facts
+- R17-R23 are implemented and the full suite passes: 85 tests plus 5 subtests.
+- The local environment is CPython 3.12.13 with 81 compatible packages and
+  generated runtime/dev lockfiles.
+- Mongo export from 2026-06-01 is complete under ignored storage: 7,204 entries,
+  one profile, 2.1 MiB, six verified hashes. Data spans June 5 through July 1.
+- Docker Compose is loopback-first and validates statically. Runtime remains
+  blocked because this account cannot open `/var/run/docker.sock`.
+- Current live health is not ready: MongoDB responds, Nightscout does not, the
+  coordinator is offline, and v15 has no promotion-manifest checksum.
+- Automatic training defaults off and deployable Mongo training requires real
+  aligned cardiac telemetry.
+
+### Cleanup decisions
+- Removed the unused cloud push, semantic-memory, and XGBoost claims/dependencies.
+- Removed obsolete Heroku files, tracked bytecode, duplicate/orphan ingestion
+  modules, and a broken climate simulation.
+- Preserved the working offline parser wrapper because
+  `scripts/tools/extract_historical.py` still imports it.
+- Preserved untracked graph tooling and the session skill mirror as pre-existing
+  user files; semantic graph refresh remains intentionally deferred.

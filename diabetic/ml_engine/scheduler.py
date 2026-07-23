@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from diabetic.config import config
-from diabetic.ml_engine.train import train_metabolic_cnn
+from diabetic.ml_engine.training_service import run_training_pipeline
 
 logger = logging.getLogger("Bio-Quant.Scheduler")
 
@@ -50,29 +50,20 @@ class MetabolicScheduler:
                 await asyncio.sleep(wait_secs)
                 
                 # Window Open: Check if training is needed
-                # Rule: Retrain if weights are > 7 days old
+                # Recompute from disk every window so manual promotions are seen.
+                self.last_training_time = self._get_last_training_time()
                 staleness = datetime.now(timezone.utc) - self.last_training_time
-                if staleness.days >= 7:
+                if staleness.days >= config.TRAIN_STALE_DAYS:
                     logger.warning(f"[Scheduler] Model is STALE ({staleness.days} days). Initiating autonomous retraining...")
                     try:
-                        # 1. Train new weights
-                        trained_model = await train_metabolic_cnn(
-                            source="mongo", 
-                            epochs=20, 
-                            weight_version=config.ML_WEIGHTS_VERSION
-                        )
-                        if trained_model is None:
-                            logger.error("[Scheduler] Training did not produce deployable weights. Hot-reload skipped.")
+                        result = await run_training_pipeline(source="mongo", epochs=20)
+                        if result["status"] != "promoted":
+                            logger.error(
+                                "[Scheduler] Training ended with status %s.",
+                                result["status"],
+                            )
                             continue
-                        
-                        # 2. Signal Coordinator to Hot-Reload
-                        from diabetic.coordinator import Coordinator
-                        from pathlib import Path
-                        coord = Coordinator._instance
-                        if coord and coord.neural_runner:
-                            coord.neural_runner.reload_weights(Path(config.ML_WEIGHTS_PATH))
-                        
-                        self.last_training_time = datetime.now(timezone.utc)
+                        self.last_training_time = self._get_last_training_time()
                         logger.info("[Scheduler] Autonomous training and hot-reload complete.")
                     except Exception as te:
                         logger.error(f"[Scheduler] Training failed: {te}")

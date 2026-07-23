@@ -3,9 +3,10 @@
 _Mirrors `.gsd/STATE.md` but tracks workspace-level session continuity._
 
 ## Current Position
-- **Phase**: 5 (Scheduler Stress Test + Graph Debt) — Not yet started
-- **Prior Phase**: 4.1 (Alpha Gating) — Complete
-- **Status**: Ready for Phase 5 work; workspace bootstrapped
+- **Phase**: Local Nightscout remediation and migration
+- **Prior Phase**: 2026-07-23 deep audit
+- **Status**: R17-R23 implemented and locally verified; R24 runtime validation
+  remains blocked by Docker socket permissions
 
 ## What Is Stable
 - CNN inference → two-channel contract locked
@@ -130,3 +131,44 @@ Scope: files in `git diff HEAD` + same-section new files. Untouched sections car
   - repository hygiene: C -> B (generated graph script/config still unresolved)
 - **DCS**: 0.72 -> 0.947. Still below the strict 0.95 promotion threshold until current Docker/graph freshness is verified.
 - **Next gate**: validate Docker/Compose on a capable host.
+
+## 2026-07-23 Deep Audit Correction
+
+- **Mode**: full blast-through, review-only; no application fixes applied
+- **Promotion**: blocked
+- **DCS**: **0.720** (freshness 0.68, schema integrity 0.75, coverage 0.72)
+- **Critical defect**: unlabelled Nightscout/Mongo `sgv < 40` is treated as
+  mmol/L, so a severe 39 mg/dL hypo is inverted to 39 mmol/L
+- **High defects**: TWA dev-token disclosure; synthetic telemetry entering
+  alerts/training as real; unsafe/blocking duplicate model-training ownership;
+  cold/stale HUD rendered as live
+- **Current verification**: compile and archive integrity pass; pytest blocked by
+  broken `.venv`; Docker daemon inaccessible; semantic graph refresh blocked
+- **Source of truth**: `workspace/REVIEW_LEDGER.md` and the R17-R24 entries in
+  `workspace/DEV_REVIEW.md`
+- **Next gate**: remediate R17-R21 in order, rebuild Python 3.11, run the full
+  suite from a fresh archive, then validate Compose health on a capable host
+
+## 2026-07-23 Remediation Implementation
+
+- R17-R23 are implemented: authoritative SGV normalization, deny-by-default
+  config masking, explicit telemetry provenance, one-owner atomic training,
+  truthful HUD freshness, mixed treatment timestamps, and bounded live health
+  probes.
+- R24 is implemented statically: pinned Compose services, loopback defaults,
+  healthchecks, `.env.example`, Python 3.12 lockfiles, migration and backup
+  tooling, and a local runbook.
+- Conservative legacy cleanup removed the unused cloud push/memory shims,
+  obsolete Heroku files, duplicate orphan ingestion modules, tracked bytecode,
+  and unused XGBoost/aiohttp/chromadb dependencies.
+- Fresh `.venv`: CPython 3.12.13, 81 compatible packages.
+- Full suite outside the restricted syscall sandbox: **85 passed, 5 subtests**.
+- June extraction: **7,204 entries**, one profile, six verified file hashes,
+  2.1 MiB, earliest `2026-06-05T07:02:03.057Z`, latest
+  `2026-07-01T09:11:13.077Z`.
+- Live read-only health: MongoDB reachable; configured Nightscout unreachable;
+  model 19.3 days old and unverified by a promotion manifest; readiness false.
+- `docker compose config --quiet`, `compileall`, package compatibility, shell
+  syntax, and `git diff --check` pass.
+- Remaining external gate: this account cannot access `/var/run/docker.sock`,
+  so container build/start and staging restore were not executed.

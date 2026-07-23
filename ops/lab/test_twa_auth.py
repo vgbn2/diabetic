@@ -14,7 +14,9 @@ from urllib.parse import urlencode
 from unittest.mock import patch
 
 from diabetic.auth import authorization as A
+from diabetic.auth import dependencies as D
 from diabetic.auth.telegram_webapp import InitDataError, validate_init_data
+from diabetic.config import config as app_config
 
 BOT_TOKEN = "123456:TEST-bot-token-abc"
 
@@ -83,6 +85,27 @@ class TestAuthorization(unittest.TestCase):
             self.assertTrue(_run(A.is_authorized(222)))   # caregiver
             self.assertFalse(_run(A.is_authorized(333)))  # stranger
             self.assertFalse(_run(A.is_authorized(None)))
+
+
+class TestDevAuthorization(unittest.IsolatedAsyncioTestCase):
+    async def test_dev_token_is_rejected_in_production(self):
+        with (
+            patch.object(app_config, "BIO_ENVIRONMENT", "production"),
+            patch.object(app_config, "TWA_DEV_TOKEN", "sentinel-dev-token"),
+        ):
+            with self.assertRaises(D.HTTPException) as raised:
+                await D.require_twa_user("dev sentinel-dev-token")
+        self.assertEqual(raised.exception.status_code, 401)
+
+    async def test_dev_token_is_accepted_only_in_development(self):
+        with (
+            patch.object(app_config, "BIO_ENVIRONMENT", "development"),
+            patch.object(app_config, "TWA_DEV_TOKEN", "sentinel-dev-token"),
+            patch.object(app_config, "USER_ID", 111),
+        ):
+            user = await D.require_twa_user("dev sentinel-dev-token")
+        self.assertEqual(user["id"], 111)
+        self.assertTrue(user["dev"])
 
 
 if __name__ == "__main__":

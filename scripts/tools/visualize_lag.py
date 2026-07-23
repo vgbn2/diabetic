@@ -16,7 +16,7 @@ def plot_lag_diagnostic():
     subset = df.iloc[500:1000]
     
     plt.plot(subset['timestamp'], subset['actual_outcome'], label="Actual Outcome (T+30m)", color='blue', linewidth=2)
-    plt.plot(subset['timestamp'], subset['predicted_30m'], label="XGBoost Prediction", color='red', linestyle='--')
+    plt.plot(subset['timestamp'], subset['predicted_30m'], label="Recorded Prediction", color='red', linestyle='--')
     plt.plot(subset['timestamp'], subset['glucose'], label="Current Glucose (Now)", color='green', alpha=0.3)
     
     plt.title("Phase Lag Diagnostic: Prediction vs Outcome vs Now")

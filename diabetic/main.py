@@ -26,7 +26,7 @@ async def run_simulation(scenario: str):
     Runs a metabolic simulation scenario.
     Scenarios: 'crash', 'faint', 'simulation' (stress)
     """
-    coordinator = await Coordinator.create()
+    coordinator = await Coordinator.create(allow_synthetic=True)
     logger.info(f"{'='*60}")
     logger.info(f"  SYSTEM RUNTIME: BIO-QUANT (MODE: SIMULATION - {scenario.upper()})  ")
     logger.info(f"{'='*60}")
@@ -99,7 +99,7 @@ async def _run_command_loop():
                     break
                 elif cmd == "live":
                     from diabetic.ml_engine.scheduler import MetabolicScheduler
-                    coordinator = await Coordinator.create()
+                    coordinator = await Coordinator.create(allow_synthetic=False)
 
                     # Start TWA bridge in a background thread so COORDINATOR_REF
                     # is set in the same process — fixes the Docker split-container gap.
@@ -107,10 +107,12 @@ async def _run_command_loop():
                     from diabetic.telegram_bot.twa_api import start_api
                     threading.Thread(target=start_api, args=(coordinator,), daemon=True).start()
 
-                    # Start Background Training Scheduler
-                    scheduler = MetabolicScheduler()
-                    scheduler_task = asyncio.create_task(scheduler.run_forever())
-                    coordinator._scheduler_task = scheduler_task
+                    if config.AUTO_TRAIN_ENABLED:
+                        scheduler = MetabolicScheduler()
+                        scheduler_task = asyncio.create_task(scheduler.run_forever())
+                        coordinator._scheduler_task = scheduler_task
+                    else:
+                        logger.info("Automated model training is disabled.")
 
                     await coordinator.start_live_mode()
                 elif cmd in ["export", "cleanup"]:
@@ -134,7 +136,7 @@ async def _run_command_loop():
             raise
         except ValueError as e:
             logging.error(f"FATAL CONFIGURATION ERROR: {e}")
-            logging.error("Check your .env file or Heroku Config Vars. System exiting.")
+            logging.error("Check your local environment configuration. System exiting.")
             sys.exit(1)
         except Exception as e:
             logging.error(f"FATAL SYSTEM CRASH: {e}. Attempting automated recovery in 30s...")

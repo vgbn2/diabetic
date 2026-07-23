@@ -4,8 +4,16 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from diabetic.config import config
-from diabetic.registry import GlucoseReading, InsulinDose, MealEvent, EnvironmentReading
+from diabetic.registry import (
+    CardiacReading,
+    EnvironmentReading,
+    GlucoseReading,
+    InsulinDose,
+    MealEvent,
+)
 from diabetic.utils.db import db_manager
+from diabetic.ingestion.normalization import normalize_nightscout_sgv
+from diabetic.ingestion.timestamps import treatment_timestamp
 
 # =============================================================================
 # 🔌 [DATABASE CONNECTIVITY]
@@ -24,6 +32,7 @@ class MongoDBClient:
         self.entries = self.db_manager.entries
         self.treatments = self.db_manager.treatments
         self.environment_history = self.db_manager.environment_history
+        self.cardiac_history = self.db_manager.cardiac_history
         
         if self.db_manager.entries is None:
             self.logger.warning("MongoDB Singleton not initialized or entries collection missing. Ingestion limited.")
@@ -86,13 +95,22 @@ class MongoDBClient:
         latest_meal: Optional[MealEvent] = None
         
         try:
-            # Nightscout stores created_at as ISO string or Date
             cursor = self.treatments.find({
-                "created_at": {"$gte": cutoff.isoformat()},
-                "eventType": {"$in": ["Meal Bolus", "Correction Bolus", "Note", "Carb Correction"]}
-            }).sort("created_at", -1).limit(count*2)  # Most recent first so we grab the latest
-            
-            async for doc in cursor:
+                "$and": [
+                    {"eventType": {"$in": ["Meal Bolus", "Correction Bolus", "Note", "Carb Correction"]}},
+                    {"$or": [
+                        {"mills": {"$gte": int(cutoff.timestamp() * 1000)}},
+                        {"created_at": {"$gte": cutoff}},
+                        {"created_at": {"$gte": cutoff.isoformat()}},
+                    ]},
+                ]
+            }).limit(max(count * 10, 100))
+            documents = await cursor.to_list(length=max(count * 10, 100))
+            documents.sort(
+                key=lambda doc: treatment_timestamp(doc) or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True,
+            )
+            for doc in documents:
                 insulin_event, meal_event = self._map_treatment(doc)
                 if isinstance(insulin_event, InsulinDose) and not latest_insulin:
                     latest_insulin = insulin_event
@@ -108,18 +126,37 @@ class MongoDBClient:
 
     async def save_environment_reading(self, reading: EnvironmentReading):
         """Persists environmental context for historical anchoring (Phase 3)."""
-        if self.environment_history is None: return
+        if self.environment_history is None or reading.provenance != "real":
+            return
         
         try:
             doc = {
                 "timestamp": reading.timestamp,
                 "temperature": reading.temperature,
                 "humidity": reading.humidity,
-                "aqi": reading.aqi
+                "aqi": reading.aqi,
+                "source": reading.source,
+                "provenance": reading.provenance,
             }
             await self.environment_history.insert_one(doc)
         except Exception as e:
             self.logger.error(f"Failed to save environment reading: {e}")
+
+    async def save_cardiac_reading(self, reading: CardiacReading):
+        """Persist only verified real cardiac telemetry for model training."""
+        if self.cardiac_history is None or reading.provenance != "real":
+            return
+        try:
+            await self.cardiac_history.insert_one({
+                "timestamp": reading.timestamp,
+                "bpm": reading.bpm,
+                "hrv": reading.hrv,
+                "signal_quality": reading.signal_quality,
+                "source": reading.source,
+                "provenance": reading.provenance,
+            })
+        except Exception as e:
+            self.logger.error(f"Failed to save cardiac reading: {e}")
 
 # =============================================================================
 # 📊 [TRAINING & CLINICAL ANALYSIS]
@@ -147,35 +184,53 @@ class MongoDBClient:
                 self.logger.warning("No glucose entries found for training window.")
                 return None
 
-            df_entries = pd.DataFrame([{
-                "timestamp": datetime.fromtimestamp(d["date"] / 1000.0, tz=timezone.utc),
-                "glucose": float(d.get("sgv", 0)) / 18.0182 if float(d.get("sgv", 0)) > 40 else float(d.get("sgv", 0)),
-                "trend": d.get("direction", "Flat")
-            } for d in entries_raw])
+            entry_rows = []
+            for doc in entries_raw:
+                reading = self._map_entry_to_reading(doc)
+                if reading is None:
+                    continue
+                entry_rows.append({
+                    "timestamp": reading.timestamp,
+                    "glucose": reading.value,
+                    "trend": reading.trend,
+                })
+            if not entry_rows:
+                self.logger.error("No valid glucose entries remained after normalization.")
+                return None
+            df_entries = pd.DataFrame(entry_rows)
 
             # 2. Fetch Treatments (Bolus/Meals)
-            # Treatments use ISO date strings in NS, but we query by created_at
             treatments_cursor = self.treatments.find({
-                "created_at": {"$gte": cutoff.isoformat()}
-            }).sort("created_at", 1)
+                "$or": [
+                    {"mills": {"$gte": int(cutoff.timestamp() * 1000)}},
+                    {"created_at": {"$gte": cutoff}},
+                    {"created_at": {"$gte": cutoff.isoformat()}},
+                ]
+            })
             treatments_raw = await treatments_cursor.to_list(length=5000)
 
             if treatments_raw:
-                df_treatments = pd.DataFrame([{
-                    "timestamp": datetime.fromisoformat(t["created_at"].replace('Z', '+00:00')),
+                treatment_rows = [{
+                    "timestamp": treatment_timestamp(t),
                     "bolus": float(t.get("insulin", 0)) if t.get("insulin") else 0,
                     "meal": float(t.get("carbs", 0)) if t.get("carbs") else 0
-                } for t in treatments_raw])
+                } for t in treatments_raw if treatment_timestamp(t) is not None]
+                df_treatments = pd.DataFrame(treatment_rows)
                 
                 # Merge logic: align treatments to the nearest glucose reading
                 # Note: This is a simplified merge, MetabolicDataset will resample
-                df = pd.merge_asof(
-                    df_entries.sort_values("timestamp"),
-                    df_treatments.sort_values("timestamp"),
-                    on="timestamp",
-                    direction="backward",
-                    tolerance=timedelta(minutes=5)
-                )
+                if not df_treatments.empty:
+                    df = pd.merge_asof(
+                        df_entries.sort_values("timestamp"),
+                        df_treatments.sort_values("timestamp"),
+                        on="timestamp",
+                        direction="backward",
+                        tolerance=timedelta(minutes=5)
+                    )
+                else:
+                    df = df_entries
+                    df["bolus"] = 0
+                    df["meal"] = 0
             else:
                 df = df_entries
                 df["bolus"] = 0
@@ -184,7 +239,10 @@ class MongoDBClient:
             df = df.fillna(0)
 
             # 3. Fetch Environment (Weather) - Anchor Step
-            env_cursor = self.environment_history.find({"timestamp": {"$gte": cutoff}})
+            env_cursor = self.environment_history.find({
+                "timestamp": {"$gte": cutoff},
+                "provenance": "real",
+            })
             env_raw = await env_cursor.to_list(length=5000)
             if env_raw:
                 df_env = pd.DataFrame([{
@@ -203,10 +261,46 @@ class MongoDBClient:
                     tolerance=timedelta(minutes=60) # 1-hour anchor window
                 )
             
-            # Fill missing weather with Baseline (Regional Hanoi)
-            df['temperature'] = df['temperature'].fillna(26.5)
-            df['humidity'] = df['humidity'].fillna(80.0)
-            df['aqi'] = df['aqi'].fillna(45.0)
+            # Missing optional weather stays neutral; synthetic baselines are not
+            # admitted into deployable training data.
+            for column in ("temperature", "humidity", "aqi"):
+                if column not in df:
+                    df[column] = 0.0
+                else:
+                    df[column] = df[column].fillna(0.0)
+
+            if self.cardiac_history is None:
+                self.logger.error(
+                    "Cardiac history collection is unavailable; deployable training is disabled."
+                )
+                return None
+            cardiac_cursor = self.cardiac_history.find({
+                "timestamp": {"$gte": cutoff},
+                "provenance": "real",
+            })
+            cardiac_raw = await cardiac_cursor.to_list(length=10000)
+            if not cardiac_raw:
+                self.logger.error(
+                    "No real cardiac history is available; deployable training is disabled."
+                )
+                return None
+            df_cardiac = pd.DataFrame([{
+                "timestamp": c["timestamp"],
+                "heart_rate": float(c["bpm"]),
+            } for c in cardiac_raw])
+            df = pd.merge_asof(
+                df.sort_values("timestamp"),
+                df_cardiac.sort_values("timestamp"),
+                on="timestamp",
+                direction="nearest",
+                tolerance=timedelta(minutes=5),
+            )
+            df = df.dropna(subset=["heart_rate"])
+            if df.empty:
+                self.logger.error(
+                    "No glucose readings aligned with real cardiac telemetry."
+                )
+                return None
 
             self.logger.info(f"Successfully retrieved {len(df)} training samples from MongoDB (Anchored with Env).")
             return df
@@ -349,12 +443,26 @@ class MongoDBClient:
         
         try:
             res_e = await self.entries.delete_many({"date": {"$lt": cutoff_ms}})
-            # FIX D5: Pass datetime object directly — NOT .isoformat() string.
-            # String comparison fails on non-zero-padded Nightscout dates (e.g., 2024-3-5T...).
-            # Motor/PyMongo correctly serializes datetime to BSON Date for comparison.
-            res_t = await self.treatments.delete_many({"created_at": {"$lt": cutoff_date}})
+            removed_treatments = 0
+            cursor = self.treatments.find({}, {"_id": 1, "created_at": 1, "mills": 1})
+            stale_ids = []
+            async for document in cursor:
+                timestamp = treatment_timestamp(document)
+                if timestamp is not None and timestamp < cutoff_date:
+                    stale_ids.append(document["_id"])
+                if len(stale_ids) >= 500:
+                    result = await self.treatments.delete_many({"_id": {"$in": stale_ids}})
+                    removed_treatments += result.deleted_count
+                    stale_ids.clear()
+            if stale_ids:
+                result = await self.treatments.delete_many({"_id": {"$in": stale_ids}})
+                removed_treatments += result.deleted_count
             
-            self.logger.info(f"Cleanup complete. Removed {res_e.deleted_count} entries and {res_t.deleted_count} treatments.")
+            self.logger.info(
+                "Cleanup complete. Removed %s entries and %s treatments.",
+                res_e.deleted_count,
+                removed_treatments,
+            )
         except Exception as e:
             self.logger.error(f"Cleanup failed: {e}")
 
@@ -365,11 +473,7 @@ class MongoDBClient:
     def _map_entry_to_reading(self, doc: dict) -> Optional[GlucoseReading]:
         """Maps a Nightscout entry (SGV) document to a GlucoseReading."""
         try:
-            raw_val = float(doc.get("sgv", 0))
-            if raw_val > 40: # Likely mg/dL
-                val = raw_val / 18.0182
-            else:
-                val = raw_val
+            val = normalize_nightscout_sgv(doc.get("sgv"), doc.get("units"))
                 
             ts = datetime.fromtimestamp(doc["date"] / 1000.0, tz=timezone.utc)
             
@@ -385,10 +489,9 @@ class MongoDBClient:
     def _map_treatment(self, doc: dict):
         """Maps a Nightscout treatment document to optional insulin and meal events."""
         try:
-            ts_str = doc.get("created_at")
-            if not ts_str:
+            ts = treatment_timestamp(doc)
+            if ts is None:
                 return None, None
-            ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
 
             insulin_event = None
             meal_event = None

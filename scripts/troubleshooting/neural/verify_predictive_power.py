@@ -33,7 +33,7 @@ def verify_predictive_power():
     print("--- Predictive Power Audit ---")
     print(f"Persistence RMSE (Future=Now):  {rmse_persistence:.4f} mmol/L")
     print(f"Kinematic RMSE (Linear Extrap): {rmse_kinematic:.4f} mmol/L")
-    print(f"XGBoost Ensemble RMSE:          {rmse_model:.4f} mmol/L")
+    print(f"Recorded Model RMSE:            {rmse_model:.4f} mmol/L")
     
     improvement = (1 - (rmse_model / rmse_kinematic)) * 100
     print(f"\n✅ VERDICT: PREDICTIVE. Beats Kinematic model by {improvement:.1f}%")

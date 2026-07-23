@@ -79,3 +79,44 @@
 
 ### Session status
 Implementation committed as `a8bd5f4`. `run_graphify.py` and `.graphifyignore` were left untouched because they predated this scoped batch.
+
+## 2026-07-23
+
+### Session Start
+**Prompt**: `$session-orchestrator`
+**Context**: Booted the repository continuity workflow. The durable handoff still records `a8bd5f4` as the last completed implementation and 70 passing tests. The current working tree is dirty with a broad set of modified project files plus untracked `.agents/`, `run_graphify.py`, and `.graphifyignore`; these changes are preserved and not attributed to this boot.
+
+**Boot findings**:
+- Docker/Compose runtime validation remains host-blocked per the handoff.
+- Graph refresh is still pending; do not regenerate semantic output without the required graph tooling/API key.
+- Current objective is to maintain continuity and await the next scoped task.
+
+### Deep blast-through
+**Prompt**: `$deep blastthrough`
+
+**Work completed**:
+- Ran a full review-only connective and critical-path audit across ingestion,
+  DSP, ML training/inference, coordinator, storage, auth, CLI/MCP, TWA, tests,
+  deployment, docs, and graph tooling.
+- Recorded R17-R24 in `workspace/DEV_REVIEW.md` and created
+  `workspace/REVIEW_LEDGER.md`.
+- Reassessed promotion DCS to 0.720 and blocked promotion on one critical and
+  four high-severity findings.
+- Verified source/archive compilation and `git diff --check`; current pytest,
+  Docker runtime, and semantic graph refresh remain host/tooling blocked.
+- Preserved all pre-existing working-tree changes and made no application-code
+  fixes.
+
+### Local Nightscout implementation
+**Prompts**: "does a refactor needed?, what if i want to run this local along
+side night scout"; "devise a plan to all what was planned"; "clean the legacy
+as much as possible... install python packages, then extract mongo db data back
+to 2 months(starting june)"; "Implement the plan."
+
+**Work completed**:
+- Implemented R17-R24, rebuilt the Python environment, generated lockfiles,
+  removed proven orphan/legacy modules, and added local Compose/runbook tooling.
+- Exported MongoDB Nightscout data from 2026-06-01 with independently verified
+  counts and hashes.
+- Verified 85 tests plus 5 subtests; Docker runtime remains inaccessible to
+  this account, while static Compose validation passes.

@@ -1,49 +1,92 @@
 services:
   mongodb:
-    image: mongo:latest
-    container_name: bio-quant-mongo
-    ports:
-      - "27017:27017"
+    image: mongo:6.0
+    restart: unless-stopped
     volumes:
       - mongodb_data:/data/db
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging: &local-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   nightscout:
-    image: nightscout/cgm-remote-monitor:latest
-    container_name: bio-quant-nightscout
-    depends_on:
-      - mongodb
-    ports:
-      - "1337:1337"
-    environment:
-      - MONGO_CONNECTION=mongodb://mongodb:27017/nightscout
-      - API_SECRET=${NIGHTSCOUT_API_SECRET}
-      - BASE_URL=${NIGHTSCOUT_URL}
-      - DISPLAY_UNITS=mmol
-      - INSECURE_USE_HTTP=true       # set to false when behind HTTPS reverse proxy
-      - ENABLE=careportal rawbg iob cob bwp cage sage boluscalc pushover treatmentnotify
-      - ALARM_TYPES=simple
-      - TIME_FORMAT=24
+    image: nightscout/cgm-remote-monitor:15.0.3
     restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "${NIGHTSCOUT_BIND_ADDRESS:-127.0.0.1}:1337:1337"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/nightscout
+      MONGO_CONNECTION: mongodb://mongodb:27017/nightscout
+      API_SECRET: ${NIGHTSCOUT_API_SECRET:?set NIGHTSCOUT_API_SECRET in .env}
+      BASE_URL: ${NIGHTSCOUT_PUBLIC_URL:-http://localhost:1337}
+      DISPLAY_UNITS: mmol
+      INSECURE_USE_HTTP: "true"
+      AUTH_DEFAULT_ROLES: denied
+      ENABLE: careportal rawbg iob cob bwp cage sage boluscalc treatmentnotify
+      ALARM_TYPES: simple
+      TIME_FORMAT: "24"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:1337/api/v1/status.json').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    logging: *local-logging
 
   bio-quant-core:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bio-quant-core
+    restart: unless-stopped
     env_file:
       - .env
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
+      nightscout:
+        condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${BIO_QUANT_BIND_ADDRESS:-127.0.0.1}:8000:8000"
+    environment:
+      BIO_ENVIRONMENT: production
+      NIGHTSCOUT_URL: http://nightscout:1337
+      MONGO_URI: mongodb://mongodb:27017/nightscout
+      MONGODB_URI: ""
+      BIO_AUTO_TRAIN_ENABLED: ${BIO_AUTO_TRAIN_ENABLED:-false}
     volumes:
       - bio_quant_storage:/app/storage
       - bio_quant_weights:/app/diabetic/ml_engine/weights
     command: python -m diabetic.main live
-    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *local-logging
 
 volumes:
   mongodb_data:
-  bio_quant_storage:    # audit.db, CSV exports — survives container restarts
-  bio_quant_weights:    # ML weights (diabetic_cnn_v15.pth) — survives retraining
+  bio_quant_storage:
+  bio_quant_weights:

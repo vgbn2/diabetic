@@ -34,7 +34,7 @@ sequenceDiagram
         C->>DSP: Filter & Extract Kinematics
         DSP-->>C: MetabolicSnapshot (v, a)
         C->>ML: Forecast 30m & 4h
-        ML-->>C: Predictions (XGBoost + CNN)
+        ML-->>C: Predictions (Digital Twin + validated CNN)
         C->>DM: Evaluate Safety Shield
         DM-->>C: Alert (Conservative Threshold)
         C->>T: Dispatch Alert
@@ -54,7 +54,6 @@ sequenceDiagram
 - **[signal_quality.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/signal_quality.py)**: Flags non-biological velocity spikes.
 
 ### 📂 [ml_engine/](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/ml_engine/) (Predictive Intelligence)
-- **XGBoost (Tier 3)**: Models behavioral impact vectors (Meals/Insulin).
 - **CNN (Tier 1 & 2)**: Detects high-frequency signal signatures in raw glucose traces.
 - **Digital Twin**: Simulates the impact of meals using impulsive carb absorption math.
 
@@ -67,7 +66,7 @@ sequenceDiagram
 | :--- | :--- | :--- |
 | **Kalman 3D State** | Tracks $[g, v, a]$ | `dsp/kalman.py` |
 | **Kovatchev Risk** | Transforms glucose into Risk Space | `dsp/metabolic_math.py` |
-| **Kinematic PRED** | Linear projection fallback | `ml_engine/predictor.py` |
+| **Kinematic PRED** | Linear projection fallback | `utils/data_factory.py` |
 | **Impulse Response** | Carb absorption modeling | `ml_engine/twin.py` |
 
 ---

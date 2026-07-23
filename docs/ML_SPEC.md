@@ -1,6 +1,8 @@
 # Diabetic: Multi-Layer Metabolic Intelligence Specification
 
-This document defines the 5 hierarchical data layers for the Hybrid XGBoost + CNN predictive engine. These layers are designed to isolate **Static Traits**, **Environmental Forcing**, **Human Agency**, **Systemic Error**, and **Subjective Truth**.
+This document defines the five data layers used by the digital-twin and CNN
+prediction path. They isolate **Static Traits**, **Environmental Forcing**,
+**Human Agency**, **Systemic Error**, and **Subjective Truth**.
 
 ---
 
@@ -48,7 +50,7 @@ This document defines the 5 hierarchical data layers for the Hybrid XGBoost + CN
 
 | Feature | Type | Source | Rationale |
 | :--- | :--- | :--- | :--- |
-| **Model Residuals** | Analytic | Back-Audit | Tracks the error delta between XGBoost forecasts and actual outcomes. |
+| **Model Residuals** | Analytic | Back-Audit | Tracks the error delta between validated forecasts and actual outcomes. |
 | **Sensor Integrity** | Diagnostic | Signal Jitter | Detects compression artifacts or sensor end-of-life failures. |
 | **Metabolic Inertia** | Longitudinal | History | Long-term HbA1c/Fructosamin drift (3-month baselines). |
 | **Confidence Score** | Computed | Ensemble | A meta-index defining how much to "trust" the Layer 1-3 synthesis. |
@@ -67,7 +69,9 @@ This document defines the 5 hierarchical data layers for the Hybrid XGBoost + CN
 ---
 
 ## 🧠 Model Ensemble Strategy
-1.  **XGBoost (Behavioral)**: Maps Layer 3 (Choices) to metabolic outcomes.
-2.  **1D-CNN (Signal)**: Recognizes Layer 1 (Signals) and Layer 2 (Regime) temporal signatures.
-3.  **Meta-Oracle (Layer 4)**: Audits the prediction using systemic error history and sensor reliability.
-4.  **Reinforcement (Layer 5)**: Applies a final subjective filter based on your past feedback and personal sensitivity.
+1. **Digital Twin (Behavioral)**: Simulates meal, insulin, and basal effects.
+2. **1D-CNN (Signal)**: Recognizes Layer 1 temporal signatures when validated
+   weights and real cardiac telemetry are available.
+3. **Meta-Oracle (Layer 4)**: Estimates circadian basal drift.
+4. **Safety Gate (Layer 5)**: Applies conservative confidence and physiology
+   constraints before an alert is considered.

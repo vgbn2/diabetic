@@ -7,14 +7,29 @@ tracked under Open Gaps in docs/engineering/tui_feature_map.md, not faked.
 """
 import json
 
-# Field names whose values must never be printed in full.
-_SECRET_KEYS = {
-    "API_SECRET",
-    "TELEGRAM_TOKEN",
-    "MONGO_URI",
-    "MONGODB_URI",
-    "USER_ID",
-    "NIGHTSCOUT_API_SECRET",
+# Deny by default: only explicitly non-sensitive operational fields are shown.
+# Newly added settings therefore remain masked until reviewed.
+_SAFE_CONFIG_KEYS = {
+    "AUTO_TRAIN_ENABLED",
+    "BACKFILL_MAX_HOURS",
+    "BIO_ENVIRONMENT",
+    "BLE_RECONNECT_SECS",
+    "CARDIAC_ENABLED",
+    "DATA_POLLING_INTERVAL",
+    "HUD_STALE_AFTER_SECS",
+    "LIVE_HISTORY_HOURS",
+    "LOCAL_GUI_ENABLED",
+    "LOG_LEVEL",
+    "MAINTENANCE_LOCAL_HOUR",
+    "ML_WEIGHTS_VERSION",
+    "PREFER_MMOL",
+    "RETENTION_DAYS",
+    "SAMPLING_INTERVAL_MINS",
+    "TRAIN_STALE_DAYS",
+    "TWA_AUTH_MAX_AGE_SECS",
+    "USER_TIMEZONE",
+    "WEATHER_ENABLED",
+    "WEATHER_MOCK_MODE",
 }
 
 
@@ -24,10 +39,10 @@ def _masked_config() -> dict:
     data = config.model_dump()
     masked = {}
     for key, value in data.items():
-        if key.upper() in _SECRET_KEYS and value not in (None, "", 0):
-            masked[key] = "***"
-        else:
+        if key.upper() in _SAFE_CONFIG_KEYS:
             masked[key] = value
+        else:
+            masked[key] = "" if value in (None, "", 0, [], {}) else "***"
     return masked
 
 

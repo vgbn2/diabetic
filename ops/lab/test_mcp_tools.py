@@ -36,9 +36,18 @@ class TestMcpTools(unittest.TestCase):
 
     def test_bio_config_masks_secrets(self):
         cfg = S.bio_config()
-        self.assertIn("NIGHTSCOUT_URL", cfg)  # sanity: real config returned
-        if cfg.get("API_SECRET"):
-            self.assertEqual(cfg["API_SECRET"], "***", "API_SECRET must be masked")
+        self.assertIn("LOG_LEVEL", cfg)  # sanity: real config returned
+        for key in (
+            "API_SECRET",
+            "MONGO_URI",
+            "MONGODB_URI",
+            "NIGHTSCOUT_URL",
+            "TELEGRAM_TOKEN",
+            "TWA_DEV_TOKEN",
+            "USER_ID",
+        ):
+            if cfg.get(key):
+                self.assertEqual(cfg[key], "***", f"{key} must be masked")
 
     def test_bio_health_is_coroutine(self):
         self.assertTrue(inspect.iscoroutinefunction(S.bio_health))

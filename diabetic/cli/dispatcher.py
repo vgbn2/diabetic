@@ -13,7 +13,7 @@ e.g.
 """
 import sys
 
-from diabetic.cli.commands import admin, diagnostics, health, settings, simulation
+from diabetic.cli.commands import admin, diagnostics, health, ml, settings, simulation
 from diabetic.cli.tui import manifest as M
 
 # (category_id, command_id) -> async handler(flags: dict) -> int
@@ -27,6 +27,8 @@ HANDLERS = {
     ("admin", "export"): admin.export,
     ("admin", "cleanup"): admin.cleanup,
     ("diag", "stress"): diagnostics.stress,
+    ("ml", "train"): ml.train,
+    ("ml", "status"): ml.status,
     ("settings", "show"): settings.show,
 }
 
