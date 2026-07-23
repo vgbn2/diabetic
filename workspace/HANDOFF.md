@@ -184,3 +184,19 @@ The remaining queue is external and ordered:
 4. Add real cardiac telemetry before any deployable model retraining.
 5. Refresh the semantic graph only with credentialed graph tooling; do not let
    the existing untracked AST fallback overwrite semantic evidence.
+
+## 2026-07-24 Session Closeout
+
+The implementation and skill mirror sync are committed and pushed:
+`3984025 feat: harden local Nightscout runtime and sync skills`. Remote
+`main` was verified at the same hash. The repository suite remains green at
+85 tests plus 5 subtests.
+
+The working tree has only the intentional pre-existing untracked graph helper
+files `run_graphify.py` and `.graphifyignore`. The graph was not refreshed
+because semantic tooling/API credentials are unavailable.
+
+Next session should begin with the external runtime queue: obtain Docker
+socket access, start and inspect Compose, stage the verified June export,
+verify Nightscout and Bio-Quant readiness, then take a backup. Do not retrain
+for deployment until real aligned cardiac telemetry exists.

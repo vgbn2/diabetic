@@ -161,3 +161,14 @@ _Cumulative. Never delete; append corrections._
   `scripts/tools/extract_historical.py` still imports it.
 - Preserved untracked graph tooling and the session skill mirror as pre-existing
   user files; semantic graph refresh remains intentionally deferred.
+
+## Session 2026-07-24 — Closeout
+
+- Commit `3984025` is pushed to remote `main` and remote verification matches
+  local HEAD.
+- The personal-finance skill mirror contains 8 validated skills and 12 files.
+- Final intended working-tree residue is `run_graphify.py` and
+  `.graphifyignore`; both remain untracked and untouched.
+- No semantic graph refresh was attempted without credentialed tooling.
+- Runtime promotion remains blocked by external Docker/Nightscout readiness
+  and real cardiac-data requirements.
