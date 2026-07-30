@@ -1,11 +1,11 @@
-# 🛑 SECRETS & DATA
+# SECRETS & DATA
 .env
 storage/
 data/
 *.db
 *.sqlite3
 
-# 🐍 PYTHON HYGIENE
+# PYTHON HYGIENE
 __pycache__/
 *.py[cod]
 *$py.class
@@ -14,12 +14,12 @@ __pycache__/
 .coverage
 htmlcov/
 
-# 🎓 PRACTICE & SCRATCH
+# PRACTICE & SCRATCH
 practice/
 scratch/
 testsprite_tests/
 
-# ☁️ CLOUD & GIT
+# CLOUD & GIT
 .git
 .gitignore
 .dockerignore
