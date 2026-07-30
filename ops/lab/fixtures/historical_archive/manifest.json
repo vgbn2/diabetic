@@ -1,0 +1,12 @@
+{
+  "collections": {
+    "entries": {
+      "count": 2,
+      "sha256": "26991fbec5ded4e5e5cd15ea0b0e74ce7f63878017d70165f277aa4be07f5f2c"
+    }
+  },
+  "created_at": "2026-01-01T00:10:00+00:00",
+  "cutoff": "2026-01-01T00:00:00+00:00",
+  "database": "synthetic_fixture",
+  "excluded": []
+}

@@ -1,0 +1,17 @@
+# Context Hygiene: Garbage In, Garbage Out
+# Ignore experimental, testing, and operational scripts from the knowledge graph
+# to prevent cross-contamination and architectural noise.
+
+scratch/
+scripts/
+ops/
+tests/
+testsprite_tests/
+tmp/
+storage/
+charts/
+artifacts/
+data/
+graphify-out/
+.gsd/
+.agent/

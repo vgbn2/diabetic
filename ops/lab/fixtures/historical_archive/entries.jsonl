@@ -1,0 +1,2 @@
+{"_id":{"$oid":"000000000000000000000001"},"date":{"$numberLong":"1767225600000"},"dateString":"2026-01-01T00:00:00.000Z","direction":"Flat","sgv":{"$numberInt":"39"},"type":"sgv"}
+{"_id":{"$oid":"000000000000000000000002"},"date":{"$numberLong":"1767225900000"},"dateString":"2026-01-01T00:05:00.000Z","direction":"FortyFiveUp","sgv":{"$numberInt":"180"},"units":"mg/dL","type":"sgv"}
