@@ -250,3 +250,14 @@ for deployment until real aligned cardiac telemetry exists.
   and offline asset strategy before implementation.
 - Production/runtime gates remain unchanged: Docker/live providers,
   restart/recovery, backup/restore, real cardiac, and semantic graph.
+
+## 2026-07-30 Session Closeout — Skill Mirroring & Clean Release Revision
+
+- **Skill Sync**: Mirroring between `.agent/skills` and tracked `.agents/skills` is complete. Imported `feature-exerciser` and `refactor-readability` from `personal_finance_draft`. Integrated `bio-quant-protocols` skill.
+- **Repository Revision**: All uncommitted working-tree changes, historical data ingestion features, R25-R30 core refactorings, and doc updates were committed into 5 clean, verified Conventional Commits.
+- **Verification**: `114 passed` across all 12 test suites in `ops/lab`.
+- **Working Tree**: Clean on `main`, 14 commits ahead of `origin/main`.
+- **Next Steps**:
+  1. Validate Docker runtime and Compose deployment once socket access is available.
+  2. Perform initial local Nightscout backup and verify `/healthz` and `/readyz` endpoints.
+
