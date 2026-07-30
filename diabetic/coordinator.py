@@ -49,7 +49,8 @@ from diabetic.ml_engine.oracle import BasalOracle
 # =============================================================================
 class Coordinator:
     """
-    The Orchestrator. Connects ingestion, smoothing, prediction, and alerting.
+    Central orchestration engine for data ingestion, signal processing,
+    neural inference, metabolic state tracking, and alert dispatching.
     """
     _instance: Optional["Coordinator"] = None
 

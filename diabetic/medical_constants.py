@@ -75,7 +75,7 @@ KOVATCHEV_CEIL_MGDL  = 600.0
 DEFAULT_LATITUDE  = 21.0285  # Hanoi baseline for solar/circadian syncing
 DEFAULT_LONGITUDE = 105.8542
 
-# Magic numbers extracted from Digital Twin (Wave 7)
+# Calibrated environmental response parameters (Digital Twin model)
 ENVIRONMENT_TEMP_BASELINE       = 22.0 # °C
 ENVIRONMENT_Q10_COEFFICIENT     = 0.20 # +20% sensitivity per 10°C rise
 ENVIRONMENT_AQI_BASELINE        = 15.0 # WHO PM2.5 baseline (µg/m³)
