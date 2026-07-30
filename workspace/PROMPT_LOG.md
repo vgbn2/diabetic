@@ -133,3 +133,109 @@ to 2 months(starting june)"; "Implement the plan."
   untracked files; no semantic graph refresh was run without credentials.
 - Remaining runtime gates are Docker socket access, Nightscout readiness,
   staging restore, real cardiac telemetry, and credentialed graph refresh.
+
+### Session Start
+**Prompt**: `$session-orchestrator`
+
+**Boot findings**:
+- Loaded `workspace/BOOTSTRAP.md`, `workspace/HANDOFF.md`,
+  `workspace/SESSION_MEMORY.md`, `workspace/STATE.md`, `.gsd/STATE.md`, and
+  `.gsd/JOURNAL.md`.
+- Current local `HEAD` is `4e0d6e1 docs: close session with verified handoff`;
+  the previous implementation commit remains `3984025`.
+- Working tree residue is still limited to the intentional untracked graph
+  helper files: `.graphifyignore` and `run_graphify.py`.
+- Graph refresh remains deferred because the handoff says credentialed semantic
+  tooling is unavailable and the untracked fallback runner must not overwrite
+  semantic evidence.
+
+### Skill Sync
+**Prompts**: `update skill blast throguh and maas imeplement`; `sync blast through with the one in personal fin`
+
+**Work completed**:
+- Synced `.agents/skills/blast-through/SKILL.md` byte-for-byte from
+  `/home/vgbn1/Documents/codeptit/personal_finance_draft/.agents/skills/blast-through/SKILL.md`.
+- Updated `.agents/skills/mass-implement/SKILL.md` for this repo's current
+  runtime boundary, workspace truth files, external-gate distinction, and
+  verification wording.
+
+### Deep Blast-Through
+**Prompt**: `$blast-through deep`
+
+**Work completed**:
+- Ran full audit mode with archive, graph, connective-tissue, dependency,
+  config/docs, data/ML, authorization, alert, readiness, and runtime checks.
+- Confirmed R17-R24 repairs remain present and added active findings R25-R30.
+- Reassessed DCS from the active ledger's 0.720 to 0.800; promotion remains
+  blocked by ownership and alert-safety gates.
+- Verified HEAD archive compilation, Compose config, Git integrity, shell
+  syntax, diff hygiene, and model hash parity.
+- Current pytest is blocked because the Python 3.12 environment points to a
+  deleted temporary interpreter; Docker runtime and semantic graph refresh
+  remain unavailable.
+
+### R25-R30 Mass Implementation
+**Prompts**: `mass implement plannoing`; `Implement the plan.`
+
+**Work completed**:
+- Implemented the approved R25-R30 code batches: singleton ownership,
+  alert-suppression safety, treatment degradation, core/neural readiness, and
+  temporal neutrality.
+- Restored durable CPython 3.12.13 and synced 81 locked development packages.
+- Verified 105 tests plus 10 subtests in the working tree and isolated
+  HEAD-plus-patch source.
+- Updated architecture, runbook, audit ledger, and handoff evidence.
+- Did not start Docker/live services, retrain, migrate, promote, or refresh the
+  semantic graph.
+
+### Frontend Review And Closeout
+**Prompts**: `so is it usable now, what featured was added, from the frontend
+pov to monitor blood syugar`; `'ll design the front end and the alert Ui later,
+end session here`
+
+**Closeout**:
+- Reviewed the implemented dashboard, history, settings, authentication,
+  refresh, forecast, COB/IOB, and haptic-warning behavior.
+- Confirmed no Bio-Quant or Nightscout listener was active locally.
+- Recorded frontend and alert-UI redesign as deferred; stopped without further
+  implementation or runtime actions.
+
+## 2026-07-25
+
+### Session Start
+**Prompt**: `$session-orchestrator`
+
+**Boot findings**:
+- Loaded `workspace/BOOTSTRAP.md`, `workspace/HANDOFF.md`,
+  `workspace/SESSION_MEMORY.md`, `workspace/STATE.md`, `.gsd/STATE.md`, and
+  `.gsd/JOURNAL.md`.
+- Current local `HEAD` is `4e0d6e1 docs: close session with verified handoff`.
+- The working tree contains the deferred R25-R30 implementation and durable
+  workspace updates, plus the intentional untracked `.graphifyignore` and
+  `run_graphify.py`.
+- The active boundary remains code-verified at 105 tests plus 10 subtests;
+  Docker/live-provider, restart/recovery, backup/restore, real cardiac, and
+  semantic-graph evidence remain promotion gates.
+- Graph refresh remains deferred: `GEMINI_API_KEY` is unset, the `graphify`
+  command is absent, and the untracked AST fallback must not overwrite the
+  existing semantic graph.
+
+### Historical-Data And Repository-Hygiene Audit
+**Prompt**: `do a repo hygien identifier via blast through, i want to know
+which place has the reliable historical data for testing (there are a lot of
+csv scattered in places), also find duplicate, unused stubs`
+
+**Audit result**:
+- Selected blast-through connective-tissue mode with Hard Reading Mode.
+- Reverified all six hashes in the June migration archive: 7,204 entries and
+  one profile. This is the strongest source-preserving historical artifact.
+- Identified `storage/exports/*.csv` as the canonical older clinical CSV
+  chapters: 11,781 unique rows; all real nested export rows are subsets.
+- Confirmed no active test consumes a historical artifact, Mongo CSV schemas
+  do not enter `MetabolicDataset`, and `SimulationReader` cannot read CSV or
+  JSONL.
+- Recorded mixed-schema consolidation, false async-training success, stale
+  Windows/data paths, missing-input scripts, and restore hash enforcement as
+  R31-R36 in `workspace/DEV_REVIEW.md`.
+- Full suite exited successfully with 105 tests collected; CLI manifest suite
+  passed 8 tests; compileall and diff hygiene passed.

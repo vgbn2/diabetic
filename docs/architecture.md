@@ -45,15 +45,15 @@ sequenceDiagram
 
 ## 🧩 Module Deep-Dive
 
-### 📂 [diabetic/](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/) (Core Logic)
-- **[coordinator.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/coordinator.py)**: Manages concurrency and connects all sub-modules.
-- **[registry.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/registry.py)**: Defines the **`MetabolicSnapshot`**, the unifying state object.
+### 📂 [diabetic/](../diabetic/) (Core Logic)
+- **[coordinator.py](../diabetic/coordinator.py)**: Manages concurrency and connects all sub-modules.
+- **[registry.py](../diabetic/registry.py)**: Defines the **`MetabolicSnapshot`**, the unifying state object.
 
-### 📂 [dsp/](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/) (Signal Hardening)
-- **[kalman.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/kalman.py)**: Noise rejection logic for sensor artifacts (compression lows).
-- **[signal_quality.py](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/dsp/signal_quality.py)**: Flags non-biological velocity spikes.
+### 📂 [dsp/](../diabetic/dsp/) (Signal Hardening)
+- **[kalman.py](../diabetic/dsp/kalman.py)**: Noise rejection logic for sensor artifacts (compression lows).
+- **[signal_quality.py](../diabetic/dsp/signal_quality.py)**: Flags non-biological velocity spikes.
 
-### 📂 [ml_engine/](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/diabetic/ml_engine/) (Predictive Intelligence)
+### 📂 [ml_engine/](../diabetic/ml_engine/) (Predictive Intelligence)
 - **CNN (Tier 1 & 2)**: Detects high-frequency signal signatures in raw glucose traces.
 - **Digital Twin**: Simulates the impact of meals using impulsive carb absorption math.
 
@@ -72,7 +72,8 @@ sequenceDiagram
 ---
 
 ## 🚀 Forward Roadmap Summary
-All detailed tasks are maintained in **[ROADMAP.md](file:///c:/Users/Lenovo/Desktop/VGBN/.vscode/CODEPTIT/hyperglycemia-faint-predictor/ROADMAP.md)**.
+Current verified priorities are maintained in the
+**[workspace handoff](../workspace/HANDOFF.md)**.
 1. **The SQL Core**: Transition from CSV to multi-tenant SQL.
 2. **CNN Layer**: Signal-shape recognition integration.
 3. **RLHF Implementation**: Tier 5 feedback loop construction.

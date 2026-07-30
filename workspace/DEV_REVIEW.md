@@ -430,3 +430,313 @@ semantic graph refresh.
 
 Verification: 85 tests plus 5 subtests passed; dependency check, compileall,
 Compose config, shell syntax, migration hashes, and diff hygiene passed.
+
+---
+
+## 2026-07-24 Deep Blast-Through - New Active Findings
+
+Audit mode: **full, review-only**. The R17-R24 implementation remains present,
+but promotion is blocked by the following newly verified seams.
+
+### [R25] Any registry user can access and mutate the single-patient pipeline
+**Severity:** **Critical**
+
+**Files:** `diabetic/auth/authorization.py:26-45`,
+`diabetic/auth/dependencies.py:45-55`,
+`diabetic/telegram_bot/twa_api.py:90-179`,
+`docs/engineering/architecture.md:3,32-34,60-62`
+
+**Why:** The architecture declares one patient pipeline, but `is_authorized`
+accepts every user found in `VesselRegistry`. All guarded reads then return the
+singleton coordinator's patient data, and calibration always writes to
+`config.USER_ID` instead of the authenticated identity. A second registry user
+can therefore read the primary patient's HUD/forecast and alter the primary
+patient's traits.
+
+**Decision required:** Keep the current single-patient contract and restrict
+authorization to the patient/caregiver allowlist, or implement real per-user
+pipeline ownership and bind every read/write to the authenticated user.
+
+**Verification gate:** Add a second registry user and prove that user receives
+403 for the primary pipeline and cannot mutate `config.USER_ID`; retain patient
+and caregiver success tests.
+
+### [R26] Untrusted adaptation and predicted cardiac output can suppress alerts
+**Severity:** **High**
+
+**Files:** `diabetic/telegram_bot/decision_matrix.py:28-55,69-95,157-161`,
+`diabetic/coordinator.py:323-330`,
+`diabetic/ml_engine/inference.py:202-207`
+
+**Why:** When real cardiac telemetry is absent, the decision matrix treats the
+CNN's predicted heart rate as current exercise evidence and can suppress a
+predicted-hypoglycemia warning. Separately, three recent "false alarm" taps
+raise the threshold for a current `CRITICAL_HYPER`, allowing values above the
+medical constant to return no alert. Neither suppression is covered by the
+active test suite.
+
+**Decision required:** Never use model-predicted HR to suppress a safety alert;
+require fresh, real cardiac provenance for exercise context. Keep current
+critical glucose thresholds outside RLHF dampening, or constrain adaptation to
+non-critical advisory alerts.
+
+**Verification gate:** Decision-matrix tests for no cardiac data, predicted HR
+above the exercise threshold, real fresh exercise telemetry, and three false
+alarms at glucose values immediately above `HYPER_CRITICAL`.
+
+### [R27] Treatment query failure is indistinguishable from no active treatment
+**Severity:** **High**
+
+**Files:** `diabetic/ingestion/nightscout.py:160-207`,
+`diabetic/ingestion/mongo.py:84-125`,
+`diabetic/coordinator.py:165-169,226-243`
+
+**Why:** Both treatment providers convert errors into empty/`None` tuples. The
+coordinator treats those tuples as successful reads and clears insulin/meal
+context instead of preserving last-known-good state or marking the seam
+degraded. This can understate IOB/COB and produce a misleading HUD or 4-hour
+forecast during provider failure.
+
+**Decision required:** Return an explicit success/degraded result contract,
+preserve bounded last-known-good treatment context on fetch failure, and expose
+its age/provenance.
+
+**Verification gate:** Provider-failure integration tests proving fetch failure
+is distinct from a valid empty result, active treatment state is retained only
+within its physiological window, and degraded state reaches HUD/health output.
+
+### [R28] System health can report ready with no fresh telemetry or active model
+**Severity:** **Medium**
+
+**Files:** `diabetic/utils/health.py:78-121`,
+`diabetic/cli/commands/health.py:37-47`,
+`docker-compose.yml:75-82`
+
+**Why:** `get_system_health()["ready"]` only checks provider reachability and a
+manifest-matched weight file. It ignores `last_reading_age_mins`,
+`inference_weights_loaded`, and `inference_active`, and accepts stale weights.
+The container healthcheck targets liveness-only `/healthz`, so Compose can
+report healthy while clinical readiness is false.
+
+**Decision required:** Separate liveness from readiness in Compose and make the
+readiness contract require fresh CGM plus the explicitly chosen inference
+policy. Do not label stale or unloaded model state ready.
+
+**Verification gate:** Health and Compose tests for no readings, stale readings,
+unloaded weights, stale weights, provider-only reachability, and a fully ready
+stack; the service healthcheck must target the intended contract.
+
+### [R29] Placeholder temporal multipliers are production model features
+**Severity:** **Medium**
+
+**Files:** `diabetic/medical_constants.py:90-93`,
+`diabetic/utils/temporal.py:15-88`,
+`diabetic/utils/scaling_engine.py:58-73`,
+`diabetic/ml_engine/metabolic_dataset.py:104-112`,
+`diabetic/ml_engine/inference.py:96-106,179-207`,
+`diabetic/ml_engine/twin.py:63-96`
+
+**Why:** Weekend/holiday/festival resistance values are labelled placeholder or
+experimental in source, but they feed both training/live CNN static vectors and
+digital-twin forecasts. The optional `holidays` dependency is undeclared, so
+holiday behavior silently differs by environment. No tests validate the feature
+or prove training/inference parity across those states.
+
+**Decision required:** Remove these factors from deployable paths until they
+have an evidence-backed contract, or make them explicit experimental features
+that cannot influence clinical alerts.
+
+**Verification gate:** Dependency parity plus controlled training/inference
+tests for weekday/weekend/holiday states, with an approved rationale and a
+feature flag that defaults off for clinical operation.
+
+### [R30] Current executable and architecture evidence are stale
+**Severity:** **Medium**
+
+**Files:** `.venv/pyvenv.cfg`, `.venv/bin/python`, `README.md:42-58`,
+`graphify-out/GRAPH_REPORT.md`, `graphify-out/manifest.json`,
+`docs/architecture.md:48-75`, `run_graphify.py`, `.graphifyignore`
+
+**Why:** The local Python 3.12 environment and the user-local `python3.12`
+symlink both target a deleted `/tmp/hfp-uv-python` interpreter, so the 85-test
+result cannot be reproduced today. The graph is dated 2026-06-05, contains
+Windows checkout paths and the removed TWA service, while the architecture doc
+still uses Windows `file:///` links and references a missing `ROADMAP.md`.
+
+**Decision required:** Rebuild Python 3.12 from a durable interpreter, run the
+suite from both working tree and clean archive, and refresh or explicitly retire
+stale graph/docs evidence. Decide whether the untracked graph runner is
+canonical tooling.
+
+**Verification gate:** Current 85-test run plus subtests, package check, clean
+archive run, Docker runtime proof, and a guarded graph refresh whose manifest
+uses this checkout and cannot degrade semantic output.
+
+## 2026-07-24 R25-R30 Implementation Result
+
+- **R25 closed:** registry users are denied; patient and caregiver remain
+  allowed; calibration intentionally targets the singleton `USER_ID`.
+- **R26 closed:** critical current glucose alerts cannot be feedback-dampened;
+  exercise suppression accepts only fresh real cardiac telemetry.
+- **R27 closed:** typed provider state distinguishes valid empty data from
+  degradation, REST fallback is active, and last-known-good treatment context
+  expires at physiological boundaries.
+- **R28 closed at code level:** core and neural readiness are separate and
+  machine-readable; `/readyz` uses core readiness while `/healthz` remains
+  liveness.
+- **R29 closed:** calendar multipliers are neutral and no optional `holidays`
+  branch remains; model feature width stays 15.
+- **R30 partial:** Python and documentation evidence are current, but semantic
+  graph and Docker/live runtime proof remain external.
+
+Verification: focused `53 passed, 10 subtests`; full working tree and isolated
+HEAD-plus-patch source each `105 passed, 10 subtests`; 81-package compatibility,
+compileall, Compose config, shell syntax, diff hygiene, Git integrity, and model
+hash checks pass.
+
+## 2026-07-25 Historical-Data And Repository-Hygiene Audit
+
+**Mode:** blast-through connective-tissue, Hard Reading Mode. Audit-only; no
+clinical data, application code, or generated artifact was modified.
+
+### [R31] The verified historical archive has no replay/test adapter
+**Severity:** **High**
+
+**Files:** `storage/migrations/from-2026-06-01/manifest.json`,
+`storage/migrations/from-2026-06-01/entries.jsonl`,
+`scripts/ops/migrate_nightscout.py:56-122`,
+`diabetic/ingestion/offline/sim_reader.py:7-35`,
+`diabetic/ml_engine/metabolic_dataset.py:36-60`, `ops/lab/`
+
+**Why:** `storage/migrations/from-2026-06-01/` is the strongest real historical
+source in this checkout: all six manifest hashes currently match, and the
+archive contains 7,204 Nightscout entries plus one profile from June 5 through
+July 1. It preserves canonical Extended JSON rather than an already transformed
+CSV. No active test references it. `SimulationReader` accepts only a JSON array
+despite claiming JSON/CSV support, so it cannot read JSONL or CSV; the CSV
+dataset loader requires a `timestamp` column and cannot consume Mongo-exported
+`timestamp_utc` chapters.
+
+**Decision required:** Make the migration archive the source of truth, then add
+a deterministic, de-identified replay-fixture builder that validates the
+manifest and passes each entry through the production Nightscout normalizer.
+Keep the full ignored archive out of unit tests; commit a bounded derived
+fixture plus its source hash and expected invariants.
+
+**Verification gate:** A test must verify source hash, record selection,
+unlabelled-SGV mg/dL normalization, timestamp order, rejected-row count, and
+replay output through the active ingestion boundary.
+
+### [R32] CSV shadows obscure the canonical clinical chapters
+**Severity:** **Medium**
+
+**Files:** `storage/exports/*.csv`, `storage/exports/test_audit/*.csv`,
+`storage/raw/exports/*.csv`,
+`scripts/troubleshooting/clinical/storage/exports/test_audit/*.csv`,
+`scripts/troubleshooting/infrastructure/storage/test_exports/*.csv`,
+`scripts/analysis/neural_refresh_cycle.py:18-45`
+
+**Why:** The four top-level `storage/exports/*.csv` chapters contain 11,781
+unique, non-duplicated Mongo-derived readings from April 11 through May 27.
+Every real row in the nested `test_audit`, troubleshooting, and raw-export
+folders is a subset of those chapters. All 38,575 real rows stored in those
+shadow folders duplicate canonical content, with 19,020 repeated occurrences
+inside the shadow sets themselves. The three
+infrastructure CSVs are the same two-row synthetic fixture under different date
+range names.
+
+`consolidated_training.csv` is not a valid consolidation: 3,987 rows populate
+`timestamp/glucose`, while 3,274 different rows populate
+`timestamp_utc/glucose_mmol_l`. The active dataset loader uses only
+`timestamp`, so the clinical-export half is discarded.
+
+**Decision required:** Treat `storage/exports/*.csv` as the sole legacy
+clinical-CSV chapter set, label the two-row infrastructure files fixtures, and
+quarantine or remove the redundant snapshot trees after preserving any needed
+reproduction note.
+
+**Verification gate:** One generated index/manifest must list chapter hashes,
+schemas, source, time range, and non-overlap; a duplicate scan must report zero
+unapproved shadows.
+
+### [R33] The neural refresh script reports training success without training
+**Severity:** **High**
+
+**Files:** `scripts/analysis/neural_refresh_cycle.py:14-58`,
+`diabetic/ml_engine/train.py:202-237`
+
+**Why:** `train_metabolic_cnn` is async, but the script calls it without
+`await` at line 50 and immediately prints `Training Complete`. Its input
+consolidation also concatenates incompatible CSV schemas. The script has no
+caller or regression test and can generate a forecast after a training no-op.
+
+**Decision required:** Remove the obsolete orchestrator or rebuild it around
+`run_training_pipeline` with an explicit source manifest and awaited result.
+It must never print success unless a candidate was validated and promoted.
+
+**Verification gate:** A subprocess test must fail on mixed schemas and prove
+the awaited rejected/promoted result controls both exit status and subsequent
+simulation.
+
+### [R34] Historical-analysis utilities are stale or incomplete
+**Severity:** **Medium**
+
+**Files:** `scripts/tools/extract_historical.py:11-44`,
+`scripts/analysis/check_csv_data.py:4-18`,
+`scripts/verification/validate_v3_quality.py:4-25`,
+`scripts/verification/validate_forensic_quality.py:4-29`,
+`scripts/tools/visualize_lag.py:5-27`,
+`scripts/troubleshooting/neural/verify_predictive_power.py:7-13`,
+`scripts/analysis/neural_backtest_14day.py:10-80`,
+`diabetic/ingestion/offline/sim_reader.py:7-35`
+
+**Why:** The PDF extraction scripts still target `data/test/ottai_data`, while
+the PDFs now live under `storage/raw/test/ottai_data`. Three CSV validators
+hard-code an old Windows checkout and filenames that do not exist.
+`visualize_lag` and `verify_predictive_power` require a missing
+`synthetic_glucose_study.csv`. The backtest declares an unused legacy weights
+path, swallows every inference exception, and writes to the old `data/` tree.
+`SimulationReader` has no consumer and its CSV claim is false.
+
+**Decision required:** Classify each script as supported developer tooling or
+archive it. Supported tools need repo-root path resolution, explicit inputs,
+nonzero failure exits, and smoke tests.
+
+**Verification gate:** Run every retained script from a fresh checkout against
+an explicit fixture; stale tools must be absent from active docs and audit
+claims.
+
+### [R35] Stage restore does not enforce the export hashes
+**Severity:** **Medium**
+
+**Files:** `scripts/ops/migrate_nightscout.py:98-122`,
+`storage/migrations/from-2026-06-01/manifest.json`
+
+**Why:** Export records SHA-256 for every collection, but `stage_restore`
+checks only the staged document count. A valid-but-modified JSONL file with the
+same number of records can pass staging. The current archive hashes were
+independently rechecked and all match; the defect is in future enforcement.
+
+**Decision required:** Verify every source file hash before opening the target
+database or writing the first staging document.
+
+**Verification gate:** Corrupt one byte without changing line count and prove
+stage restore fails before connecting or writing.
+
+### [R36] Storage/script audit claims are no longer trustworthy
+**Severity:** **Low**
+
+**Files:** `storage/AUDIT.md:3-13`, `scripts/AUDIT.md:3-18`,
+`workspace/REVIEW_LEDGER.md`
+
+**Why:** The storage audit calls all processed CSVs ground truth, and the script
+audit calls missing-input utilities fully operational. The older orphan matrix
+also reports a duplicate `diabetic/ingestion/sim_reader.py` that has already
+been removed; only the incomplete offline reader remains.
+
+**Decision required:** Replace blanket `SOLID` claims with the source
+classification and verification status from this audit.
+
+**Verification gate:** Documentation must distinguish source-preserving
+clinical history, derived clinical CSVs, PDF-extracted estimates, fixtures, and
+synthetic outputs.

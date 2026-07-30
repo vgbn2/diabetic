@@ -1,10 +1,11 @@
 # Handoff — Current Objectives
 
-_Last updated: 2026-07-23_
+_Last updated: 2026-07-24_
 
 ## Current Phase
-**R17-R24 remediation implemented; promotion remains blocked only on external
-runtime validation and current live-service readiness.**
+**R17-R29 are code-verified. R30 runtime reproducibility is repaired locally,
+but Docker/live-provider and semantic-graph evidence remain external promotion
+gates.**
 
 ## Last Historical Verified State (2026-07-18)
 - **Test baseline: `70 passed`** — isolated Python 3.11.15, `python -m pytest ops/lab -q` → 70 passed, 5.19s
@@ -80,10 +81,27 @@ runtime validation and current live-service readiness.**
 
 ## Open Work
 
+### 2026-07-24 superseding audit priority
+1. **Completed:** R25 restricts the singleton pipeline to patient/caregiver;
+   registry membership is not authorization.
+2. **Completed:** R26 keeps current critical glucose alerts outside feedback
+   dampening and requires fresh real cardiac telemetry for exercise suppression.
+3. **Completed:** R27 exposes typed treatment provider state, REST fallback,
+   bounded last-known-good context, and HUD/health degradation.
+4. **Completed:** R28 separates core `ready` from `neural_ready`; `/healthz`
+   remains liveness and `/readyz` consumes the core readiness contract.
+5. **Completed:** R29 neutralizes calendar-derived model effects at `1.0`.
+6. **Partially completed:** R30 now has durable CPython 3.12.13, 81 compatible
+   packages, corrected docs, and two passing 105-test runs. Semantic graph and
+   Docker runtime evidence remain unavailable.
+
 ### Deployment (next priority)
-1. **Validate Docker/Compose on a Docker-capable host** — the current verification host has no Docker executable.
+1. **Validate Docker/Compose on a Docker-capable host** — Compose 2.40.3 is
+   installed here, but this account cannot access `/var/run/docker.sock`.
 2. **Local deployment on old Asus laptop** — install Ubuntu, docker-compose up, point CGM uploader to local IP.
-3. **ML weights retraining** — current v15 is structurally valid but stale. It will auto-retrain on the live schedule. Force early: `python -m diabetic.ml_engine.train --source mongo --epochs 20`.
+3. **ML weights retraining** — automatic training defaults off. Do not retrain
+   until R25-R28, real aligned cardiac telemetry, and promotion readiness are
+   cleared; then use `python -m diabetic.ml_engine.train --source mongo --epochs 20`.
 
 ### Architectural Debt (Future Session)
 3. **coordinator.py decomposition** — 872 LOC. Extract `_maintenance_loop`, `_refit_oracle_loop`, `_deep_historical_sync` to `diabetic/monitoring/maintenance.py`. Needs coordinator integration tests first.
@@ -100,7 +118,7 @@ runtime validation and current live-service readiness.**
 ## Blockers
 - Graph refresh blocked (no `GEMINI_API_KEY`)
 - Phase 5 MongoDB stress test blocked (no live Atlas)
-- Docker build/Compose runtime validation blocked (Docker is not installed on this host)
+- Docker runtime blocked by socket access despite a working Compose CLI.
 
 ## Section Grades (committed implementation — 2026-07-18)
 | Section | Grade |
@@ -200,3 +218,35 @@ Next session should begin with the external runtime queue: obtain Docker
 socket access, start and inspect Compose, stage the verified June export,
 verify Nightscout and Bio-Quant readiness, then take a backup. Do not retrain
 for deployment until real aligned cardiac telemetry exists.
+
+## 2026-07-24 R25-R30 Mass Implementation
+
+- R25-R29 are implemented and directly covered.
+- Durable interpreter:
+  `/home/vgbn1/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu`;
+  `.venv` and `~/.local/bin/python3.12` resolve to it.
+- Focused proof: `53 passed, 10 subtests`.
+- Full working-tree proof: `105 passed, 10 subtests`.
+- Isolated `git archive HEAD` plus tracked implementation patch:
+  `105 passed, 10 subtests`.
+- Compatibility: 81 locked packages pass `uv pip check`.
+- `compileall`, Compose config, backup shell syntax, `git diff --check`,
+  `git fsck --strict`, and v15 hash verification pass.
+- DCS: `0.800 -> 0.942` (freshness `0.90`, schema `0.96`, coverage `0.96`).
+- Promotion remains blocked because no Docker runtime, live Nightscout/Mongo
+  readiness, restart/recovery, backup/restore, real cardiac, or graph refresh
+  proof was produced.
+
+## 2026-07-24 Session Closeout - Frontend Deferred
+
+- User ended the session after reviewing current blood-sugar monitoring UI
+  capabilities.
+- Frontend redesign and alert-UI design are explicitly deferred to a later
+  session; no additional frontend edits were made.
+- Current verified boundary remains R25-R29 code-verified with working-tree and
+  isolated-source results of `105 passed, 10 subtests`.
+- Next UI session should begin by defining glucose units, degraded-state
+  presentation, alert history/acknowledgement, meal/insulin entry boundaries,
+  and offline asset strategy before implementation.
+- Production/runtime gates remain unchanged: Docker/live providers,
+  restart/recovery, backup/restore, real cardiac, and semantic graph.

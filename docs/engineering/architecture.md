@@ -1,6 +1,6 @@
 # Bio-Quant — Architecture (web + auth)
 
-Updated: 2026-06-05 · Scope: personal (patient + caregiver), single pipeline.
+Updated: 2026-07-24 · Scope: personal (patient + caregiver), single pipeline.
 
 ## Domains
 ```
@@ -29,8 +29,8 @@ Telegram client ──opens Mini App──► twa/index.html (loads telegram-web
         │     HMAC: secret = HMAC(b"WebAppData", bot_token); hash == HMAC(secret, data_check_string)
         │     + auth_date freshness  → returns {id, first_name, ...}
         ├─ scheme "dev"  → only if config.TWA_DEV_TOKEN set (browser testing)
-        └─ authorization.is_authorized(user.id, COORDINATOR_REF)
-              patient (USER_ID) / caregiver (CAREGIVER_ID) / VesselRegistry user
+        └─ authorization.is_authorized(user.id)
+              patient (USER_ID) / caregiver (CAREGIVER_ID)
      → 200 (ok) · 401 (missing/invalid initData) · 403 (valid but not authorized)
 ```
 
@@ -55,9 +55,23 @@ Outside Telegram (plain browser) there is no `initData`, so `auth.js` redirects 
 - Every `/api/v1/*` endpoint requires a verified Telegram identity (was fully open).
 - The mutating `POST /api/v1/calibration` is gated — the headline fix.
 - CORS no longer `*` by default; the HMAC dependency is the real gate (CORS is defense-in-depth).
-- Auth fails **closed** (registry errors → deny). `hmac.compare_digest` used for hash + dev token.
+- VesselRegistry rows do not grant access to the singleton patient pipeline.
+- Both patient and caregiver may submit calibration, which always targets `USER_ID`.
+- Auth fails **closed**. `hmac.compare_digest` is used for hash and dev-token checks.
+
+## Runtime state contracts
+- `/healthz` is process liveness and remains the Compose healthcheck target.
+- `/readyz` is core monitoring readiness: Nightscout and MongoDB are reachable
+  and the in-process coordinator has a fresh glucose snapshot.
+- `neural_ready` is reported separately and requires fresh verified weights,
+  successful in-process loading, and a 30-snapshot inference buffer.
+- Treatment providers return explicit `ok` or `degraded` state. Fetch failure
+  preserves only physiologically active last-known-good insulin/meal context.
+- The legacy calendar resistance feature remains a neutral `1.0` model input
+  for artifact-shape compatibility; weekends and holidays do not affect alerts
+  or forecasts.
 
 ## Not yet (future, by design)
 - Multi-user / per-user pipelines / Supabase RLS (DB schema is already multi-tenant).
 - A GET endpoint to pre-fill settings (today the form posts new values only).
-- Bot `restrict_access` adopting `auth/authorization.is_authorized` (currently parallel logic).
+- Per-role patient/caregiver permissions beyond the current shared access policy.

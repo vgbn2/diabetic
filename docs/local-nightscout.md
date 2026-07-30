@@ -9,6 +9,14 @@ Nightscout and Bio-Quant only on loopback by default.
 3. Start with `docker compose up -d --build`.
 4. Check `docker compose ps`, `http://localhost:1337`, and
    `http://localhost:8000/healthz`.
+5. Check `http://localhost:8000/readyz` separately. `/healthz` proves only that
+   the HTTP process is alive; `/readyz` requires healthy providers and a fresh
+   in-process glucose snapshot.
+
+The machine-readable health output reports `ready` for core monitoring and
+`neural_ready` for validated loaded weights plus a warm inference buffer.
+Kinematic fallback can operate when core readiness is true and neural readiness
+is false.
 
 For access from a phone or another LAN device, set
 `NIGHTSCOUT_BIND_ADDRESS=0.0.0.0` only on a trusted network, keep

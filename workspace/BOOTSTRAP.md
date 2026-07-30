@@ -13,20 +13,19 @@ diabetic/storage/   — VesselRegistry (SQLAlchemy async + aiosqlite), MongoDB c
 diabetic/ingestion/ — Nightscout, MongoDB, BLE data sources
 ops/lab/            — Unit/integration tests
 scripts/            — Simulation, backtest, data-transform utilities
-.gsd/               — Session journal (JOURNAL.md) and project state (STATE.md)
 graphify-out/       — Knowledge graph output (may be stale; regenerate after code changes)
 workspace/          — Session continuity files (this directory)
 ```
 
 ## Source of Truth
-- **Current phase & task**: `.gsd/STATE.md`
-- **Session history**: `.gsd/JOURNAL.md`
+- **Current phase & task**: `workspace/STATE.md`
+- **Session history**: `workspace/PROMPT_LOG.md`
 - **Live objectives**: `workspace/HANDOFF.md`
 - **Cumulative cautions**: `workspace/SESSION_MEMORY.md`
-- **Prompt history**: `workspace/PROMPT_LOG.md`
+- **Audit findings**: `workspace/DEV_REVIEW.md`
 
 ## Boot Rules
-1. Read `.gsd/STATE.md` → `.gsd/JOURNAL.md` → `workspace/HANDOFF.md` → `workspace/SESSION_MEMORY.md`
+1. Read `workspace/STATE.md` → `workspace/HANDOFF.md` → `workspace/SESSION_MEMORY.md`
 2. Check `git log --oneline -5` to surface any recent untracked changes
 3. Regenerate `graphify-out` when code changed since last graph refresh
 4. Log the session prompt into `workspace/PROMPT_LOG.md` before starting work

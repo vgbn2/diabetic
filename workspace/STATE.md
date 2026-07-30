@@ -1,6 +1,6 @@
 # State — Bio-Quant Session State
 
-_Mirrors `.gsd/STATE.md` but tracks workspace-level session continuity._
+_Canonical workspace-level session continuity. The legacy `.gsd` mirror is retired._
 
 ## Current Position
 - **Phase**: Local Nightscout remediation and migration
@@ -181,3 +181,48 @@ Scope: files in `git diff HEAD` + same-section new files. Untouched sections car
 - Session is closed with 85 tests plus 5 subtests previously passing.
 - External next gate: Docker/Compose runtime, Nightscout readiness, staged
   migration/backup, and real cardiac telemetry before deployment retraining.
+
+## 2026-07-24 Deep Blast-Through Reopen
+
+- Full review-only audit reopened promotion after the closeout.
+- R17-R24 repairs remain present, but new findings R25-R30 block promotion.
+- Highest gate: any `VesselRegistry` user can reach the singleton patient's HUD
+  and calibration writes to `config.USER_ID`.
+- Alert safety remains failed: predicted HR and RLHF feedback can suppress
+  warnings without direct regression tests.
+- Treatment fetch failures collapse into valid-empty state; system readiness
+  ignores fresh telemetry and loaded inference.
+- Current DCS is **0.800** (freshness 0.72, schema 0.86, coverage 0.80).
+- Current suite execution is unavailable because both Python 3.12 symlinks point
+  to deleted `/tmp/hfp-uv-python`; historical evidence remains 85 tests plus
+  five subtests.
+- Static gates pass: HEAD archive compile, Compose config, Git integrity, shell
+  syntax, diff hygiene, and v15 working-tree/archive hash parity.
+- Next gate: R25 ownership isolation, R26 alert suppression tests/fix, then R27
+  degraded treatment state and R28 readiness semantics before runtime rebuild.
+
+## 2026-07-24 R25-R30 Implementation Correction
+
+- **R25-R29:** closed in the implementation candidate with direct regression
+  coverage for ownership, alert suppression, treatment degradation, readiness,
+  and temporal neutrality.
+- **R30:** local executable/docs portion cleared. Durable CPython 3.12.13,
+  81 compatible locked packages, and corrected architecture links/contracts
+  are verified. Graph and Docker/runtime evidence remain open.
+- **Tests:** working tree `105 passed, 10 subtests`; isolated HEAD-plus-patch
+  source `105 passed, 10 subtests`.
+- **Static gates:** compileall, Compose config, backup syntax, diff hygiene,
+  Git integrity, package compatibility, and v15 artifact hash pass.
+- **DCS:** `0.942` (`freshness 0.90`, `schema integrity 0.96`,
+  `coverage 0.96`). This exceeds the code-only target but remains below the
+  strict `0.950` promotion threshold.
+- **Next gate:** Docker runtime and live provider readiness, then staged
+  restore/backup and restart/recovery evidence. No deployment retraining before
+  real aligned cardiac telemetry.
+
+## 2026-07-24 Frontend Deferral
+
+- Frontend and alert-UI redesign are intentionally deferred by the user.
+- No UI implementation followed the capability review.
+- Preserve the R25-R30 verified candidate and resume UI work from
+  `workspace/HANDOFF.md` in a later session.

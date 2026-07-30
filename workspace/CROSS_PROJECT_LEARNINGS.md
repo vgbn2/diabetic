@@ -110,7 +110,10 @@ Built `diabetic/mcp/` (FastMCP, stdio). Tools, `bio_*`-namespaced per the note b
 - **Tool naming by domain**: `portfolio.*`, `backtest.*`, `strategy.*` — namespaced tool names prevent collision when multiple servers are loaded. Medical's future MCP tools should be `bio.*` namespaced.
 
 ### What medical does well → finance should adopt
-- **Simulated data mode for tool testing**: `SimulationReader` replays historical data deterministically. Finance's MCP tools always hit live APIs — add a `--mock` or `SOVEREIGN_MOCK_MODE=true` to replay cached responses for tool testing.
+- **Verified replay mode for tool testing**: `HistoricalReplayReader` replays
+  integrity-checked archives or canonical CSV chapters deterministically.
+  Finance's MCP tools always hit live APIs — add a verified fixture mode rather
+  than relying on mutable provider caches.
 
 ### Future (for both — website)
 - **Web → MCP bridge**: when adding a web UI, expose the same MCP tools over WebSocket so the browser can drive the same tool surface as Claude. Finance's architecture is already closest to this.
@@ -166,7 +169,9 @@ _Neither project has a production web frontend yet (finance has React/Vite scaff
 
 ### What medical does well → finance should adopt
 - **Empirical validation protocol**: medical's session journal records `input → transform → output → invariant` for each hypothesis (H1–H9). Finance's tests assert pass/fail without recording the evidence chain.
-- **Simulation harness for data-independent tests**: `SimulationReader` replays deterministic data without needing live Nightscout. Finance's test suite relies on cached provider data that can go stale.
+- **Simulation harness for data-independent tests**:
+  `HistoricalReplayReader` uses committed synthetic fixtures without needing
+  live Nightscout and can optionally verify local ignored history.
 
 ---
 
@@ -180,7 +185,6 @@ _Neither project has a production web frontend yet (finance has React/Vite scaff
 - `workspace/FEATURE_TEST_MATRIX_*.md` — per-feature test evidence
 - `docs/engineering/blast_through_checklist.md` — audit runbook
 - `docs/engineering/architectural_debt.md` — long-lived structural debt
-- `.gsd/STATE.md` — phase/posture mirror
 
 ### Medical's workspace (just initialized — add these over time)
 - [x] `workspace/BOOTSTRAP.md`
@@ -191,7 +195,7 @@ _Neither project has a production web frontend yet (finance has React/Vite scaff
 - [x] `workspace/DEV_COMMENTS.md`
 - [ ] `workspace/NEXT_SESSION_GOAL.md` — add after first work session completes
 - [ ] `workspace/FEATURE_TEST_MATRIX.md` — add when integration tests are added
-- [ ] `docs/engineering/` — add architecture doc once coordinator is decomposed
+- [x] `docs/engineering/` — architecture and TUI documentation
 
 ---
 

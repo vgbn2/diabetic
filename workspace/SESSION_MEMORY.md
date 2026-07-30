@@ -46,7 +46,7 @@ _Cumulative. Never delete; append corrections._
 ### New surfaces
 - `diabetic/cli/` — structured CLI/TUI (manifest → dispatcher → commands → rich engine). 10 cmds / 5 categories. Launch: `diabetic` (PS function) · `python -m diabetic.cli.tui` · `python -m diabetic.cli <cat> <cmd>`. Contract test `ops/lab/test_cli_manifest.py`. Numbered-selection menus (win32-safe); arrow-key nav deferred.
 - `diabetic/mcp/` — FastMCP stdio server; 3 read-only `bio_*` tools (ping/health/config), `TOOL_SPECS` registry. Run `python -m diabetic.mcp`; probe `scripts/mcp_probe.py`; test `ops/lab/test_mcp_tools.py`.
-- `diabetic/auth/` — Telegram WebApp `initData` HMAC verify (`secret = HMAC(b"WebAppData", bot_token)`) + `is_authorized` (patient/caregiver/registry, **fails closed**). FastAPI dep `require_twa_user` guards all `/api/v1/*`. Tests `ops/lab/test_twa_auth.py` (7); TestClient probe: no-auth 401, stranger 403, patient 200, calibration-no-auth 401.
+- `diabetic/auth/` — Telegram WebApp `initData` HMAC verify (`secret = HMAC(b"WebAppData", bot_token)`) + fail-closed singleton patient/caregiver authorization. VesselRegistry membership is storage state, not access. FastAPI dep `require_twa_user` guards all `/api/v1/*`.
 - `twa/` — refined vanilla frontend: index/login/settings/history + `assets/{app.css,auth.js,api.js,dashboard.js,settings.js,history.js}`; Telegram-themed, mobile-first. Doc `docs/engineering/architecture.md`.
 - New config: `TWA_ALLOWED_ORIGINS`, `TWA_DEV_TOKEN`, `TWA_AUTH_MAX_AGE_SECS`. Launcher `diabetic.ps1` + `diabetic` PS-profile function (replaced `bq`).
 
@@ -172,3 +172,75 @@ _Cumulative. Never delete; append corrections._
 - No semantic graph refresh was attempted without credentialed tooling.
 - Runtime promotion remains blocked by external Docker/Nightscout readiness
   and real cardiac-data requirements.
+
+## Session 2026-07-24 - Deep Blast-Through Reopen
+
+- Full audit mode, review-only; no application behavior changed.
+- R25 critical: registry authorization crosses the documented single-patient
+  boundary, and calibration always mutates `config.USER_ID`.
+- R26 high: model-predicted HR and user feedback can suppress safety alerts.
+- R27 high: treatment provider errors are indistinguishable from valid empty
+  results and clear active context.
+- R28-R30 cover false readiness, placeholder temporal model features, and stale
+  Python/graph/docs evidence.
+- DCS moved from the active ledger's 0.720 to a post-remediation reassessment of
+  0.800, still below the 0.950 promotion threshold.
+- HEAD archive compilation, Compose config, Git integrity, shell syntax, and
+  model hash parity pass. Current pytest is blocked because the Python 3.12
+  interpreter previously installed under `/tmp` no longer exists.
+- Next implementation order: R25, R26, R27, R28, then durable runtime rebuild
+  and clean-archive verification.
+
+## Session 2026-07-24 - R25-R30 Mass Implementation
+
+- Authorization is patient/caregiver-only for the singleton pipeline;
+  VesselRegistry membership never grants read or calibration access.
+- Both patient and caregiver may calibrate the configured `USER_ID`.
+- Current critical hypo/hyper alerts bypass feedback dampening. Exercise
+  suppression requires fresh real cardiac telemetry; predicted/synthetic/stale
+  heart rate is not safety evidence.
+- `TreatmentFetchResult` is the provider contract. Mongo degrades to
+  Nightscout REST; failed providers retain only physiologically active
+  last-known-good meal/insulin context.
+- `ready` means providers healthy plus a fresh in-process glucose snapshot.
+  `neural_ready` separately requires fresh verified weights, successful load,
+  and 30 snapshots. `/healthz` remains liveness.
+- Calendar temporal resistance is retired from active training, inference, and
+  twin behavior. Static feature index 11 remains neutral `1.0` for artifact
+  compatibility.
+- Durable CPython 3.12.13 and 81 locked packages restored. Working tree and
+  isolated HEAD-plus-patch source each pass 105 tests plus 10 subtests.
+- Runtime/deployment promotion is still blocked on Docker/live-provider,
+  restart/recovery, backup/restore, real cardiac, and semantic-graph evidence.
+
+## Session 2026-07-24 - Frontend Review Closeout
+
+- Current TWA provides mmol/L glucose, trend/velocity, COB/IOB, 4h/1d
+  forecasts, recent history, settings, Telegram auth, and haptic excursions.
+- No local process was listening on ports 8000 or 1337 during the review, so
+  the frontend was not receiving live data.
+- Known UI gaps: no mg/dL toggle, alert history, web meal/insulin entry, clear
+  degraded banner, or fully offline Chart.js/Telegram asset strategy.
+- User will design the frontend and alert UI later. Do not pre-empt that design
+  in the next session; start by loading the handoff and confirming UI intent.
+
+## Session 2026-07-25 - Historical-Data Hygiene
+
+- Canonical source-preserving history is
+  `storage/migrations/from-2026-06-01/`: 7,204 Nightscout entries and one
+  profile; all six manifest hashes reverified. It is ignored and not consumed
+  by active tests.
+- Canonical legacy clinical CSVs are the four top-level
+  `storage/exports/*.csv` chapters: 11,781 unique Mongo-derived readings from
+  April 11-May 27. All real nested export rows are subsets or duplicate
+  snapshots.
+- `storage/data/processed/*.csv` is PDF-derived and lacks real cardiac
+  telemetry. It is suitable only for labelled offline experiments, not
+  deployable training truth.
+- No active test uses a historical artifact. `SimulationReader` cannot read
+  CSV/JSONL, and `MetabolicDataset` cannot directly read the Mongo export
+  schema.
+- `neural_refresh_cycle.py` is dangerous dead tooling: mixed-schema merge,
+  un-awaited async training, and false success output.
+- Retained historical tools need explicit source manifests, repo-root paths,
+  failure exits, and smoke tests before being called supported.

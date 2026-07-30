@@ -40,6 +40,8 @@ The engine moves through three temporal phases:
 ## 🚀 Quick Start
 
 Python 3.12 is the verified local and container runtime.
+The current workstation uses a durable uv-managed CPython 3.12.13 installation;
+do not point project environments at temporary interpreter paths.
 
 ```bash
 python3.12 -m venv .venv
@@ -78,4 +80,6 @@ uses its non-neural fallback instead of running randomly initialized weights.
 
 - 📐 **[Architecture](docs/architecture.md)**: Deep-dive into modules and clinical math.
 - 🧠 **[ML specification](docs/ML_SPEC.md)**: Theoretical specification for the five layers.
+- 🧾 **[Historical data provenance](docs/data-provenance.md)**: Canonical local archives, CSV roles, privacy, and verification.
+- 🗄️ **[Documentation history](docs/history.md)**: Retired archives, ownership, and Git recovery.
 - 🗺️ **[Current handoff](workspace/HANDOFF.md)**: Verified state, deployment priorities, and remaining work.
