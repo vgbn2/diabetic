@@ -87,11 +87,6 @@ MENSTRUAL_CYCLE_DAYS     = 28.0  # standard baseline
 LUTEAL_RESISTANCE_MULT   = 1.30  # +30% resistance peak during luteal phase
 REGIME_SENSITIVITY_MULT  = 1.25  # +25% resistance during sick/dawn phenomenon
 
-# ── Temporal Intelligence (Layer 2) ──────────────────────────────────────────
-WEEKEND_RESISTANCE_MULT  = 1.05  # +5% resistance context(placeholder for now)
-HOLIDAY_RESISTANCE_MULT  = 1.10  # +10% resistance context
-FESTIVAL_RESISTANCE_MULT = 1.20  # +20% resistance context (e.g. Tet, Social Eating)
-
 # ── Metabolic Braking (Spillover & Defense) ──────────────────────────────────
 # RENAL_THRESHOLD: above this, kidneys spill glucose into urine.
 RENAL_THRESHOLD       = 12.0   # mmol/L

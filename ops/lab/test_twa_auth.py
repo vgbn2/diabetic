@@ -10,8 +10,9 @@ import hmac
 import json
 import time
 import unittest
+from types import SimpleNamespace
 from urllib.parse import urlencode
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from diabetic.auth import authorization as A
 from diabetic.auth import dependencies as D
@@ -86,6 +87,18 @@ class TestAuthorization(unittest.TestCase):
             self.assertFalse(_run(A.is_authorized(333)))  # stranger
             self.assertFalse(_run(A.is_authorized(None)))
 
+    def test_registry_membership_does_not_authorize_singleton_pipeline(self):
+        coordinator = SimpleNamespace(
+            vessel_registry=SimpleNamespace(get_user=AsyncMock(return_value={"id": 333}))
+        )
+        with patch.object(A, "_static_allowlist", return_value={111, 222}):
+            self.assertFalse(_run(A.is_authorized(333, coordinator)))
+        coordinator.vessel_registry.get_user.assert_not_awaited()
+
+    def test_non_numeric_identity_fails_closed(self):
+        with patch.object(A, "_static_allowlist", return_value={111, 222}):
+            self.assertFalse(_run(A.is_authorized("not-an-id")))
+
 
 class TestDevAuthorization(unittest.IsolatedAsyncioTestCase):
     async def test_dev_token_is_rejected_in_production(self):
@@ -106,6 +119,22 @@ class TestDevAuthorization(unittest.IsolatedAsyncioTestCase):
             user = await D.require_twa_user("dev sentinel-dev-token")
         self.assertEqual(user["id"], 111)
         self.assertTrue(user["dev"])
+
+    async def test_tma_patient_and_caregiver_allowed_registry_only_user_denied(self):
+        with (
+            patch.object(app_config, "USER_ID", 111),
+            patch.object(app_config, "CAREGIVER_ID", 222),
+            patch.object(D, "validate_init_data") as validate,
+        ):
+            for uid in (111, 222):
+                validate.return_value = {"id": uid}
+                user = await D.require_twa_user("tma signed")
+                self.assertEqual(user["id"], uid)
+
+            validate.return_value = {"id": 333}
+            with self.assertRaises(D.HTTPException) as raised:
+                await D.require_twa_user("tma signed")
+            self.assertEqual(raised.exception.status_code, 403)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ repo rule) and asserts three things the auth-only probes never reached:
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from diabetic.storage import engine as E
 from diabetic.storage.engine import close_db, init_db
@@ -72,6 +74,27 @@ class TestCalibrationWrite(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.registry.update_user_traits(PATIENT_ID, {}))
         self.assertFalse(
             await self.registry.update_user_traits(PATIENT_ID, {"insulin_sensitivity": 5})
+        )
+
+
+class TestCalibrationTarget(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self):
+        from diabetic.telegram_bot import twa_api
+
+        twa_api.COORDINATOR_REF = None
+
+    async def test_authorized_calibration_targets_configured_patient(self):
+        from diabetic.config import config
+        from diabetic.telegram_bot import twa_api
+
+        registry = SimpleNamespace(update_user_traits=AsyncMock(return_value=True))
+        twa_api.COORDINATOR_REF = SimpleNamespace(vessel_registry=registry)
+        with patch.object(config, "USER_ID", PATIENT_ID):
+            result = await twa_api.update_calibration({"age": 31})
+
+        self.assertEqual(result["status"], "success")
+        registry.update_user_traits.assert_awaited_once_with(
+            PATIENT_ID, {"age": 31}
         )
 
 

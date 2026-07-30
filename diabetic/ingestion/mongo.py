@@ -10,6 +10,7 @@ from diabetic.registry import (
     GlucoseReading,
     InsulinDose,
     MealEvent,
+    TreatmentFetchResult,
 )
 from diabetic.utils.db import db_manager
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
@@ -81,14 +82,16 @@ class MongoDBClient:
             
         return readings
 
-    async def fetch_recent_treatments(self, count: int = 10, hours: float = 4.0) -> tuple:
-        """
-        Fetches the latest insulin and meal events for the last N hours.
-        Returns Tuple[Optional[InsulinDose], Optional[MealEvent]] to match
-        the NightscoutClient contract and prevent arity mismatch in coordinator.
-        """
+    async def fetch_recent_treatments(
+        self, count: int = 10, hours: float = 4.0
+    ) -> TreatmentFetchResult:
+        """Fetch the latest treatment events with explicit provider state."""
         if self.treatments is None:
-            return None, None
+            return TreatmentFetchResult(
+                source="mongo",
+                state="degraded",
+                error_reason="collection_unavailable",
+            )
         
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         latest_insulin: Optional[InsulinDose] = None
@@ -121,8 +124,18 @@ class MongoDBClient:
                     break
         except Exception as e:
             self.logger.error(f"Error fetching treatments: {e}")
-            
-        return latest_insulin, latest_meal
+            return TreatmentFetchResult(
+                source="mongo",
+                state="degraded",
+                error_reason=type(e).__name__,
+            )
+
+        return TreatmentFetchResult(
+            source="mongo",
+            state="ok",
+            insulin=[latest_insulin] if latest_insulin else [],
+            meals=[latest_meal] if latest_meal else [],
+        )
 
     async def save_environment_reading(self, reading: EnvironmentReading):
         """Persists environmental context for historical anchoring (Phase 3)."""

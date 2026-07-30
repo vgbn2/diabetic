@@ -76,6 +76,7 @@ async def get_system_health() -> dict:
         }
 
     weights_loaded = False
+    coordinator = None
     try:
         from diabetic.coordinator import Coordinator
 
@@ -95,17 +96,29 @@ async def get_system_health() -> dict:
     health["inference_active"] = buffer_size >= 30 and weights_loaded
 
     last_ts: Optional[datetime] = None
-    try:
-        from diabetic.utils.audit_logger import AuditLogger
+    reading_source = "none"
+    if coordinator and getattr(coordinator, "_initialized", False) and coordinator.snapshots:
+        last_ts = coordinator.snapshots[-1].glucose.timestamp
+        reading_source = "coordinator"
+    else:
+        try:
+            from diabetic.utils.audit_logger import AuditLogger
 
-        last_ts = await AuditLogger().get_last_reading_timestamp()
-    except Exception as exc:
-        logger.debug("Could not retrieve last reading timestamp: %s", exc)
+            last_ts = await AuditLogger().get_last_reading_timestamp()
+            if last_ts is not None:
+                reading_source = "audit"
+        except Exception as exc:
+            logger.debug("Could not retrieve last reading timestamp: %s", exc)
 
+    reading_fresh = False
     if last_ts is not None:
         if last_ts.tzinfo is None:
             last_ts = last_ts.replace(tzinfo=timezone.utc)
         age_mins = (datetime.now(timezone.utc) - last_ts).total_seconds() / 60.0
+        reading_fresh = (
+            math.isfinite(age_mins)
+            and 0.0 <= age_mins <= config.HUD_STALE_AFTER_SECS / 60.0
+        )
         health["last_reading_ts"] = last_ts.isoformat()
         health["last_reading_age_mins"] = (
             round(age_mins, 1) if math.isfinite(age_mins) else None
@@ -114,9 +127,45 @@ async def get_system_health() -> dict:
         health["last_reading_ts"] = None
         health["last_reading_age_mins"] = None
 
-    health["ready"] = (
-        nightscout == "ok"
-        and mongodb == "ok"
-        and health["ml_weights"]["status"] in {"fresh", "stale"}
-    )
+    health["last_reading_source"] = reading_source
+    health["last_reading_fresh"] = reading_fresh
+
+    readiness_reasons = []
+    if nightscout != "ok":
+        readiness_reasons.append(f"nightscout_{nightscout}")
+    if mongodb != "ok":
+        readiness_reasons.append(f"mongodb_{mongodb}")
+    if reading_source != "coordinator":
+        readiness_reasons.append("coordinator_reading_unavailable")
+    elif not reading_fresh:
+        readiness_reasons.append("stale_metabolic_snapshot")
+
+    health["ready"] = not readiness_reasons
+    health["readiness_reasons"] = readiness_reasons
+
+    neural_reasons = list(readiness_reasons)
+    if health["ml_weights"]["status"] != "fresh":
+        neural_reasons.append(f"ml_weights_{health['ml_weights']['status']}")
+    if not weights_loaded:
+        neural_reasons.append("inference_weights_not_loaded")
+    if buffer_size < 30:
+        neural_reasons.append("insufficient_snapshot_buffer")
+    health["neural_ready"] = not neural_reasons
+    health["neural_readiness_reasons"] = neural_reasons
+
+    if coordinator and getattr(coordinator, "_initialized", False):
+        fetched_at = getattr(coordinator, "treatment_fetched_at", None)
+        health["treatments"] = {
+            "state": getattr(coordinator, "treatment_fetch_state", "waiting"),
+            "source": getattr(coordinator, "treatment_source", None),
+            "fetched_at": fetched_at.isoformat() if fetched_at else None,
+            "reason": getattr(coordinator, "treatment_degraded_reason", None),
+        }
+    else:
+        health["treatments"] = {
+            "state": "waiting",
+            "source": None,
+            "fetched_at": None,
+            "reason": "coordinator_unavailable",
+        }
     return health

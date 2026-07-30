@@ -112,10 +112,18 @@ async def get_hud_data():
         timestamp = timestamp.replace(tzinfo=timezone.utc)
     age = max(0.0, (datetime.now(timezone.utc) - timestamp).total_seconds())
     fresh = age <= config.HUD_STALE_AFTER_SECS
+    treatment_degraded = (
+        getattr(COORDINATOR_REF, "treatment_fetch_state", "waiting") == "degraded"
+    )
+    degraded_reasons = []
+    if not fresh:
+        degraded_reasons.append("stale_metabolic_snapshot")
+    if treatment_degraded:
+        degraded_reasons.append("treatment_provider_degraded")
     
     return HUDState(
-        state="live" if fresh else "stale",
-        ready=fresh,
+        state="degraded" if fresh and treatment_degraded else ("live" if fresh else "stale"),
+        ready=fresh and not treatment_degraded,
         fresh=fresh,
         glucose=latest.filtered_value,
         velocity=latest.velocity,
@@ -125,7 +133,7 @@ async def get_hud_data():
         confidence=latest.confidence_index,
         timestamp=timestamp.isoformat(),
         age_seconds=round(age, 1),
-        degraded_reasons=[] if fresh else ["stale_metabolic_snapshot"],
+        degraded_reasons=degraded_reasons,
     )
 
 @app.get("/api/v1/forecast", dependencies=[Depends(require_twa_user)])
@@ -159,13 +167,11 @@ async def healthz():
 
 @app.get("/readyz")
 async def readyz():
-    """Detail-free freshness gate for local orchestration."""
-    if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
-        raise HTTPException(status_code=503, detail="not ready")
-    latest = COORDINATOR_REF.snapshots[-1].glucose.timestamp
-    if latest.tzinfo is None:
-        latest = latest.replace(tzinfo=timezone.utc)
-    if (datetime.now(timezone.utc) - latest).total_seconds() > config.HUD_STALE_AFTER_SECS:
+    """Detail-free core-monitoring readiness gate."""
+    from diabetic.utils.health import get_system_health
+
+    health = await get_system_health()
+    if not health["ready"]:
         raise HTTPException(status_code=503, detail="not ready")
     return {"status": "ready"}
 

@@ -108,13 +108,14 @@ class TestNightscoutAuthRetry(unittest.IsolatedAsyncioTestCase):
 
         client.client.get = _mock_get
 
-        insulin_list, meal_list = await client.fetch_recent_treatments(5)
+        result = await client.fetch_recent_treatments(5)
 
         self.assertGreater(
-            len(insulin_list), 0,
+            len(result.insulin), 0,
             "R1 regression: treatment data was silently dropped on 401 fallback"
         )
-        self.assertEqual(insulin_list[0].units, 5.0)
+        self.assertEqual(result.state, "ok")
+        self.assertEqual(result.insulin[0].units, 5.0)
 
     async def test_auth_retry_exhaustion_raises_not_none(self):
         """
@@ -139,8 +140,8 @@ class TestNightscoutAuthRetry(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await client.fetch_recent_glucose(5)
 
-    async def test_non_401_error_returns_empty(self):
-        """Non-401 HTTP errors must return empty lists, not raise."""
+    async def test_non_401_error_returns_degraded_result(self):
+        """Provider failure must not masquerade as a valid empty result."""
         client = _make_client(secret="short")
 
         async def _mock_get(*args, **kwargs):
@@ -150,9 +151,11 @@ class TestNightscoutAuthRetry(unittest.IsolatedAsyncioTestCase):
 
         client.client.get = _mock_get
 
-        insulin_list, meal_list = await client.fetch_recent_treatments(5)
-        self.assertEqual(insulin_list, [])
-        self.assertEqual(meal_list, [])
+        result = await client.fetch_recent_treatments(5)
+        self.assertEqual(result.state, "degraded")
+        self.assertEqual(result.insulin, [])
+        self.assertEqual(result.meals, [])
+        self.assertEqual(result.error_reason, "HTTPStatusError")
 
 
 if __name__ == "__main__":

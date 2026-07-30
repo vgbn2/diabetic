@@ -8,7 +8,6 @@ from typing import Tuple, List, Optional
 from diabetic.ml_engine.synthetic_cardiac import cardiac_synthesizer
 from diabetic.registry import GlucoseReading
 from diabetic.config import config
-from diabetic.utils.temporal import temporal_engine
 
 class MetabolicDataset(Dataset):
     """

@@ -3,8 +3,13 @@ import hashlib
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
-from diabetic.registry import GlucoseReading, InsulinDose, MealEvent
+from typing import List, Optional
+from diabetic.registry import (
+    GlucoseReading,
+    InsulinDose,
+    MealEvent,
+    TreatmentFetchResult,
+)
 from diabetic.config import config
 from diabetic import medical_constants
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
@@ -157,7 +162,7 @@ class NightscoutClient:
                 ))
         return readings
 
-    async def fetch_recent_treatments(self, count: int = 20) -> Tuple[List[InsulinDose], List[MealEvent]]:
+    async def fetch_recent_treatments(self, count: int = 20) -> TreatmentFetchResult:
         """Fetches all insulin and carb events from Nightscout within the 4-hour window."""
         endpoint = f"{self.url}/api/v1/treatments.json"
         try:
@@ -201,10 +206,20 @@ class NightscoutClient:
                         carbs=float(t['carbs'])
                     ))
 
-            return insulin_list, meal_list
+            return TreatmentFetchResult(
+                source="nightscout",
+                state="ok",
+                insulin=insulin_list,
+                meals=meal_list,
+            )
 
-        except Exception:
-            return [], []
+        except Exception as exc:
+            self.logger.warning("Treatment fetch degraded: %s", type(exc).__name__)
+            return TreatmentFetchResult(
+                source="nightscout",
+                state="degraded",
+                error_reason=type(exc).__name__,
+            )
 
     async def post_treatment(self, event_type: str, notes: str, carbs: Optional[float] = None, insulin: Optional[float] = None):
         """Writes a treatment event back to Nightscout."""
@@ -242,8 +257,13 @@ if __name__ == "__main__":
             data = await client.fetch_recent_glucose(5)
             for d in data: logger.info(f"  {d}")
             logger.info("\nFetching treatments...")
-            ins, meal = await client.fetch_recent_treatments()
-            logger.info(f"  Treatments: {len(ins)} doses, {len(meal)} meals")
+            treatments = await client.fetch_recent_treatments()
+            logger.info(
+                "  Treatments: %s doses, %s meals (%s)",
+                len(treatments.insulin),
+                len(treatments.meals),
+                treatments.state,
+            )
         except Exception as e:
             logger.error(f"Test failed: {e}")
         finally:

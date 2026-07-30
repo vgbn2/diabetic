@@ -43,8 +43,16 @@ async def status(flags: dict) -> int:
     )
     table.add_row("Snapshot Buffer", str(snap.get("snapshot_buffer")))
     table.add_row("Inference Active", str(snap.get("inference_active")))
+    table.add_row("Core Ready", str(snap.get("ready")))
+    table.add_row("Neural Ready", str(snap.get("neural_ready")))
     table.add_row("Last Reading", str(snap.get("last_reading_ts")))
     table.add_row("Last Reading Age (min)", str(snap.get("last_reading_age_mins")))
+    table.add_row("Readiness Reasons", ", ".join(snap.get("readiness_reasons") or []))
+    treatment = snap.get("treatments") or {}
+    table.add_row(
+        "Treatments",
+        f"{treatment.get('state')} ({treatment.get('source') or 'none'})",
+    )
     console.print(table)
     return 0
 

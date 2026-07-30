@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict
-from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime, timezone
 from typing import Optional, List, Literal
 
 TelemetryProvenance = Literal["real", "synthetic", "fallback"]
@@ -60,6 +60,18 @@ class MealEvent(BaseModel):
     is_dinner: bool = False
     is_snack: bool = False
     gi_type: str = "STARCH"  # "LIQUID", "STARCH", or "SNACK"
+
+
+class TreatmentFetchResult(BaseModel):
+    """Explicit treatment-ingestion state shared by all providers."""
+
+    source: str
+    state: Literal["ok", "degraded"]
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    insulin: List[InsulinDose] = Field(default_factory=list)
+    meals: List[MealEvent] = Field(default_factory=list)
+    error_reason: Optional[str] = None
+
 
 class HydrationEvent(BaseModel):
     """Represents a fluid intake event (Layer 3 - The Behavioral Engine)."""

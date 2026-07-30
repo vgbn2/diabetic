@@ -149,8 +149,8 @@ class TelegramApp:
         @wraps(func)
         async def wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
             user = update.effective_user
-            # [G3] Authorization via shared helper (patient / caregiver / registry).
-            authorized = await is_authorized(user.id, self.coordinator)
+            # Authorization is limited to the singleton patient/caregiver pair.
+            authorized = await is_authorized(user.id)
 
             if not authorized:
                 self.logger.warning(f"UNAUTHORIZED ACCESS ATTEMPT: User {user.id} ({user.username}) tried to call {func.__name__}")

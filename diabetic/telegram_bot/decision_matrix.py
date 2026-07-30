@@ -61,19 +61,35 @@ class DecisionMatrix:
     def __init__(self):
         self.config = config
 
+    @staticmethod
+    def _fresh_real_cardiac(current: MetabolicSnapshot):
+        cardiac = current.cardiac
+        if cardiac is None or cardiac.provenance != "real":
+            return None
+        timestamp = cardiac.timestamp
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        age_secs = (datetime.now(timezone.utc) - timestamp).total_seconds()
+        if age_secs < 0 or age_secs > medical_constants.STALE_DATA_TIMEOUT_SECS:
+            return None
+        return cardiac
+
     async def evaluate(self, current: MetabolicSnapshot, prediction_30m: float, audit_logger=None) -> Optional[Alert]:
         """Runs the bimodal detection logic using centralized medical constants."""
         g = current.filtered_value
         v = current.velocity
         
-        # 🔗 [CARDIAC CONSENSUS]
-        # Real-time BPM + Neural Prediction = Total Contextual Awareness
-        hr = current.bpm if current.bpm else current.predicted_hr
-        if not hr:
-            hr = self.config.PATIENT_BPM_BASELINE
-            
-        hrv = current.hrv or self.config.PATIENT_HRV_BASELINE
-        is_active = hr > (self.config.PATIENT_BPM_BASELINE * medical_constants.BPM_EXERCISE_MULTIPLIER) # Exercise Context Buffer
+        cardiac = self._fresh_real_cardiac(current)
+        hr = cardiac.bpm if cardiac else self.config.PATIENT_BPM_BASELINE
+        hrv = cardiac.hrv if cardiac else self.config.PATIENT_HRV_BASELINE
+        is_active = (
+            cardiac is not None
+            and hr
+            > (
+                self.config.PATIENT_BPM_BASELINE
+                * medical_constants.BPM_EXERCISE_MULTIPLIER
+            )
+        )
 
         # 1. CRITICAL HYPO (Current) - Never suppressed
         if g < medical_constants.HYPO_CRITICAL:
@@ -154,12 +170,8 @@ class DecisionMatrix:
                     velocity_score=current.velocity_score
                 )
 
-        # 4. CRITICAL HYPER (Current)
+        # 4. CRITICAL HYPER (Current) - Never suppressed
         if g > medical_constants.HYPER_CRITICAL:
-            dampener = await FeedbackEngine.get_dampener(audit_logger, "CRITICAL_HYPER")
-            if g < (medical_constants.HYPER_CRITICAL * dampener):
-                return None
-
             return Alert(
                 timestamp=datetime.now(timezone.utc),
                 type="CRITICAL_HYPER",

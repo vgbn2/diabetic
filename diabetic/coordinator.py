@@ -7,7 +7,13 @@ from typing import Any, List, Optional
 import numpy as np
 from collections import deque
 from diabetic.config import config
-from diabetic.registry import GlucoseReading, InsulinDose, MetabolicSnapshot, MealEvent
+from diabetic.registry import (
+    GlucoseReading,
+    InsulinDose,
+    MealEvent,
+    MetabolicSnapshot,
+    TreatmentFetchResult,
+)
 from diabetic import medical_constants
 
 from diabetic.ingestion.nightscout import NightscoutClient
@@ -116,6 +122,12 @@ class Coordinator:
         self.last_prediction_1d: list = []   # 24h circadian projection (oracle)
 
         self.last_meal: Optional[MealEvent] = None
+        self.last_provider_meal: Optional[MealEvent] = None
+        self.last_provider_insulin: Optional[InsulinDose] = None
+        self.treatment_fetch_state = "waiting"
+        self.treatment_source: Optional[str] = None
+        self.treatment_fetched_at: Optional[datetime] = None
+        self.treatment_degraded_reason: Optional[str] = None
         self.meal_window_start: Optional[datetime] = None
         self.meal_tune_pending: bool = False
         self.actual_meal_peak: float = 0.0  # FIX C2: Tracks Highest Observed Glucose value during meal window
@@ -162,11 +174,44 @@ class Coordinator:
 # 📡 [DATA SYNTHESIS PIPELINE]
 # =Focus: Signal Quality, Smoothing (Kalman), and Multi-Stream Ingestion
 # =============================================================================
-    async def _fetch_recent_treatments(self, count: int = 10):
-        """Fetch treatments from Mongo when direct access is available; otherwise use REST."""
+    async def _fetch_recent_treatments(self, count: int = 10) -> TreatmentFetchResult:
+        """Fetch treatments with REST fallback when direct Mongo is degraded."""
         if getattr(self.mongo, "treatments", None) is not None:
-            return await self.mongo.fetch_recent_treatments(count=count)
-        return await self.client.fetch_recent_treatments(count=count)
+            try:
+                primary = await self.mongo.fetch_recent_treatments(count=count)
+            except Exception as exc:
+                primary = TreatmentFetchResult(
+                    source="mongo",
+                    state="degraded",
+                    error_reason=type(exc).__name__,
+                )
+            if primary.state == "ok":
+                return primary
+
+            try:
+                secondary = await self.client.fetch_recent_treatments(count=count)
+            except Exception as exc:
+                secondary = TreatmentFetchResult(
+                    source="nightscout",
+                    state="degraded",
+                    error_reason=type(exc).__name__,
+                )
+            if secondary.state == "ok":
+                return secondary
+            return TreatmentFetchResult(
+                source="mongo+nightscout",
+                state="degraded",
+                error_reason="all_treatment_providers_degraded",
+            )
+
+        try:
+            return await self.client.fetch_recent_treatments(count=count)
+        except Exception as exc:
+            return TreatmentFetchResult(
+                source="nightscout",
+                state="degraded",
+                error_reason=type(exc).__name__,
+            )
 
     @staticmethod
     def _latest_treatment(value: Any, expected_type: type):
@@ -232,15 +277,22 @@ class Coordinator:
             results = await asyncio.gather(tr_task, hr_task, we_task, ms_task, return_exceptions=True)
 
             tr_res = results[0]
-            if not isinstance(tr_res, Exception) and isinstance(tr_res, tuple):
-                ns_insulin, ns_meal = tr_res
-                ns_insulin = self._latest_treatment(ns_insulin, InsulinDose)
-                ns_meal = self._latest_treatment(ns_meal, MealEvent)
-                snapshot.last_insulin = ns_insulin
-                snapshot.last_meal = self._active_meal(ns_meal)
+            if isinstance(tr_res, TreatmentFetchResult):
+                self._apply_treatment_result(snapshot, tr_res)
             else:
-                self.logger.warning(f"Nightscout treatment fetch failed: {tr_res}")
-                snapshot.last_meal = self.last_meal
+                reason = (
+                    type(tr_res).__name__
+                    if isinstance(tr_res, Exception)
+                    else "invalid_treatment_result"
+                )
+                self._apply_treatment_result(
+                    snapshot,
+                    TreatmentFetchResult(
+                        source="coordinator",
+                        state="degraded",
+                        error_reason=reason,
+                    ),
+                )
 
             hr_res = results[1]
             if not isinstance(hr_res, Exception):
@@ -288,7 +340,14 @@ class Coordinator:
 
         except Exception as e:
             self.logger.warning(f"In-depth ingestion failed: {e}. Falling back to defaults.")
-            snapshot.last_meal = self.last_meal
+            self._apply_treatment_result(
+                snapshot,
+                TreatmentFetchResult(
+                    source="coordinator",
+                    state="degraded",
+                    error_reason=type(e).__name__,
+                ),
+            )
             snapshot.cardiac = None
             snapshot.is_sick = False
 
@@ -470,6 +529,59 @@ class Coordinator:
                 return self.last_meal
 
         return ns_meal
+
+    @staticmethod
+    def _is_active_treatment(event, window_mins: float) -> bool:
+        if event is None:
+            return False
+        timestamp = event.timestamp
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        age_mins = (datetime.now(timezone.utc) - timestamp).total_seconds() / 60.0
+        return 0.0 <= age_mins <= window_mins
+
+    def _active_provider_insulin(self) -> Optional[InsulinDose]:
+        dose = self.last_provider_insulin
+        if dose is None:
+            return None
+        window_mins = (
+            medical_constants.BASAL_DURATION_HOURS * 60.0
+            if dose.type.upper() == "LONG"
+            else medical_constants.INSULIN_ACTION_WINDOW_MINS
+        )
+        return dose if self._is_active_treatment(dose, window_mins) else None
+
+    def _active_provider_meal(self) -> Optional[MealEvent]:
+        meal = self.last_provider_meal
+        return (
+            meal
+            if self._is_active_treatment(meal, medical_constants.MEAL_WINDOW_MINS)
+            else None
+        )
+
+    def _apply_treatment_result(
+        self,
+        snapshot: MetabolicSnapshot,
+        result: TreatmentFetchResult,
+    ) -> None:
+        self.treatment_fetch_state = result.state
+        self.treatment_source = result.source
+        self.treatment_fetched_at = result.fetched_at
+        self.treatment_degraded_reason = result.error_reason
+
+        if result.state == "ok":
+            self.last_provider_insulin = self._latest_treatment(
+                result.insulin, InsulinDose
+            )
+            self.last_provider_meal = self._latest_treatment(result.meals, MealEvent)
+        else:
+            self.logger.warning(
+                "Treatment context degraded (%s): retaining bounded last-known-good state",
+                result.error_reason or "unknown",
+            )
+
+        snapshot.last_insulin = self._active_provider_insulin()
+        snapshot.last_meal = self._active_meal(self._active_provider_meal())
 
     async def _dispatch_alert(self, alert: Alert):
         """Sends alert to Telegram and logger."""

@@ -2,7 +2,6 @@ import numpy as np
 from datetime import datetime, timezone
 from typing import Optional
 from diabetic.config import config
-from diabetic.utils.temporal import temporal_engine
 
 class ScalingEngine:
     """
@@ -67,7 +66,7 @@ class ScalingEngine:
             config.PATIENT_FRUCTOSAMIN / 500.0,
             1.0 if config.PATIENT_INFLAMMATORY_MARKER else 0.0,
             1.0 if is_sick else 0.0, # is_sick (Dynamic state flag)
-            temporal_engine.get_multiplier(now),
+            1.0,
             temp_scaled, humid_scaled, aqi_scaled
         ]
         return np.array(vector, dtype=np.float32)

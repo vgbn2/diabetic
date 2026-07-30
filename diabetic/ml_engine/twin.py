@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Tuple, Optional
 from diabetic.registry import MealEvent, InsulinDose, MetabolicSnapshot
 from diabetic import medical_constants as mc
-from diabetic.utils.temporal import temporal_engine
 from diabetic.utils.schedule import schedule_manager
 
 # =============================================================================
@@ -85,10 +84,7 @@ class DigitalTwin:
             luteal_factor = 0.5 * (1 + np.sin(cycle_pos - np.pi/2))
             resistance *= (1.0 + (mc.LUTEAL_RESISTANCE_MULT - 1.0) * luteal_factor)
             
-        # 4. Temporal Intelligence (Weekends/Holidays)
-        resistance *= temporal_engine.get_multiplier(timestamp)
-        
-        # 5. Behavioral Ground Truth (Schedule Overrides)
+        # 4. Behavioral Ground Truth (Schedule Overrides)
         event = schedule_manager.get_event_at(timestamp)
         if event:
             resistance *= event.sensitivity_mult

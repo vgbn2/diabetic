@@ -4,7 +4,8 @@ diabetic/auth/dependencies.py
 FastAPI auth dependency for the TWA bridge. Reads the `Authorization` header:
     Authorization: tma <initData>     -> verified Telegram Mini App identity
     Authorization: dev <token>        -> dev bypass, only when config.TWA_DEV_TOKEN set
-then authorizes against patient/caregiver/registry. Raises 401/403.
+then authorizes against the singleton patient/caregiver allowlist. Raises
+401/403.
 """
 import hmac
 import logging
@@ -20,7 +21,6 @@ logger = logging.getLogger("Bio-Quant.Auth")
 async def require_twa_user(authorization: str = Header(default="")) -> dict:
     """Guard dependency; returns the authenticated Telegram user dict."""
     from diabetic.config import config
-    from diabetic.telegram_bot import twa_api  # lazy: COORDINATOR_REF lives there
 
     scheme, _, credential = authorization.partition(" ")
     scheme = scheme.lower().strip()
@@ -49,8 +49,7 @@ async def require_twa_user(authorization: str = Header(default="")) -> dict:
     except InitDataError as e:
         raise HTTPException(status_code=401, detail=f"Invalid Telegram initData: {e}")
 
-    coordinator = getattr(twa_api, "COORDINATOR_REF", None)
-    if not await is_authorized(user["id"], coordinator):
+    if not await is_authorized(user["id"]):
         logger.warning("TWA auth: user %s is not patient/caregiver", user.get("id"))
         raise HTTPException(status_code=403, detail="Not an authorized patient or caregiver")
 

@@ -21,6 +21,7 @@ from bson import json_util
 from dotenv import load_dotenv
 from pymongo import MongoClient, ReplaceOne
 
+from diabetic.ingestion.offline.historical import verify_nightscout_archive
 from diabetic.ingestion.timestamps import treatment_timestamp
 
 WINDOWED_COLLECTIONS = ("entries", "treatments", "devicestatus", "activity")
@@ -96,7 +97,13 @@ def export_database(uri: str, destination: Path, cutoff: datetime) -> dict:
 
 
 def stage_restore(uri: str, source: Path) -> dict:
-    manifest = json.loads((source / "manifest.json").read_text())
+    integrity = verify_nightscout_archive(source)
+    if not integrity["ok"]:
+        raise RuntimeError(
+            "source archive failed integrity verification: "
+            + "; ".join(integrity["errors"])
+        )
+    manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
     client, target = _database(uri)
     staging_name = f"{target.name}_staging_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
     staging = client[staging_name]

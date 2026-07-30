@@ -1,16 +1,16 @@
-import sys
 from pathlib import Path
 from datetime import datetime
+import sys
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parents[2]))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 
 from diabetic.ingestion.offline.normalize_ottai_share import normalize_share_report
 from diabetic.ingestion.offline.high_res_parser import HighResGlucoseParser
 
-def process_historical():
-    data_dir = Path("data/test/ottai_data")
-    out_dir = Path("storage/data/processed")
+def process_historical() -> int:
+    data_dir = ROOT / "storage/raw/test/ottai_data"
+    out_dir = ROOT / "storage/data/processed"
     out_dir.mkdir(parents=True, exist_ok=True)
     
     # (filename, output_csv, date_range)
@@ -23,12 +23,15 @@ def process_historical():
          (datetime(2026, 3, 22), datetime(2026, 4, 8))),
     ]
     
+    missing = [filename for filename, _, _ in files if not (data_dir / filename).is_file()]
+    if missing:
+        for filename in missing:
+            print(f"Missing required input: {data_dir / filename}", file=sys.stderr)
+        return 1
+
     for filename, out_name, date_range in files:
         target = data_dir / filename
-        if not target.exists():
-            print(f"Skipping {filename}: File not found.")
-            continue
-            
+
         print(f"\n[batch] Processing {filename}...")
         
         # 1. Re-normalize (overwriting old _normalized version if it exists)
@@ -42,6 +45,7 @@ def process_historical():
         final_out = out_dir / out_name
         parser.save_csv(final_out, date_range=date_range)
         print(f"[batch] Success! Saved to {final_out}")
+    return 0
 
 if __name__ == "__main__":
-    process_historical()
+    raise SystemExit(process_historical())
