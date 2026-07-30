@@ -65,6 +65,7 @@ venv.bak/
 # Project specific
 .gsd/
 .agent/
+.agents/
 graphify-out/
 mempalace/
 mempalace.yaml
