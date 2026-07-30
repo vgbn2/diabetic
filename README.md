@@ -123,8 +123,6 @@ See the [Local Nightscout Runbook](docs/local-nightscout.md) for LAN binding, mi
 | [Web Auth & API Spec](docs/engineering/architecture.md) | HMAC auth flow, endpoint maps, security contracts |
 | [Data Provenance & Verification](docs/data-provenance.md) | Provenance contracts, archives, privacy guidelines |
 | [Local Nightscout Runbook](docs/local-nightscout.md) | Operator guide for local container deployments |
-| [Workspace Handoff](workspace/HANDOFF.md) | Verification state, remaining deployment gates |
-
 ---
 
 ## Security & Medical Disclaimer
