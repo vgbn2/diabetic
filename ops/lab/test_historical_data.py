@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import tempfile
@@ -12,6 +13,7 @@ from unittest.mock import patch
 from diabetic import medical_constants
 from diabetic.config import config
 from diabetic.ingestion.offline.historical import (
+    NIGHTSCOUT_ARCHIVE_COLLECTIONS,
     HistoricalDataError,
     HistoricalReplayReader,
     verify_csv_directory,
@@ -22,6 +24,21 @@ from diabetic.ingestion.offline.historical import (
 FIXTURES = Path(__file__).parent / "fixtures"
 ARCHIVE_FIXTURE = FIXTURES / "historical_archive"
 CSV_FIXTURE = FIXTURES / "historical_chapter.csv"
+
+
+def _write_collection(archive: Path, name: str, documents: list[dict]) -> None:
+    body = "".join(
+        json.dumps(document, separators=(",", ":")) + "\n"
+        for document in documents
+    ).encode()
+    (archive / f"{name}.jsonl").write_bytes(body)
+    manifest_path = archive / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["collections"][name] = {
+        "count": len(documents),
+        "sha256": hashlib.sha256(body).hexdigest(),
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
 
 class TestHistoricalArchiveVerification(unittest.TestCase):
@@ -78,6 +95,134 @@ class TestHistoricalArchiveVerification(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["collections"]["entries"]["parse_errors"], 1)
 
+    def test_non_object_manifest_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            (archive / "manifest.json").write_text("[]", encoding="utf-8")
+
+            report = verify_nightscout_archive(archive)
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["errors"], ["manifest must be an object"])
+
+    def test_malformed_collection_metadata_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            manifest_path = archive / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["collections"]["entries"] = {"count": "2", "sha256": "bad"}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            report = verify_nightscout_archive(archive)
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "entries: expected count must be a non-negative integer",
+            report["errors"],
+        )
+
+    def test_malformed_sha256_metadata_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            manifest_path = archive / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["collections"]["entries"]["sha256"] = "BAD"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            report = verify_nightscout_archive(archive)
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "entries: expected sha256 must be 64 lowercase hex characters",
+            report["errors"],
+        )
+
+    def test_unsafe_collection_name_and_undeclared_file_fail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            manifest_path = archive / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["collections"]["../outside"] = {
+                "count": 0,
+                "sha256": "0" * 64,
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            (archive / "unexpected.jsonl").write_text("", encoding="utf-8")
+
+            report = verify_nightscout_archive(archive)
+
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            "manifest: invalid collection name '../outside'", report["errors"]
+        )
+        self.assertIn("unexpected.jsonl: undeclared JSONL file", report["errors"])
+
+    def test_disallowed_collections_fail_without_undeclared_noise(self):
+        for name in ("roles", "auth", "sessions", "tokens", "custom_safe"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / "archive"
+                shutil.copytree(ARCHIVE_FIXTURE, archive)
+                _write_collection(archive, name, [{"_id": f"synthetic-{name}"}])
+
+                report = verify_nightscout_archive(archive)
+
+                self.assertFalse(report["ok"])
+                self.assertIn(
+                    f"manifest: unsupported collection '{name}'", report["errors"]
+                )
+                self.assertNotIn(
+                    f"{name}.jsonl: undeclared JSONL file", report["errors"]
+                )
+
+    def test_missing_or_null_identity_fails(self):
+        for identity in ("missing", None):
+            with self.subTest(identity=identity), tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / "archive"
+                shutil.copytree(ARCHIVE_FIXTURE, archive)
+                entries = archive / "entries.jsonl"
+                documents = [
+                    json.loads(line)
+                    for line in entries.read_text(encoding="utf-8").splitlines()
+                ]
+                if identity == "missing":
+                    documents[0].pop("_id")
+                else:
+                    documents[0]["_id"] = None
+                body = "".join(
+                    json.dumps(document, separators=(",", ":")) + "\n"
+                    for document in documents
+                ).encode()
+                entries.write_bytes(body)
+                manifest_path = archive / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["collections"]["entries"]["sha256"] = hashlib.sha256(
+                    body
+                ).hexdigest()
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+                report = verify_nightscout_archive(archive)
+
+                self.assertFalse(report["ok"])
+                self.assertIn(
+                    "entries: missing record identity at line 1", report["errors"]
+                )
+
+    def test_all_canonical_collection_names_are_supported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            for name in NIGHTSCOUT_ARCHIVE_COLLECTIONS - {"entries"}:
+                _write_collection(archive, name, [])
+
+            report = verify_nightscout_archive(archive)
+
+        self.assertTrue(report["ok"], report["errors"])
+        self.assertEqual(set(report["collections"]), NIGHTSCOUT_ARCHIVE_COLLECTIONS)
+
 
 class TestHistoricalReplay(unittest.TestCase):
     def test_archive_replay_uses_production_unit_normalization(self):
@@ -129,6 +274,59 @@ class TestHistoricalReplay(unittest.TestCase):
 
 
 class TestStageRestoreIntegrity(unittest.TestCase):
+    def test_disallowed_collections_fail_before_database_connection(self):
+        from scripts.ops import migrate_nightscout
+
+        for name in ("roles", "auth", "sessions", "tokens", "custom_safe"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / "archive"
+                shutil.copytree(ARCHIVE_FIXTURE, archive)
+                _write_collection(archive, name, [{"_id": f"synthetic-{name}"}])
+
+                with patch.object(migrate_nightscout, "_database") as database:
+                    with self.assertRaises(RuntimeError):
+                        migrate_nightscout.stage_restore(
+                            "mongodb://localhost/test", archive
+                        )
+
+                database.assert_not_called()
+
+    def test_missing_or_null_identity_fails_before_database_connection(self):
+        from scripts.ops import migrate_nightscout
+
+        for identity in ("missing", None):
+            with self.subTest(identity=identity), tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / "archive"
+                shutil.copytree(ARCHIVE_FIXTURE, archive)
+                entries = archive / "entries.jsonl"
+                documents = [
+                    json.loads(line)
+                    for line in entries.read_text(encoding="utf-8").splitlines()
+                ]
+                if identity == "missing":
+                    documents[0].pop("_id")
+                else:
+                    documents[0]["_id"] = None
+                body = "".join(
+                    json.dumps(document, separators=(",", ":")) + "\n"
+                    for document in documents
+                ).encode()
+                entries.write_bytes(body)
+                manifest_path = archive / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["collections"]["entries"]["sha256"] = hashlib.sha256(
+                    body
+                ).hexdigest()
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+                with patch.object(migrate_nightscout, "_database") as database:
+                    with self.assertRaises(RuntimeError):
+                        migrate_nightscout.stage_restore(
+                            "mongodb://localhost/test", archive
+                        )
+
+                database.assert_not_called()
+
     def test_corruption_fails_before_database_connection(self):
         from scripts.ops import migrate_nightscout
 
@@ -142,6 +340,79 @@ class TestStageRestoreIntegrity(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+
+            with patch.object(migrate_nightscout, "_database") as database:
+                with self.assertRaises(RuntimeError):
+                    migrate_nightscout.stage_restore(
+                        "mongodb://localhost/test", archive
+                    )
+
+        database.assert_not_called()
+
+    def test_symlinked_manifest_fails_before_database_connection(self):
+        from scripts.ops import migrate_nightscout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            external = Path(temporary) / "manifest.json"
+            external.write_bytes((archive / "manifest.json").read_bytes())
+            (archive / "manifest.json").unlink()
+            (archive / "manifest.json").symlink_to(external)
+
+            with patch.object(migrate_nightscout, "_database") as database:
+                with self.assertRaises(RuntimeError):
+                    migrate_nightscout.stage_restore(
+                        "mongodb://localhost/test", archive
+                    )
+
+        database.assert_not_called()
+
+    def test_malformed_manifest_fails_before_database_connection(self):
+        from scripts.ops import migrate_nightscout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            manifest_path = archive / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["collections"]["entries"]["count"] = -1
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with patch.object(migrate_nightscout, "_database") as database:
+                with self.assertRaises(RuntimeError):
+                    migrate_nightscout.stage_restore(
+                        "mongodb://localhost/test", archive
+                    )
+
+        database.assert_not_called()
+
+    def test_undeclared_jsonl_fails_before_database_connection(self):
+        from scripts.ops import migrate_nightscout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            (archive / "unexpected.jsonl").write_text("", encoding="utf-8")
+
+            with patch.object(migrate_nightscout, "_database") as database:
+                with self.assertRaises(RuntimeError):
+                    migrate_nightscout.stage_restore(
+                        "mongodb://localhost/test", archive
+                    )
+
+        database.assert_not_called()
+
+    def test_symlinked_jsonl_fails_before_database_connection(self):
+        from scripts.ops import migrate_nightscout
+
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive"
+            shutil.copytree(ARCHIVE_FIXTURE, archive)
+            external = Path(temporary) / "external.jsonl"
+            external.write_bytes((archive / "entries.jsonl").read_bytes())
+            (archive / "entries.jsonl").unlink()
+            (archive / "entries.jsonl").symlink_to(external)
 
             with patch.object(migrate_nightscout, "_database") as database:
                 with self.assertRaises(RuntimeError):

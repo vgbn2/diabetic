@@ -40,6 +40,7 @@ Refresh the ignored manual-evidence manifest only after confirming the target:
   --write-manifest --json
 ```
 
-The verifier fails closed on hash, count, JSON, schema, timestamp-order, and
-unapproved duplicate-record errors. The migration restore path runs archive
-verification before connecting to the target database.
+The verifier fails closed on unsupported collections, hash, count, JSON,
+record identity, schema, timestamp-order, and unapproved duplicate-record
+errors. The migration restore path runs archive verification before connecting
+to the target database.

@@ -38,11 +38,26 @@ SOURCE_MONGODB_URI='mongodb+srv://...' \
   .venv/bin/python scripts/ops/migrate_nightscout.py export \
   --since 2026-06-01 \
   --destination storage/migrations/from-2026-06-01
-
-.venv/bin/python scripts/ops/migrate_nightscout.py stage-restore \
-  --source storage/migrations/from-2026-06-01
 ```
 
-Restore always targets a new staging database. Compare its counts with the
-manifest before any manual cutover. Take a local backup with
+Archive verification accepts only the canonical Nightscout data collections and
+requires every record to have a MongoDB identity. Hashes, counts, schema, paths,
+and identities are checked before the restore opens a database connection.
+
+After the Compose runtime is healthy and an operator has explicitly authorized a
+staging restore, run:
+
+```bash
+scripts/ops/stage_restore_local_nightscout.sh \
+  storage/migrations/from-2026-06-01
+```
+
+The wrapper mounts only the selected archive read-only into a profile-gated
+one-off container and does not start dependencies; the existing MongoDB service
+must already be healthy. MongoDB remains private to the Compose network; port
+27017 is not published. Restore always creates a new timestamped staging
+database and prints aggregate counts only. It does not cut over or replace the
+active
+`nightscout` database. Compare the staged counts with the verified manifest
+before any separately authorized cutover. Take a local backup with
 `scripts/ops/backup_local_nightscout.sh`.

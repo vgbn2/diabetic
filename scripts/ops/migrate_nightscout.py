@@ -21,11 +21,13 @@ from bson import json_util
 from dotenv import load_dotenv
 from pymongo import MongoClient, ReplaceOne
 
-from diabetic.ingestion.offline.historical import verify_nightscout_archive
+from diabetic.ingestion.offline.historical import (
+    NIGHTSCOUT_EXCLUDED_COLLECTIONS,
+    NIGHTSCOUT_REFERENCE_COLLECTIONS,
+    NIGHTSCOUT_WINDOWED_COLLECTIONS,
+    verify_nightscout_archive,
+)
 from diabetic.ingestion.timestamps import treatment_timestamp
-
-WINDOWED_COLLECTIONS = ("entries", "treatments", "devicestatus", "activity")
-REFERENCE_COLLECTIONS = ("profile", "food")
 
 
 def _database(uri: str):
@@ -66,18 +68,23 @@ def export_database(uri: str, destination: Path, cutoff: datetime) -> dict:
         "cutoff": cutoff.isoformat(),
         "database": database.name,
         "collections": {},
-        "excluded": ["auth", "sessions", "tokens", "roles"],
+        "excluded": list(NIGHTSCOUT_EXCLUDED_COLLECTIONS),
     }
     try:
         existing = set(database.list_collection_names())
-        for name in (*WINDOWED_COLLECTIONS, *REFERENCE_COLLECTIONS):
+        for name in (
+            *NIGHTSCOUT_WINDOWED_COLLECTIONS,
+            *NIGHTSCOUT_REFERENCE_COLLECTIONS,
+        ):
             if name not in existing:
                 continue
             output = partial / f"{name}.jsonl"
             digest = hashlib.sha256()
             count = 0
             with output.open("wb") as stream:
-                collection_cutoff = cutoff if name in WINDOWED_COLLECTIONS else None
+                collection_cutoff = (
+                    cutoff if name in NIGHTSCOUT_WINDOWED_COLLECTIONS else None
+                )
                 for document in _iter_documents(database[name], collection_cutoff):
                     line = json_util.dumps(document, json_options=json_util.CANONICAL_JSON_OPTIONS)
                     encoded = (line + "\n").encode()
@@ -157,7 +164,9 @@ def main() -> int:
         result = export_database(uri, args.destination, cutoff)
         print(json.dumps({"status": "exported", **result}, indent=2))
     else:
-        uri = os.environ.get("TARGET_MONGODB_URI", "mongodb://localhost:27017/nightscout")
+        uri = os.environ.get("TARGET_MONGODB_URI")
+        if not uri:
+            raise SystemExit("TARGET_MONGODB_URI is required")
         result = stage_restore(uri, args.source)
         print(json.dumps(result, indent=2))
     return 0

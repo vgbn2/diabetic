@@ -10,6 +10,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,22 @@ from diabetic.registry import GlucoseReading
 
 class HistoricalDataError(ValueError):
     """Raised when historical data fails an integrity or schema contract."""
+
+
+NIGHTSCOUT_WINDOWED_COLLECTIONS = (
+    "entries",
+    "treatments",
+    "devicestatus",
+    "activity",
+)
+NIGHTSCOUT_REFERENCE_COLLECTIONS = ("profile", "food")
+NIGHTSCOUT_ARCHIVE_COLLECTIONS = frozenset(
+    (*NIGHTSCOUT_WINDOWED_COLLECTIONS, *NIGHTSCOUT_REFERENCE_COLLECTIONS)
+)
+NIGHTSCOUT_EXCLUDED_COLLECTIONS = ("auth", "sessions", "tokens", "roles")
+
+_COLLECTION_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def sha256_file(path: Path) -> str:
@@ -70,6 +87,14 @@ def verify_nightscout_archive(root: str | Path) -> dict:
     archive = Path(root)
     manifest_path = archive / "manifest.json"
     errors: list[str] = []
+    if manifest_path.is_symlink():
+        return {
+            "kind": "nightscout_archive",
+            "ok": False,
+            "root": str(archive),
+            "errors": ["manifest: file must not be a symlink"],
+            "collections": {},
+        }
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -78,6 +103,15 @@ def verify_nightscout_archive(root: str | Path) -> dict:
             "ok": False,
             "root": str(archive),
             "errors": [f"manifest: {exc.__class__.__name__}"],
+            "collections": {},
+        }
+
+    if not isinstance(manifest, dict):
+        return {
+            "kind": "nightscout_archive",
+            "ok": False,
+            "root": str(archive),
+            "errors": ["manifest must be an object"],
             "collections": {},
         }
 
@@ -91,14 +125,45 @@ def verify_nightscout_archive(root: str | Path) -> dict:
             "collections": {},
         }
 
+    declared_files: set[str] = set()
     reports: dict[str, dict] = {}
     for name, expected in sorted(collections.items()):
-        path = archive / f"{name}.jsonl"
+        if not isinstance(name, str) or not _COLLECTION_NAME.fullmatch(name):
+            errors.append(f"manifest: invalid collection name {name!r}")
+            continue
+
+        filename = f"{name}.jsonl"
+        declared_files.add(filename)
+        if name not in NIGHTSCOUT_ARCHIVE_COLLECTIONS:
+            errors.append(f"manifest: unsupported collection {name!r}")
+            continue
+        if not isinstance(expected, dict):
+            errors.append(f"{name}: manifest metadata must be an object")
+            continue
+
+        expected_count = expected.get("count")
+        expected_sha256 = expected.get("sha256")
+        if (
+            not isinstance(expected_count, int)
+            or isinstance(expected_count, bool)
+            or expected_count < 0
+        ):
+            errors.append(f"{name}: expected count must be a non-negative integer")
+            continue
+        if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(
+            expected_sha256
+        ):
+            errors.append(
+                f"{name}: expected sha256 must be 64 lowercase hex characters"
+            )
+            continue
+
+        path = archive / filename
         report = {
             "count": 0,
-            "expected_count": expected.get("count"),
+            "expected_count": expected_count,
             "sha256": None,
-            "expected_sha256": expected.get("sha256"),
+            "expected_sha256": expected_sha256,
             "hash_ok": False,
             "parse_errors": 0,
             "duplicate_records": 0,
@@ -108,6 +173,9 @@ def verify_nightscout_archive(root: str | Path) -> dict:
             "last_timestamp": None,
         }
         reports[name] = report
+        if path.is_symlink():
+            errors.append(f"{name}: JSONL file must not be a symlink")
+            continue
         if not path.is_file():
             errors.append(f"{name}: missing JSONL file")
             continue
@@ -134,11 +202,17 @@ def verify_nightscout_archive(root: str | Path) -> dict:
                     errors.append(f"{name}: invalid record at line {line_number}")
                     continue
 
-                identity = str(document.get("_id", ""))
-                if identity:
-                    if identity in identities:
-                        report["duplicate_records"] += 1
-                    identities.add(identity)
+                raw_identity = document.get("_id")
+                if raw_identity is None:
+                    report["parse_errors"] += 1
+                    errors.append(
+                        f"{name}: missing record identity at line {line_number}"
+                    )
+                    continue
+                identity = str(raw_identity)
+                if identity in identities:
+                    report["duplicate_records"] += 1
+                identities.add(identity)
 
                 if name == "entries":
                     try:
@@ -169,6 +243,10 @@ def verify_nightscout_archive(root: str | Path) -> dict:
             errors.append(f"{name}: duplicate record identities")
         if name == "entries" and not report["timestamps_monotonic"]:
             errors.append("entries: timestamps are not monotonic")
+
+    actual_files = {path.name for path in archive.glob("*.jsonl")}
+    for filename in sorted(actual_files - declared_files):
+        errors.append(f"{filename}: undeclared JSONL file")
 
     return {
         "kind": "nightscout_archive",
