@@ -177,15 +177,26 @@ async def readyz():
 
 @app.post("/api/v1/calibration", dependencies=[Depends(require_twa_user)])
 async def update_calibration(traits: dict):
-    """Allows the user to update Bio-Traits (Weight, Age, Sensitivity) via GUI."""
+    """Persist allowed profile traits without changing active runtime state."""
     if not COORDINATOR_REF:
          raise HTTPException(status_code=503, detail="Engine Offline")
-    
-    # Logic: Update VesselRegistry and re-sync Twin
-    success = await COORDINATOR_REF.vessel_registry.update_user_traits(config.USER_ID, traits)
+
+    success = await COORDINATOR_REF.vessel_registry.update_user_traits(
+        config.USER_ID, traits
+    )
     if success:
-        return {"status": "success", "message": "Bio-Traits Recalibrated"}
-    return {"status": "error", "message": "Profile not found or no valid fields"}
+        return {
+            "status": "success",
+            "stored": True,
+            "applied_to_runtime": False,
+            "message": "Bio-traits saved. Active forecasts are unchanged.",
+        }
+    return {
+        "status": "error",
+        "stored": False,
+        "applied_to_runtime": False,
+        "message": "Profile not found or no valid fields",
+    }
 
 def start_api(coordinator_instance):
     """Helper to launch the API in a background thread or separate process."""

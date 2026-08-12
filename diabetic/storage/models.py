@@ -2,7 +2,8 @@
 diabetic/storage/models.py
 
 SQLAlchemy ORM models for the Bio-Quant Vessel Registry.
-Defines multi-tenant schema: User, BioTraits, CulturalMarkers, MedicalStates.
+Defines the current Telegram-keyed singleton profile schema: User, BioTraits,
+CulturalMarkers, and MedicalStates. This schema is not a patient-isolation boundary.
 """
 from datetime import datetime
 from typing import Optional
@@ -15,7 +16,7 @@ class Base(DeclarativeBase):
 
 
 class User(Base):
-    """Primary identity record. Keyed by Telegram ID."""
+    """Current profile record keyed by Telegram ID, not canonical patient identity."""
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

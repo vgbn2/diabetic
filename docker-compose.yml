@@ -70,6 +70,7 @@ services:
       NIGHTSCOUT_URL: http://nightscout:1337
       MONGO_URI: mongodb://mongodb:27017/nightscout
       MONGODB_URI: ""
+      DATABASE_URL: sqlite+aiosqlite:////app/storage/vessel_registry.db
       BIO_AUTO_TRAIN_ENABLED: ${BIO_AUTO_TRAIN_ENABLED:-false}
     volumes:
       - bio_quant_storage:/app/storage

@@ -27,7 +27,8 @@ _ALLOWED_TRAIT_FIELDS = frozenset(
 
 class VesselRegistry:
     """
-    Async service for managing per-user metabolic profiles.
+    Async service for the current Telegram-keyed profile records.
+    Registry membership is not authorization or clinical runtime isolation.
     All methods are non-blocking — safe to call from the coordinator event loop.
     """
 

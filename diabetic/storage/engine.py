@@ -79,9 +79,10 @@ async def init_db() -> None:
 
 
 async def close_db() -> None:
-    """Gracefully dispose the engine connection pool on shutdown."""
-    global _engine
+    """Dispose the engine and clear the session factory for a clean reopen."""
+    global _engine, _session_factory
     if _engine is not None:
         await _engine.dispose()
-        _engine = None
         logger.info("[Storage] Engine disposed.")
+    _engine = None
+    _session_factory = None

@@ -94,4 +94,9 @@ sequenceDiagram
 
 ## 📌 Implementation Verification & Governance
 
+Bio-Quant currently runs one patient pipeline. The selected shared multi-tenant
+future and its patient UUID, process isolation, failure, and capacity gates are
+defined in [tenancy-and-identity.md](engineering/tenancy-and-identity.md). That
+contract is a roadmap, not current multi-patient capability.
+
 Refer to [workspace/HANDOFF.md](../workspace/HANDOFF.md) for current verified execution state, test baseline coverage, and deployment promotion prerequisites.

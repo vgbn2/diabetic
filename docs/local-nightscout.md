@@ -18,6 +18,24 @@ The machine-readable health output reports `ready` for core monitoring and
 Kinematic fallback can operate when core readiness is true and neural readiness
 is false.
 
+## Local profile persistence
+
+Compose sets the Vessel Registry `DATABASE_URL` to
+`sqlite+aiosqlite:////app/storage/vessel_registry.db`. The file is therefore inside
+the `bio_quant_storage` volume mounted at `/app/storage`, alongside other durable
+local application state. The Docker build excludes database files, so a new volume
+starts with an empty Registry schema and the configured `TELEGRAM_CHAT_ID` plus
+patient traits are imported idempotently from `.env` at core startup.
+
+Direct host launches keep the existing module-local fallback unless
+`DATABASE_URL` is set explicitly. Compose does not copy or overwrite an ignored
+checkout database at `diabetic/storage/vessel_registry.db`. An external PostgreSQL
+or test database remains selectable through the same `DATABASE_URL` owner.
+
+Static Compose inspection and a SQLite close/reopen test prove the configured file
+path and file-level persistence contract. They do not prove survival across an
+actual container recreation; that remains a separate runtime qualification gate.
+
 For access from a phone or another LAN device, set
 `NIGHTSCOUT_BIND_ADDRESS=0.0.0.0` only on a trusted network, keep
 `AUTH_DEFAULT_ROLES=denied`, use a strong secret, and restrict port 1337 with

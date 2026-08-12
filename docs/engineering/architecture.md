@@ -1,6 +1,10 @@
 # Bio-Quant — Architecture (web + auth)
 
-Updated: 2026-07-24 · Scope: personal (patient + caregiver), single pipeline.
+Updated: 2026-08-12 · Current scope: personal (patient + caregiver), single pipeline.
+
+The selected future target is a shared multi-tenant service, but no second patient
+is supported today. See [tenancy-and-identity.md](tenancy-and-identity.md) for the
+patient UUID, isolation, process, and scale gates that must precede onboarding.
 
 ## Domains
 ```
@@ -71,7 +75,12 @@ Outside Telegram (plain browser) there is no `initData`, so `auth.js` redirects 
   for artifact-shape compatibility; weekends and holidays do not affect alerts
   or forecasts.
 
-## Not yet (future, by design)
-- Multi-user / per-user pipelines / Supabase RLS (DB schema is already multi-tenant).
-- A GET endpoint to pre-fill settings (today the form posts new values only).
-- Per-role patient/caregiver permissions beyond the current shared access policy.
+## Profile and tenancy limits
+- The current Registry schema is Telegram-keyed profile storage, not a multi-tenant
+  isolation boundary.
+- Saving calibration persists Registry values only. Active twin, forecaster, and
+  CNN static inputs continue to use process configuration; restart alone does not
+  activate Registry values.
+- Multi-user pipelines, canonical patient UUIDs, versioned profile activation, and
+  per-role access remain gated by the tenancy contract.
+- A GET endpoint to pre-fill settings is not implemented.
