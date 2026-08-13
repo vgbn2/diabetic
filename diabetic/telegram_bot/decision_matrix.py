@@ -1,7 +1,10 @@
+from dataclasses import dataclass
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from pydantic import BaseModel
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
 from diabetic.registry import MetabolicSnapshot, GlucoseReading
 from diabetic import medical_constants
 from diabetic.config import config
@@ -14,6 +17,7 @@ class AlertSeverity(Enum):
     EMERGENCY = "EMERGENCY"
 
 class Alert(BaseModel):
+    alert_id: str = Field(default_factory=lambda: uuid4().hex)
     timestamp: datetime
     type: str
     severity: AlertSeverity
@@ -182,25 +186,79 @@ class DecisionMatrix:
 
         return None
 
+@dataclass(frozen=True)
+class AlertReservation:
+    alert_type: str
+    alert_id: str
+    severity: AlertSeverity
+    reserved_at: datetime
+
+
 class CircuitBreaker:
-    """Prevents alert fatigue by throttling notifications."""
-    def __init__(self, cooldown_mins: int = 15):
+    """Reserve delivery attempts and commit cooldown only after acceptance."""
+
+    def __init__(self, cooldown_mins: int = 15, reservation_mins: int = 2):
         self.cooldown = timedelta(minutes=cooldown_mins)
-        self.last_alerts = {}  # type -> timestamp
+        self.reservation_ttl = timedelta(minutes=reservation_mins)
+        self.last_alerts: dict[str, datetime] = {}
+        self._reservations: dict[str, AlertReservation] = {}
 
-    def can_alert(self, alert_type: str, severity: AlertSeverity = AlertSeverity.MEDIUM) -> bool:
-        """Determines if enough time has passed. EMERGENCY severity bypasses cooldown."""
-        if severity == AlertSeverity.EMERGENCY:
-            self.last_alerts[alert_type] = datetime.now(timezone.utc)
-            return True
+    def _expire_reservations(self, now: datetime) -> None:
+        expired = [
+            alert_type
+            for alert_type, reservation in self._reservations.items()
+            if now - reservation.reserved_at > self.reservation_ttl
+        ]
+        for alert_type in expired:
+            self._reservations.pop(alert_type, None)
 
+    def reserve(
+        self,
+        alert_type: str,
+        alert_id: str,
+        severity: AlertSeverity = AlertSeverity.MEDIUM,
+    ) -> AlertReservation | None:
         now = datetime.now(timezone.utc)
-        if alert_type not in self.last_alerts:
-            self.last_alerts[alert_type] = now
-            return True
+        self._expire_reservations(now)
+        if alert_type in self._reservations:
+            return None
+        last_alert = self.last_alerts.get(alert_type)
+        if (
+            severity != AlertSeverity.EMERGENCY
+            and last_alert is not None
+            and now - last_alert <= self.cooldown
+        ):
+            return None
+        reservation = AlertReservation(alert_type, alert_id, severity, now)
+        self._reservations[alert_type] = reservation
+        return reservation
 
-        if now - self.last_alerts[alert_type] > self.cooldown:
-            self.last_alerts[alert_type] = now
-            return True
+    def commit(self, reservation: AlertReservation) -> bool:
+        current = self._reservations.get(reservation.alert_type)
+        if current != reservation:
+            return False
+        self.last_alerts[reservation.alert_type] = datetime.now(timezone.utc)
+        self._reservations.pop(reservation.alert_type, None)
+        return True
 
-        return False
+    def release(self, reservation: AlertReservation) -> bool:
+        current = self._reservations.get(reservation.alert_type)
+        if current != reservation:
+            return False
+        self._reservations.pop(reservation.alert_type, None)
+        return True
+
+    def can_alert(
+        self,
+        alert_type: str,
+        severity: AlertSeverity = AlertSeverity.MEDIUM,
+    ) -> bool:
+        """Compatibility query without mutating cooldown or reservations."""
+        now = datetime.now(timezone.utc)
+        self._expire_reservations(now)
+        if alert_type in self._reservations:
+            return False
+        if severity == AlertSeverity.EMERGENCY:
+            return True
+        last_alert = self.last_alerts.get(alert_type)
+        return last_alert is None or now - last_alert > self.cooldown

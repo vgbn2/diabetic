@@ -10,13 +10,17 @@ Nightscout and Bio-Quant only on loopback by default.
 4. Check `docker compose ps`, `http://localhost:1337`, and
    `http://localhost:8000/healthz`.
 5. Check `http://localhost:8000/readyz` separately. `/healthz` proves only that
-   the HTTP process is alive; `/readyz` requires healthy providers and a fresh
-   in-process glucose snapshot.
+   the HTTP process is alive; `/readyz` requires accepted authentication on the
+   Nightscout entries path, responsive MongoDB, and a fresh in-process glucose
+   snapshot. Transport reachability alone is not provider readiness.
 
 The machine-readable health output reports `ready` for core monitoring and
 `neural_ready` for validated loaded weights plus a warm inference buffer.
 Kinematic fallback can operate when core readiness is true and neural readiness
-is false.
+is false. An unexpected live-runtime or embedded TWA-server failure terminates the
+process after one idempotent teardown; Compose then owns process replacement. Bio-Quant
+does not attempt to reconstruct the singleton runtime or restart the API thread in the
+same process.
 
 ## Local profile persistence
 
@@ -77,5 +81,20 @@ must already be healthy. MongoDB remains private to the Compose network; port
 database and prints aggregate counts only. It does not cut over or replace the
 active
 `nightscout` database. Compare the staged counts with the verified manifest
-before any separately authorized cutover. Take a local backup with
-`scripts/ops/backup_local_nightscout.sh`.
+before any separately authorized cutover.
+
+## Validated local backups
+
+Take a local backup with `scripts/ops/backup_local_nightscout.sh`. The wrapper writes
+into a private same-directory temporary file, rejects empty output, and requires a
+successful `mongorestore --dryRun` containing the `nightscout.entries` namespace before
+publishing. It publishes a `0600` archive, matching SHA-256 file, and aggregate JSON
+metadata (size, checksum, database, timestamp, and validator). Failed, interrupted,
+truncated, corrupt, or wrong-namespace attempts leave no published bundle.
+
+Retention defaults to 30 days and can be changed with a non-negative integer
+`BACKUP_RETENTION_DAYS`; deletion occurs only after a new bundle is validated and
+published, and removes only matching archive companions. A checksum and dry-run prove
+local archive readability, not recoverability of a running deployment. Periodic
+isolated restore/count comparison remains a separately authorized operator drill; do
+not overwrite or cut over the active database as part of routine backup validation.

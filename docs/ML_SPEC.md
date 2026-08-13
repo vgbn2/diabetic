@@ -68,6 +68,13 @@ prediction path. They isolate **Static Traits**, **Environmental Forcing**,
 
 ---
 
+## Canonical glucose units
+
+All five layers exchange glucose internally as mmol/L. Provider adapters normalize
+at ingestion; model features, forecasts, thresholds, and audit state never switch
+units. `PREFER_MMOL` affects presentation formatting only and cannot alter a safety
+decision.
+
 ## 🧠 Model Ensemble Strategy
 1. **Digital Twin (Behavioral)**: Simulates meal, insulin, and basal effects.
 2. **1D-CNN (Signal)**: Recognizes Layer 1 temporal signatures when validated

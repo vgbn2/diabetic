@@ -29,10 +29,23 @@ class MetabolicInferenceRunner:
         self.device = torch.device('cpu') # Default to CPU
         self._resample_to_5min = False
         self.weights_loaded = False
-        
-        # Load Personalized Weights (Phase 14+)
+
+        # Resolve any interrupted promotion before selecting the authoritative artifact.
         weight_path = Path(config.ML_WEIGHTS_PATH)
-        if weight_path.exists():
+        recovery_ok = True
+        try:
+            from diabetic.ml_engine.training_service import recover_training_state
+
+            recover_training_state(weight_path)
+        except Exception as error:
+            recovery_ok = False
+            logger.error(
+                "Model promotion recovery failed (%s). Neural inference disabled.",
+                error.__class__.__name__,
+            )
+
+        # Load Personalized Weights (Phase 14+)
+        if recovery_ok and weight_path.exists():
             try:
                 self.model.load_state_dict(torch.load(weight_path, map_location=self.device, weights_only=True))
                 self.weights_loaded = True

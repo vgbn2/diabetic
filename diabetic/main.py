@@ -3,6 +3,7 @@ import logging
 import sys
 import os
 import atexit
+import threading
 import psutil
 from datetime import datetime, timedelta, timezone
 from diabetic.config import config
@@ -15,6 +16,60 @@ from diabetic.utils.db import db_manager
 # Core orchestration logic relocated to diabetic/main.py
 
 logger = logging.getLogger("Bio-Quant.Main")
+
+
+def _start_twa_thread(coordinator, start_api):
+    """Start TWA and project thread failures into the owning event loop."""
+    loop = asyncio.get_running_loop()
+    failure = loop.create_future()
+
+    def run_api():
+        try:
+            start_api(coordinator)
+        except BaseException as error:
+            loop.call_soon_threadsafe(_set_future_exception, failure, error)
+        else:
+            loop.call_soon_threadsafe(
+                _set_future_exception,
+                failure,
+                RuntimeError("TWA API server stopped unexpectedly"),
+            )
+
+    thread = threading.Thread(
+        target=run_api,
+        daemon=True,
+        name="bio-quant-twa",
+    )
+    coordinator._twa_thread = thread
+    coordinator._twa_failure = failure
+    thread.start()
+    return thread
+
+
+def _set_future_exception(future: asyncio.Future, error: BaseException) -> None:
+    if not future.done():
+        future.set_exception(error)
+
+
+async def _run_live_with_twa_supervision(coordinator) -> None:
+    live_task = asyncio.create_task(coordinator.start_live_mode())
+    twa_failure = coordinator._twa_failure
+    try:
+        done, _ = await asyncio.wait(
+            {live_task, twa_failure},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if twa_failure in done:
+            live_task.cancel()
+            await asyncio.gather(live_task, return_exceptions=True)
+            await twa_failure
+        await live_task
+    finally:
+        if not live_task.done():
+            live_task.cancel()
+            await asyncio.gather(live_task, return_exceptions=True)
+        if not twa_failure.done():
+            twa_failure.cancel()
 
 # =============================================================================
 # 🧪 [METABOLIC SIMULATION]
@@ -78,69 +133,88 @@ async def handle_admin_commands(cmd: str):
         await audit.log_admin_action("EXPORT_COMPLETE", {"scope": "all_sensor_periods"})
         
     elif cmd == "cleanup":
-        logger.info(f"[ADMIN] Enforcing {config.RETENTION_DAYS}-day retention policy cleanup...")
-        await audit.log_admin_action("CLEANUP_START", {"retention_days": config.RETENTION_DAYS})
-        await mongo.run_retention_cleanup(days=config.RETENTION_DAYS)
-        logger.info("[ADMIN] Cleanup complete.")
-        await audit.log_admin_action("CLEANUP_COMPLETE", {"retention_days": config.RETENTION_DAYS})
+        from diabetic.operations.retention import execute_retention_cleanup
+
+        result = await execute_retention_cleanup(
+            config.RETENTION_DAYS,
+            mongo=mongo,
+            audit=audit,
+        )
+        if result.successful:
+            logger.info(
+                "[ADMIN] Cleanup complete: %s entries, %s treatments.",
+                result.entries_deleted,
+                result.treatments_deleted,
+            )
+            return 0
+        logger.error(
+            "[ADMIN] Cleanup %s during %s.",
+            result.state,
+            result.failed_phase or "unknown",
+        )
+        return 1
 
 # =============================================================================
 # 🚀 [SERVICE ORCHESTRATION]
 # =Focus: CLI Argument Parsing and Live/Offline Mode Bootstrapping, change it to telegram command
 # =============================================================================
 async def _run_command_loop():
-    while True:
+    """Dispatch one command attempt; process supervision owns live recovery."""
+    if len(sys.argv) <= 1:
+        await run_simulation("simulation")
+        return 0
+
+    cmd = sys.argv[1]
+    if cmd in ["crash", "faint", "simulation", "normal"]:
+        await run_simulation(cmd)
+        return 0
+    if cmd == "live":
+        from diabetic.ml_engine.scheduler import MetabolicScheduler
+        from diabetic.telegram_bot.twa_api import start_api
+
+        coordinator = await Coordinator.create(allow_synthetic=False)
+        await coordinator.begin_start()
+
+        # TWA must share this process for COORDINATOR_REF. The daemon thread is
+        # not restarted in-process; process supervision owns recovery.
         try:
-            if len(sys.argv) > 1:
-                cmd = sys.argv[1]
-                if cmd in ["crash", "faint", "simulation", "normal"]:
-                    scenario = cmd
-                    await run_simulation(scenario)
-                    break
-                elif cmd == "live":
-                    from diabetic.ml_engine.scheduler import MetabolicScheduler
-                    coordinator = await Coordinator.create(allow_synthetic=False)
+            _start_twa_thread(coordinator, start_api)
 
-                    # Start TWA bridge in a background thread so COORDINATOR_REF
-                    # is set in the same process — fixes the Docker split-container gap.
-                    import threading
-                    from diabetic.telegram_bot.twa_api import start_api
-                    threading.Thread(target=start_api, args=(coordinator,), daemon=True).start()
-
-                    if config.AUTO_TRAIN_ENABLED:
-                        scheduler = MetabolicScheduler()
-                        scheduler_task = asyncio.create_task(scheduler.run_forever())
-                        coordinator._scheduler_task = scheduler_task
-                    else:
-                        logger.info("Automated model training is disabled.")
-
-                    await coordinator.start_live_mode()
-                elif cmd in ["export", "cleanup"]:
-                    await handle_admin_commands(cmd)
-                    break
-                elif cmd == "health":
-                    import json
-                    from diabetic.utils.health import get_system_health
-                    snapshot = await get_system_health()
-                    print(json.dumps(snapshot, indent=2))
-                    break
-                else:
-                    logger.error(f"Unknown command: {cmd}")
-                    logger.error("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup|health|tui]")
-                    break
+            if config.AUTO_TRAIN_ENABLED:
+                scheduler = MetabolicScheduler()
+                coordinator._scheduler_task = asyncio.create_task(
+                    scheduler.run_forever()
+                )
             else:
-                # Default to regular simulation
-                await run_simulation("simulation")
-                break
-        except KeyboardInterrupt:
+                logger.info("Automated model training is disabled.")
+
+            await _run_live_with_twa_supervision(coordinator)
+            return 0
+        except BaseException:
+            twa_failure = getattr(coordinator, "_twa_failure", None)
+            if twa_failure is not None and twa_failure.done():
+                try:
+                    twa_failure.exception()
+                except asyncio.CancelledError:
+                    pass
+            await coordinator.mark_failed()
             raise
-        except ValueError as e:
-            logging.error(f"FATAL CONFIGURATION ERROR: {e}")
-            logging.error("Check your local environment configuration. System exiting.")
-            sys.exit(1)
-        except Exception as e:
-            logging.error(f"FATAL SYSTEM CRASH: {e}. Attempting automated recovery in 30s...")
-            await asyncio.sleep(30) # Cool-down for recoverable network or transient errors
+    if cmd in ["export", "cleanup"]:
+        return await handle_admin_commands(cmd) or 0
+    if cmd == "health":
+        import json
+        from diabetic.utils.health import get_system_health
+
+        snapshot = await get_system_health()
+        print(json.dumps(snapshot, indent=2))
+        return 0
+
+    logger.error("Unknown command: %s", cmd)
+    logger.error(
+        "Usage: python -m diabetic.main "
+        "[crash|faint|simulation|normal|live|export|cleanup|health|tui]"
+    )
+    return 2
 
 async def main():
     # 0. Global Hygiene & Bootstrapping (Wave 1/3)
@@ -192,7 +266,9 @@ async def main():
     config.validate_config()
     await db_manager.ensure_indices()
     try:
-        await _run_command_loop()
+        exit_code = await _run_command_loop()
+        if exit_code:
+            raise SystemExit(exit_code)
     except KeyboardInterrupt:
         logger.info("Interrupted.")
     finally:

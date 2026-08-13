@@ -133,6 +133,8 @@ def compute_confidence_index(
     readings: list[tuple[datetime, float]],
     window_min: int = _CONFIDENCE_WINDOW_MIN,
     interval_min: int = _SENSOR_INTERVAL_MIN,
+    *,
+    reference_time: Optional[datetime] = None,
 ) -> float:
     """
     Calculate sensor data density for the given time window.
@@ -147,12 +149,21 @@ def compute_confidence_index(
         return 0.0
 
     expected = window_min / interval_min
-    now = datetime.now(timezone.utc)
+    now = reference_time or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
 
     # Count readings within the window
     received = sum(
-        1 for ts, _ in readings
-        if (now - ts).total_seconds() / 60.0 <= window_min
+        1
+        for ts, _ in readings
+        if 0.0
+        <= (
+            now
+            - (ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc))
+        ).total_seconds()
+        / 60.0
+        <= window_min
     )
 
     return round(min(received / max(expected, 1), 1.0), 3)

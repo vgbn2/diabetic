@@ -9,20 +9,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import httpx
-
 logger = logging.getLogger("Bio-Quant.Health")
 
 
-async def _nightscout_status(url: str) -> str:
-    if not url:
-        return "missing"
+async def _nightscout_status() -> str:
+    from diabetic.ingestion.nightscout import NightscoutClient
+
+    client = NightscoutClient()
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(f"{url.rstrip('/')}/api/v1/status.json")
-            return "ok" if response.status_code < 500 else "unreachable"
-    except Exception:
+        result = await asyncio.wait_for(client.probe_access(), timeout=4.0)
+        return result.state
+    except asyncio.TimeoutError:
         return "unreachable"
+    finally:
+        await client.close()
 
 
 async def _mongo_status(db_manager) -> str:
@@ -41,7 +41,7 @@ async def get_system_health() -> dict:
     from diabetic.utils.db import db_manager
 
     nightscout, mongodb = await asyncio.gather(
-        _nightscout_status(config.NIGHTSCOUT_URL),
+        _nightscout_status(),
         _mongo_status(db_manager),
     )
     health: dict = {"nightscout": nightscout, "mongodb": mongodb}

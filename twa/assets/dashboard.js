@@ -5,6 +5,7 @@ BioAuth.requireContextOrGate();
 var chart = null;
 var _lastForecast = { horizon: [], horizon_1d: [] };
 var _activeHorizon = "4h";
+var _displayUnit = "mmol/L";
 
 function initChart() {
     var ctx = document.getElementById("horizonChart").getContext("2d");
@@ -53,7 +54,7 @@ function renderHorizon() {
         chart.update();
         return;
     }
-    label.innerText = _activeHorizon === "1d" ? "Circadian Rhythm (24h)" : "Metabolic Horizon (4h)";
+    label.innerText = (_activeHorizon === "1d" ? "Circadian Rhythm (24h)" : "Metabolic Horizon (4h)") + " · " + _displayUnit;
     if (pts && pts.length) {
         chart.data.datasets[0].data = pts;
         chart.data.labels = Array(pts.length).fill("");
@@ -61,9 +62,9 @@ function renderHorizon() {
     }
 }
 
-function rangeClass(v) {
-    if (v < 4.0) return "g-low";
-    if (v > 10.0) return "g-high";
+function rangeClass(state) {
+    if (state === "low") return "g-low";
+    if (state === "high") return "g-high";
     return "g-in";
 }
 
@@ -71,6 +72,7 @@ async function updateHUD() {
     try {
         var data = await apiJson("/api/v1/hud");
         var gv = document.getElementById("glucose-val");
+        document.getElementById("glucose-unit").innerText = data.unit || "mmol/L";
         if (!data.ready || !data.fresh || data.glucose === null) {
             gv.innerText = "--.-";
             gv.className = "glucose-value";
@@ -81,18 +83,20 @@ async function updateHUD() {
                 data.state === "stale" ? "STALE" : "WAITING";
             return;
         }
-        gv.innerText = data.glucose.toFixed(1);
-        gv.className = "glucose-value " + rangeClass(data.glucose);
+        var places = Number.isInteger(data.decimal_places) ? data.decimal_places : 1;
+        gv.innerText = data.glucose.toFixed(places);
+        gv.className = "glucose-value " + rangeClass(data.range_state);
 
         var velStr = data.velocity > 0 ? "+" : "";
+        var velocityPlaces = data.unit === "mg/dL" ? 1 : 2;
         document.getElementById("velocity-val").innerText =
-            data.trend + " " + velStr + data.velocity.toFixed(2) + "/min";
+            data.trend + " " + velStr + data.velocity.toFixed(velocityPlaces) + "/min";
         document.getElementById("carbs-val").innerText = data.active_carbs.toFixed(1) + "g";
         document.getElementById("insulin-val").innerText = data.active_insulin.toFixed(2) + "U";
         document.getElementById("last-update").innerText = "LIVE";
 
-        // Haptic warning on dangerous excursions.
-        if (BioAuth.tg && (data.glucose < 4.0 || data.glucose > 13.0)) {
+        // The server evaluates the warning policy from canonical mmol/L state.
+        if (BioAuth.tg && data.haptic_warning) {
             try { BioAuth.tg.HapticFeedback.notificationOccurred("warning"); } catch (e) {}
         }
     } catch (e) { console.error("HUD bridge offline", e); }
@@ -107,6 +111,8 @@ async function updateForecast() {
             return;
         }
         _lastForecast = { horizon: data.horizon || [], horizon_1d: data.horizon_1d || [] };
+        _displayUnit = data.unit || "mmol/L";
+        chart.data.datasets[0].label = "Predicted Path (" + _displayUnit + ")";
         renderHorizon();
     } catch (e) { /* forecast optional */ }
 }

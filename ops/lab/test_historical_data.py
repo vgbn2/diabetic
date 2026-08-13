@@ -226,28 +226,35 @@ class TestHistoricalArchiveVerification(unittest.TestCase):
 
 class TestHistoricalReplay(unittest.TestCase):
     def test_archive_replay_uses_production_unit_normalization(self):
-        with patch.object(config, "PREFER_MMOL", True):
-            readings = list(
-                HistoricalReplayReader.from_archive(ARCHIVE_FIXTURE).stream()
-            )
+        for prefer_mmol in (True, False):
+            with self.subTest(prefer_mmol=prefer_mmol), patch.object(
+                config, "PREFER_MMOL", prefer_mmol
+            ):
+                readings = list(
+                    HistoricalReplayReader.from_archive(ARCHIVE_FIXTURE).stream()
+                )
 
-        self.assertEqual(len(readings), 2)
-        self.assertAlmostEqual(
-            readings[0].value,
-            39 / medical_constants.MMOL_TO_MGDL,
-            places=5,
-        )
-        self.assertEqual(readings[0].unit, "mmol/L")
-        self.assertLess(readings[0].timestamp, readings[1].timestamp)
+            self.assertEqual(len(readings), 2)
+            self.assertAlmostEqual(
+                readings[0].value,
+                39 / medical_constants.MMOL_TO_MGDL,
+                places=5,
+            )
+            self.assertEqual(readings[0].unit, "mmol/L")
+            self.assertIsNotNone(readings[0].source_event_id)
+            self.assertLess(readings[0].timestamp, readings[1].timestamp)
 
     def test_canonical_csv_replay_preserves_explicit_mmol(self):
-        with patch.object(config, "PREFER_MMOL", True):
-            readings = list(
-                HistoricalReplayReader.from_csvs([CSV_FIXTURE]).stream()
-            )
+        for prefer_mmol in (True, False):
+            with self.subTest(prefer_mmol=prefer_mmol), patch.object(
+                config, "PREFER_MMOL", prefer_mmol
+            ):
+                readings = list(
+                    HistoricalReplayReader.from_csvs([CSV_FIXTURE]).stream()
+                )
 
-        self.assertEqual([reading.value for reading in readings], [5.5, 6.0])
-        self.assertTrue(all(reading.unit == "mmol/L" for reading in readings))
+            self.assertEqual([reading.value for reading in readings], [5.5, 6.0])
+            self.assertTrue(all(reading.unit == "mmol/L" for reading in readings))
 
     def test_mixed_schema_csv_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

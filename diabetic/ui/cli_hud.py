@@ -10,6 +10,11 @@ from rich.text import Text
 
 from diabetic.config import config
 from diabetic.registry import MetabolicSnapshot
+from diabetic.ui.glucose_display import (
+    format_glucose,
+    format_velocity,
+    unit_label,
+)
 
 class RealTimeHUD:
     """
@@ -50,9 +55,11 @@ class RealTimeHUD:
         table.add_column("Unit", style="dim")
 
         if snapshot:
-            unit = "mmol/L" if config.PREFER_MMOL else "mg/dL"
-            table.add_row("Glucose", f"{snapshot.filtered_value:.1f}", unit)
-            table.add_row("Velocity", f"{snapshot.velocity:+.2f}", f"{unit}/min")
+            unit = unit_label()
+            table.add_row("Glucose", format_glucose(snapshot.filtered_value), unit)
+            table.add_row(
+                "Velocity", format_velocity(snapshot.velocity), f"{unit}/min"
+            )
             
             bpm = snapshot.bpm if snapshot.bpm else "---"
             hrv = f"{snapshot.hrv:.1f}" if snapshot.hrv else "---"
@@ -72,7 +79,12 @@ class RealTimeHUD:
             table.add_section()
 
             # 🔮 Neural Layer
-            table.add_row("Pred Glucose (30m)", f"{snapshot.predict_30m:.1f}", style="bold yellow")
+            table.add_row(
+                "Pred Glucose (30m)",
+                format_glucose(snapshot.predict_30m),
+                unit,
+                style="bold yellow",
+            )
             table.add_row("Pred Heart Rate", f"{snapshot.predicted_hr:.1f}", style="bold magenta")
         else:
             table.add_row("Glucose", "WAITING...", "")

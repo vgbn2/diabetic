@@ -2,11 +2,22 @@ import asyncio
 import sqlite3
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
 from diabetic.utils.db import db_manager
+
+@dataclass(frozen=True)
+class AuditWriteResult:
+    local_persisted: bool
+    mongo_persisted: bool
+
+    @property
+    def durable(self) -> bool:
+        return self.local_persisted
+
 
 # =============================================================================
 # 📖 [AUDIT CONNECTIVITY]
@@ -59,6 +70,19 @@ class AuditLogger:
                 data TEXT
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS glucose_gaps (
+                gap_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                state TEXT NOT NULL,
+                reason TEXT,
+                from_event_id TEXT,
+                through_event_id TEXT,
+                from_timestamp TEXT,
+                through_timestamp TEXT,
+                updated_at TEXT NOT NULL
+            )
+        """)
         self.local_conn.commit()
 
 # =============================================================================
@@ -100,13 +124,18 @@ class AuditLogger:
         else:
             self.logger.info(log_msg)
 
+        mongo_persisted = False
         if self.collection is not None:
             try:
                 # MongoDB handles datetime objects directly, but nested enums fail
                 await self.collection.insert_one(log_entry)
+                mongo_persisted = True
             except Exception as e:
-                self.logger.error(f"Failed to persist log to MongoDB: {e}")
+                self.logger.error(
+                    "Failed to persist log to MongoDB: %s", e.__class__.__name__
+                )
 
+        local_persisted = False
         if hasattr(self, 'local_conn'):
             try:
                 def _write_db():
@@ -119,8 +148,96 @@ class AuditLogger:
 
                 async with self.sql_lock:
                     await asyncio.to_thread(_write_db)
+                local_persisted = True
             except Exception as e:
-                self.logger.error(f"Failed to persist log to SQLite: {e}")
+                self.logger.error(
+                    "Failed to persist log to SQLite: %s", e.__class__.__name__
+                )
+        return AuditWriteResult(
+            local_persisted=local_persisted,
+            mongo_persisted=mongo_persisted,
+        )
+
+    async def record_glucose_gap(self, payload: dict) -> AuditWriteResult:
+        """Upsert machine-verifiable glucose reconciliation state before coalescing."""
+        result = await self.log_event("GLUCOSE_GAP", payload, level="WARNING")
+        local_persisted = False
+        if hasattr(self, "local_conn"):
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+
+                def _write_gap():
+                    self.local_conn.execute(
+                        """
+                        INSERT INTO glucose_gaps (
+                            gap_id, source, state, reason, from_event_id,
+                            through_event_id, from_timestamp, through_timestamp,
+                            updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(gap_id) DO UPDATE SET
+                            state = excluded.state,
+                            through_event_id = COALESCE(
+                                excluded.through_event_id,
+                                glucose_gaps.through_event_id
+                            ),
+                            through_timestamp = COALESCE(
+                                excluded.through_timestamp,
+                                glucose_gaps.through_timestamp
+                            ),
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            payload["gap_id"],
+                            payload["source"],
+                            payload["state"],
+                            payload.get("reason"),
+                            payload.get("from_event_id"),
+                            payload.get("through_event_id"),
+                            payload.get("from_timestamp"),
+                            payload.get("through_timestamp"),
+                            now,
+                        ),
+                    )
+                    self.local_conn.commit()
+
+                async with self.sql_lock:
+                    await asyncio.to_thread(_write_gap)
+                local_persisted = True
+            except Exception as error:
+                self.logger.error(
+                    "Failed to persist glucose gap projection: %s",
+                    error.__class__.__name__,
+                )
+        return AuditWriteResult(
+            local_persisted=local_persisted,
+            mongo_persisted=result.mongo_persisted,
+        )
+
+    async def get_pending_glucose_gaps(self) -> List[dict]:
+        if not hasattr(self, "local_conn"):
+            return []
+
+        def _query_gaps():
+            cursor = self.local_conn.execute(
+                """
+                SELECT gap_id, source, reason, from_event_id, through_event_id,
+                       from_timestamp, through_timestamp
+                FROM glucose_gaps
+                WHERE state = 'replay_pending'
+                ORDER BY updated_at, gap_id
+                """
+            )
+            columns = [description[0] for description in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        try:
+            return await asyncio.to_thread(_query_gaps)
+        except Exception as error:
+            self.logger.error(
+                "Failed to query glucose gap projection: %s",
+                error.__class__.__name__,
+            )
+            return []
 
 # =============================================================================
 # 🩸 [TELEMETRY & USER FEEDBACK]
@@ -154,10 +271,17 @@ class AuditLogger:
             self.logger.error(f"Failed to query local last timestamp: {e}")
         return None
 
-    async def log_feedback(self, alert_type: str, action: str):
-        """Logs user feedback on alerts (Task 7.1.4)."""
+    async def log_feedback(
+        self,
+        alert_type: str,
+        action: str,
+        *,
+        alert_id: Optional[str] = None,
+    ) -> AuditWriteResult:
+        """Log feedback, binding new callbacks to an opaque alert ID."""
         normalized_action = action.strip().lower()
-        await self.log_event("USER_FEEDBACK", {
+        return await self.log_event("USER_FEEDBACK", {
+            "alert_id": alert_id,
             "alert_type": alert_type,
             "action": action,
             "is_false_alarm": normalized_action in {"false", "false_alarm"},
@@ -196,9 +320,9 @@ class AuditLogger:
 # 🛡️ [ADMINISTRATIVE INTEGRITY]
 # =Focus: Secure Tracking of Maintenance and System Overrides
 # =============================================================================
-    async def log_admin_action(self, action_name: str, details: dict):
-        """Logs sensitive administrative actions (Task III)."""
-        await self.log_event("ADMIN_ACTION", {
+    async def log_admin_action(self, action_name: str, details: dict) -> AuditWriteResult:
+        """Log an administrative action and expose local durability."""
+        return await self.log_event("ADMIN_ACTION", {
             "action": action_name,
             **details
         }, level="WARNING")

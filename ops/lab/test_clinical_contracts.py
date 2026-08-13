@@ -1,9 +1,12 @@
 """Clinical boundary contracts introduced by the 2026-07 safety pass."""
 
+import asyncio
 import math
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
+
+from pydantic import ValidationError
 
 from diabetic import medical_constants
 from diabetic.config import config
@@ -44,6 +47,65 @@ class TestNightscoutUnitContract(unittest.TestCase):
             with self.subTest(raw=raw, units=units):
                 with self.assertRaises(ValueError):
                     normalize_nightscout_sgv(raw, units)
+
+
+class TestCanonicalGlucoseUnit(unittest.TestCase):
+    def test_internal_readings_reject_display_units(self):
+        with self.assertRaises(ValidationError):
+            GlucoseReading(
+                timestamp=datetime.now(timezone.utc),
+                value=39.0,
+                trend="Flat",
+                unit="mg/dL",
+            )
+
+    def test_nightscout_parser_remains_mmol_under_both_preferences(self):
+        import diabetic.ingestion.nightscout as nightscout_module
+        from diabetic.ingestion.nightscout import NightscoutClient
+
+        entry = {
+            "_id": "synthetic-entry",
+            "sgv": 39,
+            "units": "mg/dL",
+            "dateString": "2026-01-01T00:00:00Z",
+            "direction": "Flat",
+        }
+        for prefer_mmol in (True, False):
+            with self.subTest(prefer_mmol=prefer_mmol), patch.object(
+                nightscout_module.config, "PREFER_MMOL", prefer_mmol
+            ), patch.object(nightscout_module.config, "API_SECRET", "short"), patch.object(
+                nightscout_module.config, "NIGHTSCOUT_URL", "http://example.invalid"
+            ):
+                client = NightscoutClient()
+                reading = client._parse_entries([entry])[0]
+                asyncio.run(client.close())
+            self.assertAlmostEqual(
+                reading.value, 39 / medical_constants.MMOL_TO_MGDL, places=2
+            )
+            self.assertEqual(reading.unit, "mmol/L")
+            self.assertEqual(reading.source_event_id, "synthetic-entry")
+
+
+class TestGlucosePresentation(unittest.TestCase):
+    def test_display_conversion_does_not_mutate_clinical_thresholds(self):
+        from diabetic.ui import glucose_display
+
+        for prefer_mmol, expected_value, expected_unit, expected_places in [
+            (True, 2.5, "mmol/L", 1),
+            (False, 2.5 * medical_constants.MMOL_TO_MGDL, "mg/dL", 0),
+        ]:
+            with self.subTest(prefer_mmol=prefer_mmol), patch.object(
+                config, "PREFER_MMOL", prefer_mmol
+            ):
+                self.assertAlmostEqual(
+                    glucose_display.glucose_value(2.5), expected_value
+                )
+                self.assertEqual(glucose_display.unit_label(), expected_unit)
+                self.assertEqual(
+                    glucose_display.decimal_places(), expected_places
+                )
+                self.assertEqual(glucose_display.hud_range(3.9), "low")
+                self.assertTrue(glucose_display.hud_haptic_warning(3.9))
 
 
 class TestCriticalHypoPropagation(unittest.IsolatedAsyncioTestCase):

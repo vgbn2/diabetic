@@ -13,6 +13,15 @@ from typing import Literal, Optional
 from diabetic.config import config
 from diabetic.registry import MetabolicSnapshot
 from diabetic.auth.dependencies import require_twa_user
+from diabetic.ui.glucose_display import (
+    decimal_places,
+    glucose_series,
+    glucose_value,
+    glucose_velocity,
+    hud_haptic_warning,
+    hud_range,
+    unit_label,
+)
 
 # --- [SKILL-LIKE LOGIC: DATA INTERFACE] ---
 # This bridge follows the 'Passive Sentinel to Active HUD' transformation.
@@ -80,12 +89,25 @@ class HUDState(BaseModel):
     active_carbs: float
     active_insulin: float
     confidence: float
+    unit: str
+    decimal_places: int
+    range_state: Optional[Literal["low", "in_range", "high"]]
+    haptic_warning: bool
     timestamp: Optional[str]
     age_seconds: Optional[float]
     degraded_reasons: list[str]
 
-# Shared state reference (will be injected by the Coordinator)
+# Shared state reference (injected by the one live Coordinator process).
 COORDINATOR_REF = None
+
+
+def clear_api_coordinator(coordinator_instance) -> bool:
+    """Remove the projection only when the caller still owns it."""
+    global COORDINATOR_REF
+    if COORDINATOR_REF is not coordinator_instance:
+        return False
+    COORDINATOR_REF = None
+    return True
 
 @app.get("/api/v1/hud", dependencies=[Depends(require_twa_user)])
 async def get_hud_data():
@@ -101,6 +123,10 @@ async def get_hud_data():
             active_carbs=0.0,
             active_insulin=0.0,
             confidence=0.0,
+            unit=unit_label(),
+            decimal_places=decimal_places(),
+            range_state=None,
+            haptic_warning=False,
             timestamp=None,
             age_seconds=None,
             degraded_reasons=["no_metabolic_snapshot"],
@@ -125,12 +151,16 @@ async def get_hud_data():
         state="degraded" if fresh and treatment_degraded else ("live" if fresh else "stale"),
         ready=fresh and not treatment_degraded,
         fresh=fresh,
-        glucose=latest.filtered_value,
-        velocity=latest.velocity,
+        glucose=glucose_value(latest.filtered_value),
+        velocity=glucose_velocity(latest.velocity),
         trend=latest.glucose.trend,
         active_carbs=latest.active_carbs,
         active_insulin=latest.active_insulin,
         confidence=latest.confidence_index,
+        unit=unit_label(),
+        decimal_places=decimal_places(),
+        range_state=hud_range(latest.filtered_value),
+        haptic_warning=hud_haptic_warning(latest.filtered_value),
         timestamp=timestamp.isoformat(),
         age_seconds=round(age, 1),
         degraded_reasons=degraded_reasons,
@@ -140,7 +170,14 @@ async def get_hud_data():
 async def get_forecast():
     """Returns the 4h trajectory for the 'Metabolic Horizon' chart."""
     if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
-        return {"state": "waiting", "points": [], "horizon": [], "horizon_1d": []}
+        return {
+            "state": "waiting",
+            "points": [],
+            "horizon": [],
+            "horizon_1d": [],
+            "unit": unit_label(),
+            "decimal_places": decimal_places(),
+        }
     
     history_pts = int(150 / config.SAMPLING_INTERVAL_MINS)
     timestamp = COORDINATOR_REF.snapshots[-1].glucose.timestamp
@@ -152,9 +189,17 @@ async def get_forecast():
     return {
         "state": "live" if fresh else "stale",
         "timestamp": timestamp.isoformat(),
-        "points": [s.filtered_value for s in COORDINATOR_REF.snapshots[-history_pts:]],
-        "horizon": getattr(COORDINATOR_REF, "last_prediction_4h", []),
-        "horizon_1d": getattr(COORDINATOR_REF, "last_prediction_1d", []),
+        "points": glucose_series(
+            s.filtered_value for s in COORDINATOR_REF.snapshots[-history_pts:]
+        ),
+        "horizon": glucose_series(
+            getattr(COORDINATOR_REF, "last_prediction_4h", [])
+        ),
+        "horizon_1d": glucose_series(
+            getattr(COORDINATOR_REF, "last_prediction_1d", [])
+        ),
+        "unit": unit_label(),
+        "decimal_places": decimal_places(),
         "resolution_mins": config.SAMPLING_INTERVAL_MINS,
     }
 

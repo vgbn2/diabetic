@@ -10,12 +10,14 @@ TelemetryProvenance = Literal["real", "synthetic", "fallback"]
 # =============================================================================
 
 class GlucoseReading(BaseModel):
-    """Represents a single glucose data point from CGM."""
+    """A CGM reading in the canonical internal unit of mmol/L."""
+
     timestamp: datetime
-    value: float  # Blood glucose level (standard unit: mmol/L)
-    trend: str    # Trend arrow/indicator (e.g., Flat, FortyFiveUp, DoubleDown)
+    value: float
+    trend: str
     source: str = "nightscout"
-    unit: str = "mmol/L"
+    source_event_id: Optional[str] = None
+    unit: Literal["mmol/L"] = "mmol/L"
 
 # =============================================================================
 # 🌍 [LAYER 2: ENVIRONMENTAL & SOCIAL CONTEXT]

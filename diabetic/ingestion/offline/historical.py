@@ -18,8 +18,6 @@ from typing import Iterator, Sequence
 
 from bson import json_util
 
-from diabetic import medical_constants
-from diabetic.config import config
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
 from diabetic.registry import GlucoseReading
 
@@ -73,12 +71,6 @@ def _entry_timestamp(document: dict) -> datetime:
     if isinstance(raw_date, (int, float)) and math.isfinite(float(raw_date)):
         return datetime.fromtimestamp(float(raw_date) / 1000.0, timezone.utc)
     return _parse_iso_timestamp(document.get("dateString"))
-
-
-def _reading_value(mmol_value: float) -> tuple[float, str]:
-    if config.PREFER_MMOL:
-        return mmol_value, "mmol/L"
-    return mmol_value * medical_constants.MMOL_TO_MGDL, "mg/dL"
 
 
 def verify_nightscout_archive(root: str | Path) -> dict:
@@ -480,13 +472,12 @@ class HistoricalReplayReader:
                 mmol_value = normalize_nightscout_sgv(
                     document.get("sgv"), document.get("units")
                 )
-                value, unit = _reading_value(mmol_value)
                 yield GlucoseReading(
                     timestamp=_entry_timestamp(document),
-                    value=value,
+                    value=mmol_value,
                     trend=document.get("direction", "Flat"),
                     source="historical_archive",
-                    unit=unit,
+                    source_event_id=str(document["_id"]),
                 )
 
     def _stream_csvs(self) -> Iterator[GlucoseReading]:
@@ -499,14 +490,12 @@ class HistoricalReplayReader:
                         raise HistoricalDataError(
                             f"{path.name}: glucose must be finite and positive"
                         )
-                    value, unit = _reading_value(mmol_value)
                     readings.append(
                         GlucoseReading(
                             timestamp=_parse_iso_timestamp(row["timestamp_utc"]),
-                            value=value,
+                            value=mmol_value,
                             trend=row.get("trend") or "Flat",
                             source="historical_csv",
-                            unit=unit,
                         )
                     )
         readings.sort(key=lambda reading: reading.timestamp)

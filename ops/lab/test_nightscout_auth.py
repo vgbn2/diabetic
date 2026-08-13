@@ -140,6 +140,59 @@ class TestNightscoutAuthRetry(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await client.fetch_recent_glucose(5)
 
+    async def test_access_probe_classifies_authenticated_outcomes(self):
+        cases = [
+            (200, "ok"),
+            (401, "rejected"),
+            (403, "rejected"),
+            (404, "unreachable"),
+            (429, "rate_limited"),
+            (500, "unreachable"),
+        ]
+        for status_code, expected in cases:
+            with self.subTest(status_code=status_code):
+                client = _make_client(secret="short")
+                response = MagicMock()
+                response.status_code = status_code
+                if status_code == 200:
+                    response.raise_for_status.return_value = None
+                else:
+                    response.raise_for_status.side_effect = httpx.HTTPStatusError(
+                        str(status_code), request=MagicMock(), response=response
+                    )
+                client.client.get = AsyncMock(return_value=response)
+
+                with patch("asyncio.sleep", new=AsyncMock()):
+                    result = await client.probe_access()
+                await client.close()
+
+                self.assertEqual(result.state, expected)
+                if status_code != 200:
+                    self.assertNotIn("short", result.reason or "")
+
+    async def test_access_probe_uses_initialized_credential_state(self):
+        client = _make_client(secret="short")
+        response = MagicMock()
+        response.status_code = 200
+        response.raise_for_status.return_value = None
+        client.client.get = AsyncMock(return_value=response)
+
+        with patch.object(ns_module.config, "API_SECRET", ""):
+            result = await client.probe_access()
+        await client.close()
+
+        self.assertEqual(result.state, "ok")
+
+    async def test_access_probe_reports_misconfigured_without_request(self):
+        client = _make_client(secret="", url="")
+        client.client.get = AsyncMock()
+
+        result = await client.probe_access()
+        await client.close()
+
+        self.assertEqual(result.state, "misconfigured")
+        client.client.get.assert_not_awaited()
+
     async def test_non_401_error_returns_degraded_result(self):
         """Provider failure must not masquerade as a valid empty result."""
         client = _make_client(secret="short")

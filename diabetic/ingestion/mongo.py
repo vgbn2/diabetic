@@ -1,3 +1,4 @@
+import asyncio
 import pandas as pd
 from pathlib import Path
 import logging
@@ -442,42 +443,102 @@ class MongoDBClient:
         self.logger.info(f"  Generated: {path.name} ({len(readings)} readings)")
 
     async def run_retention_cleanup(self, days: int = 180):
-        """
-        Enforces the 180-day retention policy (Task III). 
-        DELETES data strictly older than the specified threshold.
-        """
-        # Fix C1: self.db does not exist; guard against actual collection references.
-        if self.entries is None or self.treatments is None: return
-        
+        """Delete expired entries/treatments and report every committed phase."""
+        from diabetic.operations.retention import (
+            RetentionCleanupResult,
+            invalid_retention_result,
+            retention_days_valid,
+        )
+
+        if not retention_days_valid(days):
+            return invalid_retention_result(days)
+        if self.entries is None or self.treatments is None:
+            return RetentionCleanupResult(
+                state="unavailable",
+                retention_days=days,
+                failed_phase="availability",
+                reason="collection_unavailable",
+            )
+
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         cutoff_ms = cutoff_date.timestamp() * 1000
-        
-        self.logger.warning(f"RETENTION POLICY: Deleting data older than {days} days (Cutoff: {cutoff_date})")
-        
+        entries_deleted = 0
+        treatments_deleted = 0
+        phase = "entries"
+
+        self.logger.warning(
+            "RETENTION POLICY: Deleting data older than %s days (Cutoff: %s)",
+            days,
+            cutoff_date,
+        )
         try:
-            res_e = await self.entries.delete_many({"date": {"$lt": cutoff_ms}})
-            removed_treatments = 0
-            cursor = self.treatments.find({}, {"_id": 1, "created_at": 1, "mills": 1})
+            entry_result = await self.entries.delete_many({"date": {"$lt": cutoff_ms}})
+            entries_deleted = entry_result.deleted_count
+            phase = "treatments"
+
+            cursor = self.treatments.find(
+                {}, {"_id": 1, "created_at": 1, "mills": 1}
+            )
             stale_ids = []
             async for document in cursor:
                 timestamp = treatment_timestamp(document)
                 if timestamp is not None and timestamp < cutoff_date:
                     stale_ids.append(document["_id"])
                 if len(stale_ids) >= 500:
-                    result = await self.treatments.delete_many({"_id": {"$in": stale_ids}})
-                    removed_treatments += result.deleted_count
+                    result = await self.treatments.delete_many(
+                        {"_id": {"$in": stale_ids}}
+                    )
+                    treatments_deleted += result.deleted_count
                     stale_ids.clear()
             if stale_ids:
-                result = await self.treatments.delete_many({"_id": {"$in": stale_ids}})
-                removed_treatments += result.deleted_count
-            
-            self.logger.info(
-                "Cleanup complete. Removed %s entries and %s treatments.",
-                res_e.deleted_count,
-                removed_treatments,
+                result = await self.treatments.delete_many(
+                    {"_id": {"$in": stale_ids}}
+                )
+                treatments_deleted += result.deleted_count
+        except asyncio.CancelledError as error:
+            if not entries_deleted and not treatments_deleted:
+                raise
+            self.logger.error(
+                "Retention cleanup partial during %s: %s",
+                phase,
+                error.__class__.__name__,
             )
-        except Exception as e:
-            self.logger.error(f"Cleanup failed: {e}")
+            return RetentionCleanupResult(
+                state="partial",
+                retention_days=days,
+                entries_deleted=entries_deleted,
+                treatments_deleted=treatments_deleted,
+                failed_phase=phase,
+                reason=error.__class__.__name__,
+            )
+        except Exception as error:
+            state = "partial" if entries_deleted or treatments_deleted else "failed"
+            self.logger.error(
+                "Retention cleanup %s during %s: %s",
+                state,
+                phase,
+                error.__class__.__name__,
+            )
+            return RetentionCleanupResult(
+                state=state,
+                retention_days=days,
+                entries_deleted=entries_deleted,
+                treatments_deleted=treatments_deleted,
+                failed_phase=phase,
+                reason=error.__class__.__name__,
+            )
+
+        self.logger.info(
+            "Cleanup complete. Removed %s entries and %s treatments.",
+            entries_deleted,
+            treatments_deleted,
+        )
+        return RetentionCleanupResult(
+            state="completed",
+            retention_days=days,
+            entries_deleted=entries_deleted,
+            treatments_deleted=treatments_deleted,
+        )
 
 # =============================================================================
 # 🛠️ [DOCUMENT MAPPING]
@@ -494,7 +555,10 @@ class MongoDBClient:
                 timestamp=ts,
                 value=val,
                 trend=doc.get("direction", "Flat"),
-                source="mongodb"
+                source="mongodb",
+                source_event_id=(
+                    str(doc["_id"]) if doc.get("_id") is not None else None
+                ),
             )
         except Exception:
             return None

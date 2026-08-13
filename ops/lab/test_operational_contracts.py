@@ -3,7 +3,9 @@
 import tempfile
 import unittest
 import hashlib
+import json
 import os
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -69,6 +71,44 @@ class TestHudFreshness(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(state.ready)
         self.assertEqual(state.glucose, 8.2)
 
+    async def test_hud_and_forecast_convert_only_at_presentation(self):
+        from diabetic.config import config
+        from diabetic.telegram_bot import twa_api
+
+        timestamp = datetime.now(timezone.utc)
+        snapshot = MetabolicSnapshot(
+            glucose=GlucoseReading(timestamp=timestamp, value=5.5, trend="Flat"),
+            filtered_value=5.5,
+            velocity=-0.1,
+        )
+        twa_api.COORDINATOR_REF = SimpleNamespace(
+            snapshots=[snapshot],
+            treatment_fetch_state="ok",
+            last_prediction_4h=[5.5, 6.0],
+            last_prediction_1d=[5.0],
+        )
+
+        with patch.object(config, "PREFER_MMOL", False):
+            state = await twa_api.get_hud_data()
+            forecast = await twa_api.get_forecast()
+
+        self.assertEqual(state.unit, "mg/dL")
+        self.assertEqual(state.decimal_places, 0)
+        self.assertAlmostEqual(state.glucose, 5.5 * medical_constants.MMOL_TO_MGDL)
+        self.assertAlmostEqual(state.velocity, -0.1 * medical_constants.MMOL_TO_MGDL)
+        self.assertEqual(state.range_state, "in_range")
+        self.assertFalse(state.haptic_warning)
+        self.assertEqual(forecast["unit"], "mg/dL")
+        self.assertEqual(
+            forecast["horizon"],
+            [
+                5.5 * medical_constants.MMOL_TO_MGDL,
+                6.0 * medical_constants.MMOL_TO_MGDL,
+            ],
+        )
+        self.assertEqual(snapshot.filtered_value, 5.5)
+        self.assertEqual(snapshot.glucose.unit, "mmol/L")
+
     async def test_treatment_failure_marks_fresh_hud_degraded(self):
         from diabetic.telegram_bot import twa_api
 
@@ -88,6 +128,30 @@ class TestHudFreshness(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.state, "degraded")
         self.assertFalse(state.ready)
         self.assertIn("treatment_provider_degraded", state.degraded_reasons)
+
+
+class TestPresentationOwnership(unittest.TestCase):
+    def test_browser_uses_server_range_and_unit_contract(self):
+        root = Path(__file__).resolve().parents[2]
+        dashboard = (root / "twa" / "assets" / "dashboard.js").read_text(
+            encoding="utf-8"
+        )
+        history = (root / "twa" / "assets" / "history.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("data.range_state", dashboard)
+        self.assertIn("data.haptic_warning", dashboard)
+        self.assertIn("data.unit", dashboard)
+        self.assertLess(
+            dashboard.index('document.getElementById("glucose-unit")'),
+            dashboard.index("if (!data.ready"),
+        )
+        self.assertIn("data.unit", history)
+        self.assertNotIn("data.glucose < 4.0", dashboard)
+        self.assertNotIn("data.glucose > 13.0", dashboard)
+        self.assertNotIn("18.018", dashboard)
+        self.assertNotIn("18.018", history)
 
 
 class TestTreatmentState(unittest.IsolatedAsyncioTestCase):
@@ -392,6 +456,17 @@ class TestTemporalNeutrality(unittest.TestCase):
 
 
 class TestAtomicTrainingPromotion(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from diabetic.coordinator import Coordinator
+
+        self.previous_coordinator = Coordinator._instance
+        Coordinator._instance = None
+
+    async def asyncTearDown(self):
+        from diabetic.coordinator import Coordinator
+
+        Coordinator._instance = self.previous_coordinator
+
     @staticmethod
     def _fake_training_result(candidate: Path) -> TrainingResult:
         candidate.parent.mkdir(parents=True, exist_ok=True)
@@ -403,63 +478,381 @@ class TestAtomicTrainingPromotion(unittest.IsolatedAsyncioTestCase):
             artifact_path=candidate,
         )
 
-    async def test_valid_candidate_replaces_deployed_artifact(self):
+    @staticmethod
+    def _promoted_manifest(content: bytes) -> dict:
+        return {
+            "status": "promoted",
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "version": "v15",
+        }
+
+    async def _run_pipeline(self, deployed: Path, *, patches=()):
         from diabetic.config import config
         from diabetic.ml_engine import training_service
 
+        async def fake_train(**kwargs):
+            return self._fake_training_result(kwargs["output_path"])
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(config, "ML_WEIGHTS_PATH", str(deployed))
+            )
+            stack.enter_context(
+                patch.object(
+                    training_service,
+                    "train_metabolic_cnn",
+                    AsyncMock(side_effect=fake_train),
+                )
+            )
+            for patcher in patches:
+                stack.enter_context(patcher)
+            return await training_service.run_training_pipeline(
+                source="mongo",
+                epochs=1,
+            )
+
+    def _assert_authoritative_old(self, deployed: Path, old_manifest: dict):
+        state_dir = deployed.parent / ".training"
+        self.assertEqual(deployed.read_bytes(), b"last-known-good")
+        self.assertEqual(
+            json.loads((state_dir / "manifest.json").read_text(encoding="utf-8")),
+            old_manifest,
+        )
+        self.assertFalse((state_dir / "promotion.json").exists())
+
+    async def test_valid_candidate_commits_matching_artifact_and_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             deployed = Path(temporary) / "weights.pth"
-            deployed.write_bytes(b"old")
+            deployed.write_bytes(b"last-known-good")
+            old_manifest = self._promoted_manifest(b"last-known-good")
+            state_dir = deployed.parent / ".training"
+            state_dir.mkdir()
+            (state_dir / "manifest.json").write_text(
+                json.dumps(old_manifest), encoding="utf-8"
+            )
 
-            async def fake_train(**kwargs):
-                return self._fake_training_result(kwargs["output_path"])
+            result = await self._run_pipeline(deployed)
 
-            with (
-                patch.object(config, "ML_WEIGHTS_PATH", str(deployed)),
-                patch.object(training_service, "train_metabolic_cnn", AsyncMock(side_effect=fake_train)),
-            ):
-                result = await training_service.run_training_pipeline(
-                    source="mongo",
-                    epochs=1,
-                )
-
+            manifest = json.loads(
+                (state_dir / "manifest.json").read_text(encoding="utf-8")
+            )
             self.assertEqual(result["status"], "promoted")
             self.assertEqual(deployed.read_bytes(), b"new-candidate")
-            self.assertTrue((deployed.parent / ".training" / "manifest.json").exists())
+            self.assertEqual(manifest["sha256"], hashlib.sha256(b"new-candidate").hexdigest())
+            self.assertFalse((state_dir / "promotion.json").exists())
 
-    async def test_failed_reload_restores_last_known_good(self):
-        from diabetic.config import config
-        from diabetic.coordinator import Coordinator
+    async def test_backup_failure_leaves_authoritative_version_unchanged(self):
         from diabetic.ml_engine import training_service
 
         with tempfile.TemporaryDirectory() as temporary:
             deployed = Path(temporary) / "weights.pth"
             deployed.write_bytes(b"last-known-good")
-            runner = SimpleNamespace(reload_weights=lambda _path: False)
-            previous_instance = Coordinator._instance
-            Coordinator._instance = SimpleNamespace(neural_runner=runner)
+            old_manifest = self._promoted_manifest(b"last-known-good")
+            state_dir = deployed.parent / ".training"
+            state_dir.mkdir()
+            (state_dir / "manifest.json").write_text(
+                json.dumps(old_manifest), encoding="utf-8"
+            )
+            original_copy = training_service._atomic_copy
 
-            async def fake_train(**kwargs):
-                return self._fake_training_result(kwargs["output_path"])
+            def fail_artifact_backup(source, destination):
+                if destination.name == "last_known_good.pth":
+                    raise OSError("synthetic backup failure")
+                return original_copy(source, destination)
 
-            try:
-                with (
-                    patch.object(config, "ML_WEIGHTS_PATH", str(deployed)),
-                    patch.object(
-                        training_service,
-                        "train_metabolic_cnn",
-                        AsyncMock(side_effect=fake_train),
-                    ),
-                ):
-                    result = await training_service.run_training_pipeline(
-                        source="mongo",
-                        epochs=1,
-                    )
-            finally:
-                Coordinator._instance = previous_instance
+            result = await self._run_pipeline(
+                deployed,
+                patches=(patch.object(training_service, "_atomic_copy", side_effect=fail_artifact_backup),),
+            )
 
             self.assertEqual(result["status"], "failed")
-            self.assertEqual(deployed.read_bytes(), b"last-known-good")
+            self._assert_authoritative_old(deployed, old_manifest)
+
+    async def test_prepare_journal_failure_leaves_authoritative_version_unchanged(self):
+        from diabetic.ml_engine import training_service
+
+        with tempfile.TemporaryDirectory() as temporary:
+            deployed = Path(temporary) / "weights.pth"
+            deployed.write_bytes(b"last-known-good")
+            old_manifest = self._promoted_manifest(b"last-known-good")
+            state_dir = deployed.parent / ".training"
+            state_dir.mkdir()
+            (state_dir / "manifest.json").write_text(
+                json.dumps(old_manifest), encoding="utf-8"
+            )
+            original_json = training_service._atomic_json
+
+            def fail_journal(path, payload):
+                if path.name == "promotion.json":
+                    raise OSError("synthetic journal failure")
+                return original_json(path, payload)
+
+            result = await self._run_pipeline(
+                deployed,
+                patches=(patch.object(training_service, "_atomic_json", side_effect=fail_journal),),
+            )
+
+            self.assertEqual(result["status"], "failed")
+            self._assert_authoritative_old(deployed, old_manifest)
+
+    async def test_replace_reload_and_manifest_boundaries_restore_old_version(self):
+        from diabetic.coordinator import Coordinator
+        from diabetic.ml_engine import training_service
+
+        boundaries = ("replace", "reload", "manifest_write", "manifest_replace")
+        for boundary in boundaries:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temporary:
+                deployed = Path(temporary) / "weights.pth"
+                deployed.write_bytes(b"last-known-good")
+                old_manifest = self._promoted_manifest(b"last-known-good")
+                state_dir = deployed.parent / ".training"
+                state_dir.mkdir()
+                (state_dir / "manifest.json").write_text(
+                    json.dumps(old_manifest), encoding="utf-8"
+                )
+                runner = SimpleNamespace(
+                    weights_loaded=True,
+                    reload_weights=MagicMock(return_value=True),
+                )
+                Coordinator._instance = SimpleNamespace(neural_runner=runner)
+                patches = []
+                if boundary == "replace":
+                    patches.append(
+                        patch.object(
+                            training_service,
+                            "_promote_candidate",
+                            side_effect=OSError("synthetic replace failure"),
+                        )
+                    )
+                elif boundary == "reload":
+                    runner.reload_weights.side_effect = [False, True]
+                elif boundary == "manifest_write":
+                    original_json = training_service._atomic_json
+
+                    def fail_manifest_write(path, payload):
+                        if path.name == "manifest.json":
+                            raise OSError("synthetic manifest write failure")
+                        return original_json(path, payload)
+
+                    patches.append(
+                        patch.object(
+                            training_service,
+                            "_atomic_json",
+                            side_effect=fail_manifest_write,
+                        )
+                    )
+                else:
+                    original_replace = os.replace
+                    failed = False
+
+                    def fail_manifest_replace(source, destination):
+                        nonlocal failed
+                        if Path(destination).name == "manifest.json" and not failed:
+                            failed = True
+                            raise OSError("synthetic manifest rename failure")
+                        return original_replace(source, destination)
+
+                    patches.append(patch("os.replace", side_effect=fail_manifest_replace))
+
+                entered = [item.__enter__() for item in patches]
+                try:
+                    result = await self._run_pipeline(deployed)
+                finally:
+                    for item in reversed(patches):
+                        item.__exit__(None, None, None)
+
+                self.assertEqual(result["status"], "failed")
+                self._assert_authoritative_old(deployed, old_manifest)
+                self.assertTrue(runner.weights_loaded)
+
+    async def test_first_promotion_failure_restores_no_model_state(self):
+        from diabetic.coordinator import Coordinator
+
+        with tempfile.TemporaryDirectory() as temporary:
+            deployed = Path(temporary) / "weights.pth"
+            runner = SimpleNamespace(
+                weights_loaded=True,
+                reload_weights=MagicMock(return_value=False),
+            )
+            Coordinator._instance = SimpleNamespace(neural_runner=runner)
+
+            result = await self._run_pipeline(deployed)
+
+            state_dir = deployed.parent / ".training"
+            self.assertEqual(result["status"], "failed")
+            self.assertFalse(deployed.exists())
+            self.assertFalse((state_dir / "manifest.json").exists())
+            self.assertFalse((state_dir / "promotion.json").exists())
+            self.assertFalse(runner.weights_loaded)
+
+    async def test_manifest_fsync_and_commit_journal_failure_restore_old_version(self):
+        from diabetic.ml_engine import training_service
+
+        boundaries = ("manifest_fsync", "commit_journal")
+        for boundary in boundaries:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temporary:
+                deployed = Path(temporary) / "weights.pth"
+                deployed.write_bytes(b"last-known-good")
+                old_manifest = self._promoted_manifest(b"last-known-good")
+                state_dir = deployed.parent / ".training"
+                state_dir.mkdir()
+                (state_dir / "manifest.json").write_text(
+                    json.dumps(old_manifest), encoding="utf-8"
+                )
+                original_json = training_service._atomic_json
+
+                if boundary == "manifest_fsync":
+                    original_fsync_dir = training_service._fsync_directory
+
+                    def fail_manifest_fsync(path):
+                        if (
+                            path == state_dir
+                            and (state_dir / "manifest.json").exists()
+                            and json.loads((state_dir / "manifest.json").read_text())["sha256"]
+                            == hashlib.sha256(b"new-candidate").hexdigest()
+                        ):
+                            raise OSError("synthetic manifest fsync failure")
+                        return original_fsync_dir(path)
+
+                    patcher = patch.object(
+                        training_service,
+                        "_fsync_directory",
+                        side_effect=fail_manifest_fsync,
+                    )
+                else:
+                    calls = 0
+
+                    def fail_commit_journal(path, payload):
+                        nonlocal calls
+                        if path.name == "promotion.json":
+                            calls += 1
+                            if calls == 2:
+                                raise OSError("synthetic commit journal failure")
+                        return original_json(path, payload)
+
+                    patcher = patch.object(
+                        training_service,
+                        "_atomic_json",
+                        side_effect=fail_commit_journal,
+                    )
+
+                with patcher:
+                    result = await self._run_pipeline(deployed)
+
+                self.assertEqual(result["status"], "failed")
+                self._assert_authoritative_old(deployed, old_manifest)
+
+    async def test_cleanup_failure_reports_committed_promotion(self):
+        from diabetic.ml_engine import training_service
+
+        with tempfile.TemporaryDirectory() as temporary:
+            deployed = Path(temporary) / "weights.pth"
+            deployed.write_bytes(b"last-known-good")
+            state_dir = deployed.parent / ".training"
+            state_dir.mkdir()
+            (state_dir / "manifest.json").write_text(
+                json.dumps(self._promoted_manifest(b"last-known-good")),
+                encoding="utf-8",
+            )
+
+            result = await self._run_pipeline(
+                deployed,
+                patches=(
+                    patch.object(
+                        training_service,
+                        "_cleanup_transaction",
+                        side_effect=OSError("synthetic cleanup failure"),
+                    ),
+                ),
+            )
+
+            manifest = json.loads((state_dir / "manifest.json").read_text())
+            self.assertEqual(result["status"], "promoted")
+            self.assertEqual(deployed.read_bytes(), b"new-candidate")
+            self.assertEqual(manifest["sha256"], result["sha256"])
+            self.assertTrue((state_dir / "promotion.json").exists())
+
+    async def test_restart_rolls_back_prepared_transaction(self):
+        from diabetic.ml_engine import training_service
+
+        with tempfile.TemporaryDirectory() as temporary:
+            deployed = Path(temporary) / "weights.pth"
+            deployed.write_bytes(b"new-candidate")
+            paths = training_service.PromotionPaths.for_deployed(deployed)
+            paths.state_dir.mkdir()
+            paths.backup.write_bytes(b"last-known-good")
+            old_manifest = self._promoted_manifest(b"last-known-good")
+            paths.manifest_backup.write_text(json.dumps(old_manifest), encoding="utf-8")
+            paths.manifest.write_text(
+                json.dumps(self._promoted_manifest(b"new-candidate")), encoding="utf-8"
+            )
+            paths.journal.write_text(
+                json.dumps(
+                    {
+                        "state": "prepared",
+                        "candidate_sha256": hashlib.sha256(b"new-candidate").hexdigest(),
+                        "previous_exists": True,
+                        "previous_sha256": hashlib.sha256(b"last-known-good").hexdigest(),
+                        "previous_manifest_exists": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = training_service.recover_training_state(deployed)
+
+            self.assertEqual(state, "rolled_back")
+            self._assert_authoritative_old(deployed, old_manifest)
+
+    async def test_restart_keeps_durably_committed_transaction(self):
+        from diabetic.ml_engine import training_service
+
+        with tempfile.TemporaryDirectory() as temporary:
+            deployed = Path(temporary) / "weights.pth"
+            deployed.write_bytes(b"new-candidate")
+            paths = training_service.PromotionPaths.for_deployed(deployed)
+            paths.state_dir.mkdir()
+            manifest = self._promoted_manifest(b"new-candidate")
+            paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+            paths.journal.write_text(
+                json.dumps(
+                    {
+                        "state": "committed",
+                        "candidate_sha256": manifest["sha256"],
+                        "previous_exists": False,
+                        "previous_manifest_exists": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = training_service.recover_training_state(deployed)
+
+            self.assertEqual(state, "committed")
+            self.assertEqual(deployed.read_bytes(), b"new-candidate")
+            self.assertEqual(json.loads(paths.manifest.read_text()), manifest)
+            self.assertFalse(paths.journal.exists())
+
+    async def test_inference_startup_fails_closed_when_recovery_fails(self):
+        from diabetic.config import config
+        from diabetic.ml_engine import inference, training_service
+
+        with tempfile.TemporaryDirectory() as temporary:
+            deployed = Path(temporary) / "weights.pth"
+            deployed.write_bytes(b"untrusted")
+            with (
+                patch.object(config, "ML_WEIGHTS_PATH", str(deployed)),
+                patch.object(
+                    training_service,
+                    "recover_training_state",
+                    side_effect=RuntimeError("synthetic recovery failure"),
+                ),
+                patch.object(inference.torch, "load") as load,
+            ):
+                runner = inference.MetabolicInferenceRunner()
+
+        self.assertFalse(runner.weights_loaded)
+        load.assert_not_called()
 
 
 if __name__ == "__main__":

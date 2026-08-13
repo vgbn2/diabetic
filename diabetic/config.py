@@ -87,7 +87,12 @@ class Settings(BaseSettings):
     # Local High-Availability (Task 8.1.1)
     LOCAL_DB_PATH: str = "storage/audit.db"
     BACKFILL_MAX_HOURS: int = 24
-    RETENTION_DAYS: int = Field(180, validation_alias="BIO_RETENTION_DAYS")
+    RETENTION_DAYS: int = Field(
+        180,
+        ge=1,
+        le=3650,
+        validation_alias="BIO_RETENTION_DAYS",
+    )
     HUD_STALE_AFTER_SECS: int = Field(900, validation_alias="BIO_HUD_STALE_AFTER_SECS")
     LOCAL_GUI_ENABLED: bool = True
 

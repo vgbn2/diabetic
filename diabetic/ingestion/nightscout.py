@@ -2,8 +2,9 @@ import httpx
 import hashlib
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 from diabetic.registry import (
     GlucoseReading,
     InsulinDose,
@@ -13,6 +14,17 @@ from diabetic.registry import (
 from diabetic.config import config
 from diabetic import medical_constants
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
+
+AccessState = Literal[
+    "ok", "rejected", "rate_limited", "misconfigured", "unreachable"
+]
+
+
+@dataclass(frozen=True)
+class NightscoutAccessResult:
+    state: AccessState
+    reason: Optional[str] = None
+
 
 class NightscoutClient:
     """
@@ -25,6 +37,7 @@ class NightscoutClient:
         # Compute all auth artifacts immediately and let the plaintext go out of scope.
         # This prevents secret leakage through repr(), tracebacks, or memory dumps.
         _raw = config.API_SECRET
+        self.has_credentials = bool(_raw)
         self.hashed_secret = hashlib.sha1(_raw.encode()).hexdigest()
         # Detect token mode (long access tokens with dashes vs short hashed passwords)
         self._is_token_mode = len(_raw) > 24 or '-' in _raw or _raw.startswith("subject-")
@@ -94,6 +107,36 @@ class NightscoutClient:
         # Never fall through to None — callers contract on httpx.Response.
         raise RuntimeError(f"Auth retry exhausted for {endpoint} without a response")
 
+    async def probe_access(self) -> NightscoutAccessResult:
+        """Probe the authenticated entries path without exposing provider details."""
+        if not self.url or not self.has_credentials:
+            return NightscoutAccessResult(
+                state="misconfigured", reason="missing_url_or_credential"
+            )
+        endpoint = f"{self.url}/api/v1/entries.json"
+        try:
+            await self._request_with_auth_retry(endpoint, {"count": 1})
+            return NightscoutAccessResult(state="ok")
+        except httpx.HTTPStatusError as error:
+            status_code = error.response.status_code
+            if status_code in {401, 403}:
+                state: AccessState = "rejected"
+            elif status_code == 429:
+                state = "rate_limited"
+            else:
+                state = "unreachable"
+            return NightscoutAccessResult(
+                state=state, reason=f"http_{status_code}"
+            )
+        except (httpx.TimeoutException, httpx.NetworkError) as error:
+            return NightscoutAccessResult(
+                state="unreachable", reason=error.__class__.__name__
+            )
+        except Exception as error:
+            return NightscoutAccessResult(
+                state="unreachable", reason=error.__class__.__name__
+            )
+
     async def fetch_recent_glucose(self, count: int = 20) -> List[GlucoseReading]:
         """Fetches the last N glucose entries from Nightscout with exponential backoff."""
         endpoint = f"{self.url}/api/v1/entries.json"
@@ -134,13 +177,10 @@ class NightscoutClient:
                     )
                     continue
 
-                if config.PREFER_MMOL:
-                    value = mmol_value
-                    unit = "mmol/L"
-                else:
-                    value = mmol_value * medical_constants.MMOL_TO_MGDL
-                    unit = "mg/dL"
-                
+                # Clinical processing is always mmol/L. Display conversion belongs
+                # exclusively to presentation adapters.
+                value = mmol_value
+
                 # Robust timestamp parsing
                 ts_str = entry['dateString'].replace('Z', '+00:00')
                 try:
@@ -158,7 +198,9 @@ class NightscoutClient:
                     value=round(value, 2),
                     trend=entry.get('direction', 'Flat'),
                     source="nightscout",
-                    unit=unit
+                    source_event_id=(
+                        str(entry["_id"]) if entry.get("_id") is not None else None
+                    ),
                 ))
         return readings
 
