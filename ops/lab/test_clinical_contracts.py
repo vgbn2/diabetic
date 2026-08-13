@@ -2,14 +2,19 @@
 
 import asyncio
 import math
+import os
+import subprocess
+import sys
+import textwrap
 import unittest
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
 from diabetic import medical_constants
-from diabetic.config import config
+from diabetic.config import Settings, config
 from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.ingestion.mongo import MongoDBClient
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
@@ -21,6 +26,67 @@ from diabetic.registry import (
     MetabolicSnapshot,
 )
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix
+
+
+class TestPatientSettingsValidation(unittest.TestCase):
+    def test_patient_numeric_bounds_are_constructor_constraints(self):
+        invalid = {
+            "PATIENT_WEIGHT_KG": (11.9, 300.1),
+            "PATIENT_HEIGHT_CM": (59.9, 250.1),
+            "PATIENT_AGE": (4, 111),
+        }
+        for field, values in invalid.items():
+            for value in values:
+                with self.subTest(field=field, value=value), self.assertRaises(
+                    ValidationError
+                ):
+                    Settings(_env_file=None, **{field: value})
+
+    def test_patient_type_and_gender_are_normalized_and_constrained(self):
+        settings = Settings(
+            _env_file=None,
+            PATIENT_DIABETES_TYPE="lada",
+            PATIENT_GENDER="other",
+        )
+        self.assertEqual(settings.PATIENT_DIABETES_TYPE, "LADA")
+        self.assertEqual(settings.PATIENT_GENDER, "OTHER")
+
+        for field, value in (
+            ("PATIENT_DIABETES_TYPE", "unknown"),
+            ("PATIENT_GENDER", "unknown"),
+        ):
+            with self.subTest(field=field), self.assertRaises(ValidationError):
+                Settings(_env_file=None, **{field: value})
+
+    def test_optimized_python_rejects_invalid_patient_profile(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+        source = textwrap.dedent(
+            """
+            from pydantic import ValidationError
+            from diabetic.config import Settings
+            invalid = [
+                {"PATIENT_WEIGHT_KG": 0},
+                {"PATIENT_HEIGHT_CM": 500},
+                {"PATIENT_AGE": 1},
+                {"PATIENT_DIABETES_TYPE": "unknown"},
+                {"PATIENT_GENDER": "unknown"},
+            ]
+            for values in invalid:
+                try:
+                    Settings(_env_file=None, **values)
+                except ValidationError:
+                    continue
+                raise SystemExit(f"accepted invalid profile: {values}")
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", source],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 class TestNightscoutUnitContract(unittest.TestCase):

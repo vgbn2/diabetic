@@ -4,7 +4,10 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Optional, List
+from urllib.parse import quote
+
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
 from diabetic.utils.db import db_manager
@@ -23,6 +26,59 @@ class AuditWriteResult:
 # 📖 [AUDIT CONNECTIVITY]
 # =Focus: Persistent Logging Initialization (MongoDB + SQLite WAL)
 # =============================================================================
+class LocalAuditReader:
+    """Own a read-only local audit connection for one bounded query scope."""
+
+    def __init__(self, local_db_path: str | Path):
+        self.local_db_path = Path(local_db_path)
+        self.local_conn: Optional[sqlite3.Connection] = None
+        self.closed = False
+
+    async def __aenter__(self) -> "LocalAuditReader":
+        if self.closed:
+            raise RuntimeError("local audit reader is closed")
+        if self.local_conn is None and self.local_db_path.is_file():
+            uri = f"file:{quote(str(self.local_db_path.resolve()))}?mode=ro"
+            self.local_conn = await asyncio.to_thread(
+                sqlite3.connect,
+                uri,
+                uri=True,
+                check_same_thread=False,
+                timeout=5.0,
+            )
+        return self
+
+    async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
+        await self.close()
+
+    async def get_last_reading_timestamp(self) -> Optional[datetime]:
+        connection = self.local_conn
+        if connection is None:
+            return None
+
+        def _query_db():
+            cursor = connection.execute(
+                "SELECT timestamp FROM audit_logs "
+                "WHERE event_type = ? ORDER BY timestamp DESC LIMIT 1",
+                ("RAW_READING",),
+            )
+            return cursor.fetchone()
+
+        try:
+            row = await asyncio.to_thread(_query_db)
+        except sqlite3.Error:
+            return None
+        return datetime.fromisoformat(row[0]) if row else None
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        connection, self.local_conn = self.local_conn, None
+        if connection is not None:
+            await asyncio.to_thread(connection.close)
+
+
 class AuditLogger:
     """
     Persistent Audit Logger using MongoDB and local SQLite.
@@ -42,6 +98,7 @@ class AuditLogger:
         
         # GC Protection for background tasks (Phase 0.5 Remediation)
         self.background_tasks = set()
+        self.closed = False
 
         # Initialize SQLite (Task 8.1.2)
         try:
@@ -270,6 +327,16 @@ class AuditLogger:
         except Exception as e:
             self.logger.error(f"Failed to query local last timestamp: {e}")
         return None
+
+    async def close(self) -> None:
+        """Idempotently close the local writer connection owned by this logger."""
+        if self.closed:
+            return
+        self.closed = True
+        connection = getattr(self, "local_conn", None)
+        if connection is not None:
+            del self.local_conn
+            await asyncio.to_thread(connection.close)
 
     async def log_feedback(
         self,

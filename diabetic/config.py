@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict, Literal
 from diabetic import medical_constants
@@ -34,14 +34,29 @@ class Settings(BaseSettings):
 # -----------------------------------------------------------------------------
 # PATIENT PROFILE: Physiological Baselines
 # -----------------------------------------------------------------------------
-    PATIENT_AGE: int = Field(30, validation_alias="PATIENT_AGE")
-    PATIENT_WEIGHT_KG: float = Field(45.0, validation_alias="PATIENT_WEIGHT_KG")
-    PATIENT_HEIGHT_CM: float = Field(158.0, validation_alias="PATIENT_HEIGHT_CM")
+    PATIENT_AGE: int = Field(30, ge=5, le=110, validation_alias="PATIENT_AGE")
+    PATIENT_WEIGHT_KG: float = Field(
+        45.0,
+        ge=12,
+        le=300,
+        validation_alias="PATIENT_WEIGHT_KG",
+    )
+    PATIENT_HEIGHT_CM: float = Field(
+        158.0,
+        ge=60,
+        le=250,
+        validation_alias="PATIENT_HEIGHT_CM",
+    )
     PATIENT_ETHNICITY: str = Field("UNKNOWN", validation_alias="PATIENT_ETHNICITY")
     PATIENT_NATIONALITY: str = Field("UNKNOWN", validation_alias="PATIENT_NATIONALITY")
     PATIENT_RELIGION: str = Field("NON_RELIGIOUS", validation_alias="PATIENT_RELIGION")
-    PATIENT_GENDER: str = Field("FEMALE", validation_alias="PATIENT_GENDER")
-    PATIENT_DIABETES_TYPE: str = Field("T1D", validation_alias="PATIENT_DIABETES_TYPE")
+    PATIENT_GENDER: Literal["MALE", "FEMALE", "OTHER"] = Field(
+        "FEMALE",
+        validation_alias="PATIENT_GENDER",
+    )
+    PATIENT_DIABETES_TYPE: Literal[
+        "T1D", "T2D", "LADA", "MODY", "PREDIABETES"
+    ] = Field("T1D", validation_alias="PATIENT_DIABETES_TYPE")
     PATIENT_DIAGNOSIS_YEAR: int = Field(2020, validation_alias="PATIENT_DIAGNOSIS_YEAR")
     PATIENT_ACTIVITY_LEVEL: str = Field("MODERATE", validation_alias="PATIENT_ACTIVITY_LEVEL")
     
@@ -120,24 +135,16 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    def validate_patient_params(self):
-        """H3: Physiological input bounds — reject implausible values."""
-        assert 12 <= self.PATIENT_WEIGHT_KG <= 300, f"Implausible weight: {self.PATIENT_WEIGHT_KG}"
-        assert 60 <= self.PATIENT_HEIGHT_CM <= 250, f"Implausible height: {self.PATIENT_HEIGHT_CM}"
-        assert 5 <= self.PATIENT_AGE <= 110, f"Implausible age: {self.PATIENT_AGE}"
-        # Note: twin.py calls .upper() on these, so we validate uppercase forms.
-        assert self.PATIENT_DIABETES_TYPE.upper() in ("T1D", "T2D", "LADA", "MODY", "PREDIABETES"), \
-            f"Unknown diabetes type: {self.PATIENT_DIABETES_TYPE}"
-        assert self.PATIENT_GENDER.upper() in ("MALE", "FEMALE", "OTHER"), \
-            f"Unknown gender: {self.PATIENT_GENDER}"
+    @field_validator("PATIENT_GENDER", "PATIENT_DIABETES_TYPE", mode="before")
+    @classmethod
+    def normalize_patient_enums(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
 
     def validate_config(self):
         """
         Wave 1 Hardening: Verifies required metadata and connectivity secrets at boot.
         Prevents silent degraded operation in production.
         """
-        self.validate_patient_params()
-        
         # Phase 4.1 Hardening: Validate Timezone
         try:
             from zoneinfo import ZoneInfo

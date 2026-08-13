@@ -123,6 +123,7 @@ class Coordinator:
 
         self.logger = logging.getLogger("Bio-Quant.Coordinator")
         self.background_tasks = set()
+        self._owns_audit_logger = audit_logger is None
         self.audit = audit_logger or AuditLogger()
         self.client = NightscoutClient()
         self.mongo = MongoDBClient()
@@ -1263,6 +1264,9 @@ class Coordinator:
             close = getattr(resource, "close", None)
             if close is not None:
                 await close()
+        audit = getattr(self, "audit", None)
+        if getattr(self, "_owns_audit_logger", False) and audit is not None:
+            await audit.close()
         await close_storage_db()
 
         async with self._lifecycle_lock:

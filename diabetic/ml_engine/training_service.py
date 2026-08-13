@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import hashlib
 import json
 import logging
@@ -13,13 +12,17 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 from diabetic.config import config
 from diabetic.ml_engine.train import TrainingResult, train_metabolic_cnn
 
 logger = logging.getLogger("Bio-Quant.ML.TrainingService")
 _PROCESS_LOCK = asyncio.Lock()
+
+
+class TrainingLockUnavailableError(RuntimeError):
+    """The current platform cannot provide the required process lock."""
 
 
 @dataclass(frozen=True)
@@ -64,7 +67,10 @@ def _fsync_file(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if directory_flag is None:
+        return
+    descriptor = os.open(path, os.O_RDONLY | directory_flag)
     try:
         os.fsync(descriptor)
     finally:
@@ -111,18 +117,50 @@ def _read_json(path: Path) -> dict:
     return value
 
 
+def _lock_training_stream(stream) -> Callable[[], None]:
+    """Acquire the platform lock lazily so read-only CLI imports stay portable."""
+    try:
+        import fcntl
+    except ModuleNotFoundError:
+        try:
+            import msvcrt
+        except ModuleNotFoundError as exc:
+            raise TrainingLockUnavailableError(
+                "model training requires a supported process file lock"
+            ) from exc
+
+        stream.seek(0)
+        if stream.read(1) == "":
+            stream.write("\0")
+            stream.flush()
+        stream.seek(0)
+        try:
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            raise RuntimeError("another training process owns the lock") from exc
+
+        def release() -> None:
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+
+        return release
+
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        raise RuntimeError("another training process owns the lock") from exc
+    return lambda: fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
 @contextmanager
 def _training_file_lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as stream:
-        try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("another training process owns the lock") from exc
+        release = _lock_training_stream(stream)
         try:
             yield
         finally:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            release()
 
 
 def _current_runner():
@@ -411,6 +449,8 @@ async def run_training_pipeline(
                     )
         except Exception as exc:
             failure = _failure_payload(started, source, exc)
+            if isinstance(exc, TrainingLockUnavailableError):
+                failure["reason"] = str(exc)
             _write_attempt_best_effort(paths, failure)
             logger.exception("Training lock acquisition failed.")
             return failure

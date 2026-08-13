@@ -102,9 +102,10 @@ async def get_system_health() -> dict:
         reading_source = "coordinator"
     else:
         try:
-            from diabetic.utils.audit_logger import AuditLogger
+            from diabetic.utils.audit_logger import LocalAuditReader
 
-            last_ts = await AuditLogger().get_last_reading_timestamp()
+            async with LocalAuditReader(config.LOCAL_DB_PATH) as audit_reader:
+                last_ts = await audit_reader.get_last_reading_timestamp()
             if last_ts is not None:
                 reading_source = "audit"
         except Exception as exc:

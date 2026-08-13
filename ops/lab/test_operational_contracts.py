@@ -5,6 +5,7 @@ import unittest
 import hashlib
 import json
 import os
+import sqlite3
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -274,6 +275,94 @@ class TestTreatmentState(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(snapshot.last_meal)
 
 
+class TestLocalAuditReadOwnership(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_store_is_read_without_creation(self):
+        from diabetic.utils.audit_logger import LocalAuditReader
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "missing.db"
+            async with LocalAuditReader(path) as reader:
+                self.assertIsNone(await reader.get_last_reading_timestamp())
+            self.assertFalse(path.exists())
+
+    async def test_existing_store_reads_timestamp_and_double_close_is_safe(self):
+        from diabetic.utils.audit_logger import LocalAuditReader
+
+        timestamp = datetime.now(timezone.utc)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "audit.db"
+            connection = sqlite3.connect(path)
+            connection.execute(
+                """
+                CREATE TABLE audit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    data TEXT
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO audit_logs (timestamp, event_type, level, data) VALUES (?, ?, ?, ?)",
+                (timestamp.isoformat(), "RAW_READING", "INFO", "{}"),
+            )
+            connection.commit()
+            connection.close()
+
+            reader = LocalAuditReader(path)
+            async with reader:
+                self.assertEqual(await reader.get_last_reading_timestamp(), timestamp)
+            await reader.close()
+            self.assertTrue(reader.closed)
+
+    async def test_audit_writer_double_close_is_safe(self):
+        from diabetic.utils.audit_logger import AuditLogger
+
+        with tempfile.TemporaryDirectory() as temporary:
+            audit = AuditLogger(str(Path(temporary) / "audit.db"))
+            await audit.close()
+            await audit.close()
+            self.assertTrue(audit.closed)
+
+    async def test_cold_health_owns_reader_and_never_constructs_writer(self):
+        from diabetic.config import config
+        from diabetic.coordinator import Coordinator
+        from diabetic.utils import health as health_module
+
+        Coordinator._instance = SimpleNamespace(
+            _initialized=True,
+            snapshots=[],
+            neural_runner=SimpleNamespace(weights_loaded=False),
+        )
+        reader = AsyncMock()
+        reader.__aenter__.return_value = reader
+        reader.__aexit__.return_value = False
+        reader.get_last_reading_timestamp.return_value = None
+        with (
+            patch.object(config, "ML_WEIGHTS_PATH", "/missing/weights.pth"),
+            patch.object(
+                health_module, "_nightscout_status", AsyncMock(return_value="ok")
+            ),
+            patch.object(health_module, "_mongo_status", AsyncMock(return_value="ok")),
+            patch(
+                "diabetic.utils.audit_logger.LocalAuditReader",
+                return_value=reader,
+            ) as reader_type,
+            patch(
+                "diabetic.utils.audit_logger.AuditLogger",
+                side_effect=AssertionError("health constructed audit writer"),
+            ),
+        ):
+            health = await health_module.get_system_health()
+
+        reader_type.assert_called_once_with(config.LOCAL_DB_PATH)
+        reader.__aenter__.assert_awaited_once()
+        reader.get_last_reading_timestamp.assert_awaited_once()
+        reader.__aexit__.assert_awaited_once()
+        self.assertFalse(health["ready"])
+
+
 class TestRuntimeReadiness(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         from diabetic.coordinator import Coordinator
@@ -398,6 +487,10 @@ class TestRuntimeReadiness(unittest.IsolatedAsyncioTestCase):
             snapshots=[],
             neural_runner=SimpleNamespace(weights_loaded=False),
         )
+        reader = AsyncMock()
+        reader.__aenter__.return_value = reader
+        reader.__aexit__.return_value = False
+        reader.get_last_reading_timestamp.return_value = None
         with (
             patch.object(config, "ML_WEIGHTS_PATH", "/missing/weights.pth"),
             patch.object(
@@ -405,8 +498,8 @@ class TestRuntimeReadiness(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(health_module, "_mongo_status", AsyncMock(return_value="ok")),
             patch(
-                "diabetic.utils.audit_logger.AuditLogger.get_last_reading_timestamp",
-                AsyncMock(return_value=None),
+                "diabetic.utils.audit_logger.LocalAuditReader",
+                return_value=reader,
             ),
         ):
             health = await health_module.get_system_health()

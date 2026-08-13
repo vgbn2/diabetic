@@ -259,6 +259,37 @@ class TestCoordinatorShutdown(unittest.IsolatedAsyncioTestCase):
 
         self.coordinator.client.close.assert_awaited_once()
 
+    async def test_shutdown_closes_only_owned_audit_logger(self):
+        self.coordinator.audit = SimpleNamespace(close=AsyncMock())
+        self.coordinator._owns_audit_logger = True
+        with (
+            patch("diabetic.telegram_bot.twa_api.clear_api_coordinator"),
+            patch("diabetic.coordinator.close_storage_db", AsyncMock()),
+        ):
+            await self.coordinator.shutdown()
+        self.coordinator.audit.close.assert_awaited_once()
+
+        Coordinator._instance = None
+        injected = Coordinator()
+        injected.logger = MagicMock()
+        injected._initialized = True
+        injected._lifecycle_state = "running"
+        injected.is_running = True
+        injected.background_tasks = set()
+        injected._scheduler_task = None
+        injected.bot_app = None
+        injected.client = SimpleNamespace(close=AsyncMock())
+        injected.mongo = SimpleNamespace(close=AsyncMock())
+        injected.weather_client = SimpleNamespace(close=AsyncMock())
+        injected.audit = SimpleNamespace(close=AsyncMock())
+        injected._owns_audit_logger = False
+        with (
+            patch("diabetic.telegram_bot.twa_api.clear_api_coordinator"),
+            patch("diabetic.coordinator.close_storage_db", AsyncMock()),
+        ):
+            await injected.shutdown()
+        injected.audit.close.assert_not_awaited()
+
 
 class TestTwaProjection(unittest.TestCase):
     def test_clear_only_removes_the_current_owner(self):
