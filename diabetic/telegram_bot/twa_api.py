@@ -187,6 +187,12 @@ async def update_calibration(traits: dict):
         return {"status": "success", "message": "Bio-Traits Recalibrated"}
     return {"status": "error", "message": "Profile not found or no valid fields"}
 
+def clear_api_coordinator(coordinator_instance=None):
+    """Clears the global COORDINATOR_REF if it matches."""
+    global COORDINATOR_REF
+    if coordinator_instance is None or COORDINATOR_REF is coordinator_instance:
+        COORDINATOR_REF = None
+
 def start_api(coordinator_instance):
     """Helper to launch the API in a background thread or separate process."""
     global COORDINATOR_REF

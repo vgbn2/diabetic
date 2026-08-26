@@ -10,9 +10,12 @@ Namespacing: tool names are `bio_*` per CROSS_PROJECT_LEARNINGS §5.
 DB-agnostic: tools read through `get_system_health()` / config, so a future
 MongoDB→Supabase migration does not change this surface.
 """
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP("bio-quant")
+try:
+    from mcp.server.fastmcp import FastMCP
+    mcp = FastMCP("bio-quant")
+except ImportError:
+    FastMCP = None
+    mcp = None
 
 
 # --- tool implementations (thin; reuse existing Bio-Quant code) --------------
@@ -47,8 +50,9 @@ TOOL_SPECS = [
     {"name": "bio_config", "fn": bio_config, "description": "Configuration dump with secrets masked (read-only)."},
 ]
 
-for _spec in TOOL_SPECS:
-    mcp.add_tool(_spec["fn"], name=_spec["name"], description=_spec["description"])
+if mcp is not None:
+    for _spec in TOOL_SPECS:
+        mcp.add_tool(_spec["fn"], name=_spec["name"], description=_spec["description"])
 
 
 def main() -> None:

@@ -203,6 +203,14 @@ class AuditLogger:
             **details
         }, level="WARNING")
 
+    async def close(self):
+        """Closes local SQLite connection and flushes pending tasks."""
+        if hasattr(self, "local_conn") and self.local_conn:
+            try:
+                self.local_conn.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing audit sqlite connection: {e}")
+
 if __name__ == "__main__":
     import asyncio
     async def test():

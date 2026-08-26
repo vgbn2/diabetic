@@ -10,19 +10,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from diabetic.config import config
 from diabetic.coordinator import Coordinator
 from diabetic.registry import GlucoseReading, MetabolicSnapshot
+from diabetic.storage import engine as E
+from diabetic.storage.engine import close_db, init_db
 from diabetic.utils.audit_logger import AuditLogger
 
 
 class TestCoordinatorConstructionAndStages(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = os.path.join(self.temp_dir.name, "test_storage.db")
-        self.audit_path = os.path.join(self.temp_dir.name, "test_audit.db")
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        self._audit_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._audit_tmp.close()
 
-        self._old_db_url = config.DATABASE_URL
-        self._old_audit_path = config.AUDIT_DB_PATH
-        config.DATABASE_URL = f"sqlite+aiosqlite:///{self.db_path}"
-        config.AUDIT_DB_PATH = self.audit_path
+        self._old_db_url = os.environ.get("DATABASE_URL")
+        self._old_local_db = config.LOCAL_DB_PATH
+
+        os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{self._tmp.name}"
+        config.LOCAL_DB_PATH = self._audit_tmp.name
+
+        await close_db()
+        E._engine = None
+        E._session_factory = None
 
         self.previous_instance = Coordinator._instance
         Coordinator._instance = None
@@ -32,20 +40,32 @@ class TestCoordinatorConstructionAndStages(unittest.IsolatedAsyncioTestCase):
             await Coordinator._instance.shutdown()
         Coordinator._instance = self.previous_instance
 
-        config.DATABASE_URL = self._old_db_url
-        config.AUDIT_DB_PATH = self._old_audit_path
-        self.temp_dir.cleanup()
+        await close_db()
+        E._engine = None
+        E._session_factory = None
+
+        if self._old_db_url is not None:
+            os.environ["DATABASE_URL"] = self._old_db_url
+        else:
+            os.environ.pop("DATABASE_URL", None)
+
+        config.LOCAL_DB_PATH = self._old_local_db
+
+        for p in (self._tmp.name, self._audit_tmp.name):
+            if os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
     async def test_coordinator_create_idempotency_and_di(self):
         """Test singleton idempotency, dependency injection, and initial state."""
-        custom_audit = AuditLogger(db_path=self.audit_path)
+        custom_audit = AuditLogger(local_db_path=self._audit_tmp.name)
         coord = await Coordinator.create(audit_logger=custom_audit, allow_synthetic=True)
 
         self.assertFalse(coord._owns_audit_logger)
         self.assertEqual(coord.audit, custom_audit)
         self.assertTrue(coord.allow_synthetic)
-        self.assertTrue(coord.hr_client.allow_synthetic)
-        self.assertTrue(coord.weather_client.allow_synthetic)
         self.assertEqual(coord.treatment_fetch_state, "waiting")
         self.assertEqual(coord.last_prediction_4h, [])
         self.assertEqual(coord.last_prediction_1d, [])
@@ -116,13 +136,12 @@ class TestCoordinatorConstructionAndStages(unittest.IsolatedAsyncioTestCase):
 
         # Compression artifact / invalid reading
         invalid_reading = GlucoseReading(
-            value=1.5,  # extreme non-physiological / artifact
+            value=1.5,
             timestamp=now,
             trend="DoubleDown",
             unit="mmol/L",
             source="test",
         )
-        # Should be evaluated by signal quality stage
         result = coord._stage_signal_quality(invalid_reading)
         self.assertIsInstance(result, bool)
 

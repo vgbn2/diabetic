@@ -325,15 +325,15 @@ class Coordinator:
 
     def _stage_signal_quality(self, reading: GlucoseReading) -> bool:
         """Stage 1: Verify signal quality, artifact rejection, and freshness."""
-        quality = SignalQuality.assess(reading, list(self.snapshots))
-        if quality.is_compression_low:
+        reading_history = [s.glucose for s in self.snapshots] + [reading]
+        if SignalQuality.is_compression_low(reading_history):
             self.logger.warning(
                 "COMPRESSION ARTIFACT (LOW): Sensor reading dropped precipitously. "
                 "Bypassing filter update and alerting to prevent false hypoglycemia intervention."
             )
             return False
 
-        if quality.is_compression_spike:
+        if SignalQuality.is_compression_spike(reading_history):
             self.logger.warning(
                 "COMPRESSION ARTIFACT (SPIKE): Transient rate-of-change spike detected. "
                 "Suppressing spurious alert triggers."
