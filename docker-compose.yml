@@ -40,7 +40,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:1337/api/v1/status.json').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+          "const http = require('http'); const os = require('os'); const crypto = require('crypto'); const secret = process.env.API_SECRET || ''; const hash = crypto.createHash('sha1').update(secret).digest('hex'); const req = http.request({hostname: os.hostname(), port: 1337, path: '/api/v1/status.json', headers: {'api-secret': hash}}, res => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.end();",
         ]
       interval: 15s
       timeout: 5s

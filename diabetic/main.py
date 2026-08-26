@@ -100,6 +100,7 @@ async def _run_command_loop():
                 elif cmd == "live":
                     from diabetic.ml_engine.scheduler import MetabolicScheduler
                     coordinator = await Coordinator.create(allow_synthetic=False)
+                    await coordinator.begin_start()
 
                     # Start TWA bridge in a background thread so COORDINATOR_REF
                     # is set in the same process — fixes the Docker split-container gap.
