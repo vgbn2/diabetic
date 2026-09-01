@@ -126,7 +126,7 @@ async def _run_command_loop():
                     break
                 else:
                     logger.error(f"Unknown command: {cmd}")
-                    logger.error("Usage: python -m diabetic.main [crash|faint|simulation|live|export|cleanup|health|tui]")
+                    logger.error("Usage: python -m diabetic.main [crash|faint|simulation|normal|live|export|cleanup|health|tui]")
                     break
             else:
                 # Default to regular simulation

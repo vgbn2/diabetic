@@ -71,6 +71,16 @@ class Coordinator:
         if self._initialized:
             return self
 
+        await self._init_dependencies(audit_logger=audit_logger, allow_synthetic=allow_synthetic)
+        return self
+
+    async def _init_dependencies(
+        self,
+        audit_logger: Optional['AuditLogger'] = None,
+        *,
+        allow_synthetic: bool = False,
+    ):
+        """Internal dependency wiring and state initialization seam."""
         self.logger = logging.getLogger("Bio-Quant.Coordinator")
         self.background_tasks = set()
         self.audit = audit_logger or AuditLogger()
@@ -138,7 +148,7 @@ class Coordinator:
         # snapshot.predict_30m which is a short-horizon kinematic value.
         self.pending_meal_forecast_peak: Optional[float] = None
         self._confidence_smoothed: float = 1.0
-        
+
         # O1: Consolidated Tactical Forecaster (physiology-aware)
         self.forecaster = TacticalForecaster(
             age=config.PATIENT_AGE,
@@ -147,7 +157,7 @@ class Coordinator:
 
         self.is_running = False
         self._initialized = True
-        
+
         # Sovereign Atlas Level 2: Async ingestion queue
         self.ingestion_queue = asyncio.Queue(maxsize=120)
         self.worker_task: Optional[asyncio.Task] = None
@@ -227,15 +237,8 @@ class Coordinator:
                 return max(candidates, key=lambda item: item.timestamp)
         return None
 
-    async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
-        """Standard processing pipeline for a single reading."""
-        self.regime_step_count += 1
-        
-        task = asyncio.create_task(self.audit.log_reading(reading))
-        self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
-
-        # 1. Signal Quality Check
+    def _check_signal_quality_and_freshness(self, reading: GlucoseReading) -> tuple[bool, datetime]:
+        """Validates signal compression artifacts and freshness."""
         history = [snapshot.glucose for snapshot in self.snapshots] + [reading]
         if len(history) < medical_constants.SIGNAL_MIN_HISTORY:
             self.logger.debug(
@@ -243,20 +246,19 @@ class Coordinator:
             )
         if SignalQuality.is_compression_low(history):
             self.logger.warning(f"Signal artifact detected at {reading.timestamp}. Skipping.")
-            return
+            return False, reading.timestamp
         if SignalQuality.is_compression_spike(history):
             self.logger.warning(f"Post-hypo spike artifact detected at {reading.timestamp} (value={reading.value:.1f}). Skipping.")
-            return
+            return False, reading.timestamp
 
-        # 1b. Freshness Check
-        # FIX C1: always use UTC-aware now; normalise incoming timestamp if naive.
+        # Freshness Check
         now = datetime.now(timezone.utc)
         reading_ts = reading.timestamp
         if reading_ts.tzinfo is None:
             reading_ts = reading_ts.replace(tzinfo=timezone.utc)
         if (now - reading_ts).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
             self.logger.warning(f"Stale data ignored: {reading.timestamp} is too old.")
-            return
+            return False, reading_ts
 
         if self.snapshots:
             last_reading_time = self.snapshots[-1].glucose.timestamp
@@ -266,10 +268,10 @@ class Coordinator:
             if dt > medical_constants.STALE_DATA_TIMEOUT_SECS:
                 self.logger.warning(f"Metabolic data is STALE ({dt/60:.1f} mins old). Prediction accuracy reduced.")
 
-        # 2. Smoothing (Kalman)
-        snapshot = self.filter.update(reading)
+        return True, reading_ts
 
-        # 3. Treatment & Cardiac Ingestion
+    async def _collect_metabolic_context(self, snapshot: MetabolicSnapshot, now: datetime, is_backfill: bool = False):
+        """Fetches treatments, biometric data, weather, and computes COB/IOB."""
         try:
             tr_task = self._fetch_recent_treatments(count=10)
             hr_task = self.hr_client.fetch_latest()
@@ -311,7 +313,7 @@ class Coordinator:
             else:
                 self.logger.warning(f"Cardiac ingestion failed: {hr_res}")
                 snapshot.cardiac = None
-            
+
             we_res = results[2]
             if (
                 not isinstance(we_res, Exception)
@@ -352,14 +354,10 @@ class Coordinator:
             snapshot.cardiac = None
             snapshot.is_sick = False
 
-        # 3b. Estimate Active Carbs/Insulin (COB/IOB) for Oracle Filtering
-        # Fix C2: Physiological decay — COB uses Twin's log-normal absorption curve;
-        # IOB uses Twin's S-curve get_iob_fraction. Both replace the old linear (1 - t/240).
+        # Estimate Active Carbs/Insulin (COB/IOB) for Oracle Filtering
         if snapshot.last_meal and snapshot.last_meal.carbs is not None:
             dt_m = (now - snapshot.last_meal.timestamp).total_seconds() / 60.0
             gi_type = snapshot.last_meal.gi_type or "STARCH"
-            # Derive COB fraction: ratio of integral still remaining ahead of dt_m
-            # vs the full 240-min integral from the Twin's log-normal curve.
             full_curve = self.twin.simulate_carb_impact(
                 snapshot.last_meal.carbs, gi_type=gi_type, resolution_mins=1.0
             )
@@ -377,11 +375,10 @@ class Coordinator:
             insulin_type = snapshot.last_insulin.type or "RAPID"
             snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i, insulin_type=insulin_type))
 
-        # 4. Feature Extraction
+    def _compute_features_and_forecasts(self, snapshot: MetabolicSnapshot, now: datetime) -> float:
+        """Extracts features, neural/kinematic blend, and tactical horizons."""
         snapshot.atr_14 = MetabolicMath.calculate_atr(list(self.snapshots) + [snapshot], period=14)
 
-        # 5. Forecasting
-        # Strategy: Use Multi-Task Neural Engine as primary, fallback to kinematics if warming up.
         neural_res = self.neural_runner.run_inference_on_snapshots(list(self.snapshots) + [snapshot])
         cnn_prediction = None
         if neural_res:
@@ -389,73 +386,59 @@ class Coordinator:
             snapshot.predicted_hr = neural_res["heart_rate"]
             self.logger.info(f"NEURAL_BRAIN: Pred Glu={cnn_prediction:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
 
-        # Wave 2 Hardening: Kinematic Fallback
         velocity = snapshot.velocity
         acceleration = snapshot.acceleration
-        
-        # [H1-P1] Apply BasalOracle correction to kinematic fallback
-        # FIX: Oracle returns absolute basal glucose, so compute DELTA from current filtered value.
-        # FIX: Use filtered_value (Kalman-smoothed), not raw glucose.value (susceptible to CGM spikes).
+
         oracle_offset = 0.0
         if self.oracle.params is not None:
             oracle_absolute = self.oracle.get_expected_basal(now + timedelta(minutes=30), now)
-            oracle_offset = oracle_absolute - snapshot.filtered_value  # delta only
+            oracle_offset = oracle_absolute - snapshot.filtered_value
             self.logger.info(f"ORACLE_BIAS: Expected={oracle_absolute:.2f}, Current={snapshot.filtered_value:.2f}, Delta={oracle_offset:+.2f}")
-            
+
         kinematic_prediction = snapshot.filtered_value + (velocity * 30.0) + oracle_offset
-        
-        prediction_30m = kinematic_prediction # Default
+        prediction_30m = kinematic_prediction
 
         if cnn_prediction is not None:
-            # --- PHASE 4.1: Alpha Gating ---
             divergence = abs(cnn_prediction - kinematic_prediction)
-            
             if divergence > medical_constants.ALPHA_GATE_DIVERGENCE_LIMIT and snapshot.confidence_index < medical_constants.ALPHA_GATE_CONFIDENCE_THRESHOLD:
                 self.logger.warning(f"ALPHA GATE REJECTION: CNN ({cnn_prediction:.1f}) diverged from Kinematic ({kinematic_prediction:.1f}) by {divergence:.1f}. Confidence: {snapshot.confidence_index:.2f}. Falling back to Kinematic.")
                 prediction_30m = kinematic_prediction
             else:
-                # Standard blend if gate is passed
                 prediction_30m = 0.5 * kinematic_prediction + 0.5 * cnn_prediction
-            # -------------------------------
         else:
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
-        
+
         snapshot.predict_30m = prediction_30m
 
-        # 5b. Tactical Forecaster — 15/30/60m regression-based horizons
         points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
         points_90m = int(90 / medical_constants.SAMPLING_INTERVAL_MINS)
         full_history = list(self.snapshots) + [snapshot]
-        
+
         raw_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
-            for s in full_history[-points_1h:]  # Exactly 60 mins of data
+            for s in full_history[-points_1h:]
         ]
         confidence_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
-            for s in full_history[-points_90m:]  # Exactly 90 mins of data
+            for s in full_history[-points_90m:]
         ]
         tactical = self.forecaster.compute(raw_history)
         snapshot.predict_15m = tactical["p15m"]
         snapshot.predict_60m = tactical["p60m"]
         snapshot.velocity_score = tactical["velocity"]
-        
+
         raw_confidence = compute_confidence_index(confidence_history)
         self._confidence_smoothed = 0.8 * self._confidence_smoothed + 0.2 * raw_confidence
         snapshot.confidence_index = self._confidence_smoothed
 
-        # 5c. Context Classification
         snapshot.activity_label = classify_context(snapshot).value
+        return prediction_30m
 
-        # 6. Alert Decision
-        # Guard: filtered_value < 0.5 indicates an uninitialized snapshot — skip alerting.
-        # Strategy: Skip alerting during backfill/sync.
-        if snapshot.filtered_value < 0.5:
-            self.logger.warning("Skipping alert: filtered_value not yet initialized.")
-            self.snapshots.append(snapshot)
-            return
-        if is_backfill:
-            self.snapshots.append(snapshot)
+    async def _evaluate_and_dispatch_alerts(self, snapshot: MetabolicSnapshot, prediction_30m: float, reading: GlucoseReading, is_backfill: bool = False):
+        """Evaluates safety matrix and dispatches alerts or fallback alerts."""
+        if snapshot.filtered_value < 0.5 or is_backfill:
+            if snapshot.filtered_value < 0.5:
+                self.logger.warning("Skipping alert: filtered_value not yet initialized.")
             return
 
         try:
@@ -477,11 +460,11 @@ class Coordinator:
                 )
                 await self._dispatch_alert(emergency_alert)
 
-
+    async def _update_state_and_visualizations(self, snapshot: MetabolicSnapshot, reading: GlucoseReading, prediction_30m: float):
+        """Updates snapshots deque, refreshes TWA forecast horizons, and triggers charts."""
         self.snapshots.append(snapshot)
 
-        # 6a. Refresh TWA forecast horizons (4h tactical + 1d circadian).
-        # Never let a forecast error break the processing/alert loop — retain last good.
+        # Refresh TWA forecast horizons (4h tactical + 1d circadian)
         try:
             horizons = build_horizons(self.twin, self.oracle, list(self.snapshots), self.last_meal)
             self.last_prediction_4h = horizons["h4"]
@@ -494,13 +477,13 @@ class Coordinator:
         hrv_val = f"{snapshot.hrv:.1f}" if snapshot.hrv else "N/A"
         self.logger.info(f"DONE: {reading.value} -> Pred: {prediction_30m:.1f} | HR: {hr_val} (Pk: {hr_max}) | HRV: {hrv_val} | Snapshots: {len(self.snapshots)}")
 
-        # 7. Digital Twin Regime Detection (every 6 hours)
+        # Digital Twin Regime Detection (every 6 hours)
         regime_trigger = int(360 / medical_constants.SAMPLING_INTERVAL_MINS)
         if self.regime_step_count % regime_trigger == 0:
             regime = self.twin.detect_regime(list(self.snapshots))
             self.logger.info(f"Metabolic Regime Detected: {regime} (Step: {self.regime_step_count})")
 
-        # 8. Meal Window Auto-Tune
+        # Meal Window Auto-Tune
         if self.meal_tune_pending and self.meal_window_start:
             elapsed = (snapshot.glucose.timestamp - self.meal_window_start).total_seconds() / 60.0
             if elapsed >= 230:
@@ -508,8 +491,38 @@ class Coordinator:
                 self.meal_tune_pending = False
                 self.meal_window_start = None
 
-        # 9. Update Continuous Chart
+        # Update Continuous Chart
         self.visualizer.update_continuous(list(self.snapshots))
+
+    async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
+        """Standard processing pipeline for a single reading."""
+        self.regime_step_count += 1
+
+        task = asyncio.create_task(self.audit.log_reading(reading))
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+
+        # 1. Signal Quality & Freshness
+        proceed, reading_ts = self._check_signal_quality_and_freshness(reading)
+        if not proceed:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        # 2. Smoothing (Kalman)
+        snapshot = self.filter.update(reading)
+
+        # 3. Treatment & Cardiac Context
+        await self._collect_metabolic_context(snapshot, now, is_backfill=is_backfill)
+
+        # 4. Feature Extraction & Forecasting
+        prediction_30m = self._compute_features_and_forecasts(snapshot, now)
+
+        # 5. Alert Decision
+        await self._evaluate_and_dispatch_alerts(snapshot, prediction_30m, reading, is_backfill=is_backfill)
+
+        # 6. State update & Visualizations
+        await self._update_state_and_visualizations(snapshot, reading, prediction_30m)
 
 # =============================================================================
 # 🎮 [INTERACTION & INTERFACE]
@@ -901,7 +914,7 @@ class Coordinator:
     async def shutdown(self):
         """Graceful shutdown of background tasks and clients."""
         self.logger.info("Coordinator shutting down...")
-        
+
         # Phase 3: Cancel Autonomous Scheduler
         if hasattr(self, '_scheduler_task') and self._scheduler_task:
             self.logger.info("Cancelling Autonomous Scheduler task...")
@@ -916,13 +929,34 @@ class Coordinator:
             task.cancel()
         if self.background_tasks:
             await asyncio.gather(*self.background_tasks, return_exceptions=True)
-        
+
         # Stop bot polling
         if self.bot_app and self.bot_app.app.updater and self.bot_app.app.updater.running:
             await self.bot_app.app.updater.stop()
             await self.bot_app.app.stop()
             await self.bot_app.app.shutdown()
-        
+
+        # Drain and close Telegram notifier
+        if hasattr(self, 'notifier') and self.notifier and hasattr(self.notifier, 'close'):
+            try:
+                await self.notifier.close()
+            except Exception as e:
+                self.logger.error(f"Error closing notifier: {e}")
+
+        # Drain visualizer render tasks
+        if hasattr(self, 'visualizer') and self.visualizer and hasattr(self.visualizer, 'close'):
+            try:
+                await self.visualizer.close()
+            except Exception as e:
+                self.logger.error(f"Error closing visualizer: {e}")
+
+        # Drain and close audit logger
+        if hasattr(self, 'audit') and self.audit and hasattr(self.audit, 'close'):
+            try:
+                await self.audit.close()
+            except Exception as e:
+                self.logger.error(f"Error closing audit logger: {e}")
+
         # Close ingestion clients
         if hasattr(self.client, 'close'):
             await self.client.close()
@@ -932,7 +966,7 @@ class Coordinator:
             await self.weather_client.close()
         from diabetic.storage.engine import close_db as close_storage_db
         await close_storage_db()
-        
+
         self.logger.info("Coordinator shutdown complete.")
 
 if __name__ == "__main__":

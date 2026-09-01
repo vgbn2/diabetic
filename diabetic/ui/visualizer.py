@@ -29,7 +29,8 @@ class MetabolicVisualizer:
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-        
+        self._render_tasks: set[asyncio.Task] = set()
+
         # Apply Cyberpunk-Dark styling (using Figure-level overrides instead of global plt.style)
         self.colors = {
             'glucose': '#00f2ff',      # Neon Cyan
@@ -105,16 +106,38 @@ class MetabolicVisualizer:
         """Non-blocking dashboard update — dispatches savefig to a thread."""
         if not snapshots:
             return
-        
+
         # Deep copy list to avoid mutation during thread rendering
         snap_copy = list(snapshots)
-        
+
         try:
             loop = asyncio.get_running_loop()  # Fix H5: get_running_loop raises RuntimeError outside loop
             # Task 8.3.1: Run in executor to prevent blocking the async polling loop
-            loop.run_in_executor(None, self._save_continuous_sync, snap_copy)
+            task = asyncio.create_task(asyncio.to_thread(self._save_continuous_sync, snap_copy))
+            self._render_tasks.add(task)
+            task.add_done_callback(self._render_tasks.discard)
         except RuntimeError:
             self._save_continuous_sync(snap_copy)
+
+    async def drain(self, timeout: float = 5.0):
+        """Wait for in-flight background chart rendering tasks to finish."""
+        if self._render_tasks:
+            tasks = list(self._render_tasks)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                for t in tasks:
+                    t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                self._render_tasks.clear()
+
+    async def close(self):
+        """Clean shutdown of visualization resources."""
+        await self.drain(timeout=3.0)
 
     def plot_forecast(self, history: List[float], prediction: np.ndarray, meal_name: str = "Meal") -> str:
         """

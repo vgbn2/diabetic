@@ -203,6 +203,21 @@ class AuditLogger:
             **details
         }, level="WARNING")
 
+    async def close(self):
+        """Drain background logging tasks and close SQLite connections."""
+        if self.background_tasks:
+            tasks = list(self.background_tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self.background_tasks.clear()
+
+        if hasattr(self, 'local_conn') and self.local_conn:
+            try:
+                conn = self.local_conn
+                self.local_conn = None
+                await asyncio.to_thread(conn.close)
+            except Exception as e:
+                self.logger.error(f"Error closing audit SQLite connection: {e}")
+
 if __name__ == "__main__":
     import asyncio
     async def test():

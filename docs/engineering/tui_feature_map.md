@@ -5,8 +5,8 @@ Contract test: `ops/lab/test_cli_manifest.py` (manifest ↔ handler parity).
 Updated: 2026-06-05
 
 Ported from the `personal_finance_draft` CLI/TUI pattern (declarative manifest →
-generic menu engine → `commands/` handlers). Proportionate to this project: 5
-categories, 10 commands, every entry wired to real code (no stubs).
+generic menu engine → `commands/` handlers). Proportionate to this project: 6
+categories, 12 commands, every entry wired to real code (no stubs).
 
 Legend:
 - ✅ Wired — TUI item maps to a live handler; verified
@@ -34,6 +34,7 @@ BIO-QUANT · CLI/TUI | HH:MM:SS UTC | Select Category:
   Simulation
   Data & Admin
   Diagnostics
+  Model Training
   Settings & Preferences
 ```
 
@@ -84,7 +85,18 @@ Category id: `diag`
 
 ---
 
-## 5. Settings & Preferences
+## 5. Model Training
+
+Category id: `ml`
+
+| TUI Label | CLI Command | Flags | Status | Notes |
+|---|---|---|---|---|
+| Last training result | `diabetic.cli ml status` | — | ✅ | Reads local promotion manifest without starting training |
+| Train and promote a candidate | `diabetic.cli ml train` | `--source`, `--epochs` | 🔧 | Serialized, validated, atomic promotion. Mongo needs real cardiac telemetry |
+
+---
+
+## 6. Settings & Preferences
 
 Category id: `settings`
 
@@ -99,7 +111,7 @@ Category id: `settings`
 | Item | Gap | Effort |
 |---|---|---|
 | Settings write commands | Only `show` exists; finance has `timezone/layout/params/flags/alerts/reset`. Config here is env/.env-driven, so writes need a `user_settings.json` overlay layer first. | M |
-| `live` / `export` / `cleanup` / `stress` | 🔧 because they need MongoDB / full env / weights — not a code gap, an environment gap. Clears when run against real infra. | env |
+| `live` / `export` / `cleanup` / `stress` / `ml train` | 🔧 because they need MongoDB / full env / weights — not a code gap, an environment gap. Clears when run against real infra. | env |
 | Arrow-key navigation + search | Engine uses numbered selection (win32-robust); finance has arrow-key + `/`-search. | M |
 | Per-command `--json` everywhere | Only `status`/`settings show` emit JSON; finance has `--json` on every command. | S |
 
@@ -110,3 +122,4 @@ Category id: `settings`
 | Change | Date | Impact |
 |---|---|---|
 | Initial CLI/TUI section ported from finance | 2026-06-05 | ✅ Manifest + dispatcher + rich engine + 10 commands across 5 categories; contract test added |
+| Added Model Training (ml) category & commands | 2026-06-05 | ✅ Manifest + dispatcher parity updated to 6 categories and 12 commands |

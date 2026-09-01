@@ -96,7 +96,8 @@ class TelegramNotifier:
             # Start auto-review background task
             task = asyncio.create_task(self._auto_review_task(msg.message_id, alert.type))
             self.pending_tasks[msg.message_id] = task
-            
+            task.add_done_callback(lambda t: self.pending_tasks.pop(msg.message_id, None))
+
         except Exception as e:
             self.logger.error(f"Failed to send Telegram message: {e}")
 
@@ -116,6 +117,21 @@ class TelegramNotifier:
             self.logger.info(f"Telegram chart sent: {photo_path}")
         except Exception as e:
             self.logger.error(f"Failed to send Telegram photo: {e}")
+
+    async def drain(self, cancel: bool = True):
+        """Cancel and drain in-flight auto-review tasks on shutdown."""
+        if self.pending_tasks:
+            tasks = list(self.pending_tasks.values())
+            if cancel:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self.pending_tasks.clear()
+
+    async def close(self):
+        """Clean shutdown of notifier background work."""
+        await self.drain(cancel=True)
 
 class TelegramApp:
     """The bot application wrapper for handling callbacks/commands."""
