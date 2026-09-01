@@ -26,6 +26,7 @@ class User(Base):
     bio_traits: Mapped[Optional["BioTraits"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     cultural_markers: Mapped[Optional["CulturalMarkers"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     medical_states: Mapped[Optional["MedicalStates"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
+    device_bindings: Mapped[list["DeviceBinding"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User telegram_id={self.telegram_id} name={self.name!r}>"
@@ -82,3 +83,28 @@ class MedicalStates(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="medical_states")
+
+
+class DeviceBinding(Base):
+    """
+    Binds a physical machine/phone, dual-stack IP address (IPv4/IPv6),
+    and custom URL slug to a user tenant for zero-config ingress & self-monitoring.
+    """
+    __tablename__ = "device_bindings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+
+    device_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)  # IPv4, IPv6, or CIDR
+    custom_url_slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)  # e.g. "tam"
+    api_secret_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="device_bindings")
+
+    def __repr__(self) -> str:
+        return f"<DeviceBinding device_name={self.device_name!r} slug={self.custom_url_slug!r} ip={self.ip_address!r}>"
+

@@ -38,6 +38,7 @@ from diabetic.ui.visualizer import MetabolicVisualizer
 
 from diabetic.utils.audit_logger import AuditLogger
 from diabetic.utils.data_factory import TacticalForecaster, compute_confidence_index
+from diabetic.coordinator_pipeline import TenantPipeline
 
 from diabetic.storage.engine import init_db, close_db as close_storage_db
 from diabetic.storage.vessel_registry import VesselRegistry
@@ -155,6 +156,10 @@ class Coordinator:
             weight_kg=config.PATIENT_WEIGHT_KG
         )
 
+        # Multi-Tenant Pipeline Management
+        self.pipelines: dict[str, TenantPipeline] = {}
+        self.default_tenant_id: str = "default"
+
         self.is_running = False
         self._initialized = True
 
@@ -164,6 +169,14 @@ class Coordinator:
         
         return self
 
+    def get_pipeline(self, tenant_id: Optional[str] = None) -> TenantPipeline:
+        """Retrieves or creates an isolated TenantPipeline for the specified tenant/patient."""
+        tid = (tenant_id or self.default_tenant_id).strip().lower()
+        if tid not in self.pipelines:
+            self.pipelines[tid] = TenantPipeline(tenant_id=tid, audit_logger=self.audit)
+            self.logger.info("[Multi-Tenant] Initialized isolated TenantPipeline for tenant: '%s'", tid)
+        return self.pipelines[tid]
+
     async def _worker_loop(self):
         """Sovereign Atlas Level 2: Async ingestion queue worker."""
         self.logger.info("Coordinator ingestion worker loop started.")
@@ -171,10 +184,10 @@ class Coordinator:
             try:
                 # Wait for a reading to arrive in the queue
                 reading = await self.ingestion_queue.get()
-                
+
                 # Process the reading through the heavy neural/kalman pipeline
                 await self._process_reading(reading)
-                
+
                 # Mark the task as done
                 self.ingestion_queue.task_done()
             except asyncio.CancelledError:
@@ -237,9 +250,14 @@ class Coordinator:
                 return max(candidates, key=lambda item: item.timestamp)
         return None
 
-    def _check_signal_quality_and_freshness(self, reading: GlucoseReading) -> tuple[bool, datetime]:
-        """Validates signal compression artifacts and freshness."""
-        history = [snapshot.glucose for snapshot in self.snapshots] + [reading]
+    def _check_signal_quality_and_freshness(
+        self,
+        reading: GlucoseReading,
+        tenant_snapshots: Optional[list[MetabolicSnapshot]] = None,
+    ) -> tuple[bool, datetime]:
+        """Validates signal compression artifacts and freshness for the active tenant."""
+        active_snapshots = tenant_snapshots if tenant_snapshots is not None else list(self.snapshots)
+        history = [snapshot.glucose for snapshot in active_snapshots] + [reading]
         if len(history) < medical_constants.SIGNAL_MIN_HISTORY:
             self.logger.debug(
                 f"Startup: only {len(history)} reading(s) — compression recovery check inactive until 3rd reading."
@@ -260,8 +278,8 @@ class Coordinator:
             self.logger.warning(f"Stale data ignored: {reading.timestamp} is too old.")
             return False, reading_ts
 
-        if self.snapshots:
-            last_reading_time = self.snapshots[-1].glucose.timestamp
+        if active_snapshots:
+            last_reading_time = active_snapshots[-1].glucose.timestamp
             if last_reading_time.tzinfo is None:
                 last_reading_time = last_reading_time.replace(tzinfo=timezone.utc)
             dt = (now - last_reading_time).total_seconds()
@@ -494,8 +512,16 @@ class Coordinator:
         # Update Continuous Chart
         self.visualizer.update_continuous(list(self.snapshots))
 
-    async def _process_reading(self, reading: GlucoseReading, is_backfill: bool = False):
-        """Standard processing pipeline for a single reading."""
+    async def _process_reading(
+        self,
+        reading: GlucoseReading,
+        is_backfill: bool = False,
+        tenant_id: Optional[str] = None,
+    ):
+        """Standard processing pipeline for a single reading with multi-tenant isolation."""
+        tid = (tenant_id or self.default_tenant_id).strip().lower()
+        pipeline = self.get_pipeline(tid)
+        pipeline.regime_step_count += 1
         self.regime_step_count += 1
 
         task = asyncio.create_task(self.audit.log_reading(reading))
@@ -503,14 +529,21 @@ class Coordinator:
         task.add_done_callback(self.background_tasks.discard)
 
         # 1. Signal Quality & Freshness
-        proceed, reading_ts = self._check_signal_quality_and_freshness(reading)
+        proceed, reading_ts = self._check_signal_quality_and_freshness(
+            reading,
+            tenant_snapshots=list(pipeline.snapshots) if tid != self.default_tenant_id else None,
+        )
         if not proceed:
             return
 
         now = datetime.now(timezone.utc)
 
-        # 2. Smoothing (Kalman)
-        snapshot = self.filter.update(reading)
+        # 2. Smoothing (Isolated Kalman per tenant)
+        snapshot = pipeline.filter.update(reading)
+
+        # Also update coordinator root filter if default tenant for backward compatibility
+        if tid == self.default_tenant_id:
+            _ = self.filter.update(reading)
 
         # 3. Treatment & Cardiac Context
         await self._collect_metabolic_context(snapshot, now, is_backfill=is_backfill)
@@ -522,7 +555,9 @@ class Coordinator:
         await self._evaluate_and_dispatch_alerts(snapshot, prediction_30m, reading, is_backfill=is_backfill)
 
         # 6. State update & Visualizations
-        await self._update_state_and_visualizations(snapshot, reading, prediction_30m)
+        pipeline.snapshots.append(snapshot)
+        if tid == self.default_tenant_id:
+            await self._update_state_and_visualizations(snapshot, reading, prediction_30m)
 
 # =============================================================================
 # 🎮 [INTERACTION & INTERFACE]

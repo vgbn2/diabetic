@@ -11,8 +11,10 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from diabetic.config import config
-from diabetic.registry import MetabolicSnapshot
+from diabetic.registry import MetabolicSnapshot, GlucoseReading
 from diabetic.auth.dependencies import require_twa_user
+from diabetic.storage.vessel_registry import VesselRegistry
+from diabetic.utils.ip_resolver import normalize_ip
 
 # --- [SKILL-LIKE LOGIC: DATA INTERFACE] ---
 # This bridge follows the 'Passive Sentinel to Active HUD' transformation.
@@ -174,6 +176,173 @@ async def readyz():
     if not health["ready"]:
         raise HTTPException(status_code=503, detail="not ready")
     return {"status": "ready"}
+
+
+# -----------------------------------------------------------------------------
+# 🌐 [MULTI-TENANT INGRESS GATEWAY & DISPATCHER]
+# -----------------------------------------------------------------------------
+_registry: Optional[VesselRegistry] = None
+
+def _get_registry() -> VesselRegistry:
+    global _registry
+    if _registry is None:
+        _registry = VesselRegistry()
+    return _registry
+
+
+async def _resolve_tenant_id(request: Request, slug: Optional[str] = None) -> str:
+    """
+    Resolves tenant_id in priority order:
+    1. Path custom_slug (/t/{slug}/...)
+    2. Header 'x-tenant-id'
+    3. Dual-stack client IP lookup in DeviceBindings (IPv4, Tailscale, IPv6)
+    4. Default fallback ('default')
+    """
+    if slug:
+        return slug.strip().lower()
+
+    hdr_tenant = request.headers.get("x-tenant-id")
+    if hdr_tenant:
+        return hdr_tenant.strip().lower()
+
+    # Client IP match
+    client_host = request.client.host if request.client else None
+    if client_host:
+        try:
+            reg = _get_registry()
+            user = await reg.resolve_tenant_by_ip(client_host)
+            if user:
+                return f"user_{user.telegram_id}"
+        except Exception as e:
+            logger.debug("Client IP resolution error: %s", e)
+
+    return "default"
+
+
+@app.post("/api/v1/entries")
+@app.post("/t/{slug}/api/v1/entries")
+async def ingest_cgm_entries(
+    request: Request,
+    slug: Optional[str] = None,
+):
+    """
+    Inbound Nightscout-compatible CGM ingestion endpoint.
+    Accepts telemetry from xDrip+, Ottai, Nightscout Uploader, and synthetic streams.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    entries_list = body if isinstance(body, list) else [body]
+    if not entries_list:
+        return {"status": "ok", "inserted": 0}
+
+    tenant_id = await _resolve_tenant_id(request, slug=slug)
+
+    ingested_count = 0
+    for entry in entries_list:
+        try:
+            # Parse Nightscout fields (sgv, dateString/date, direction)
+            sgv_raw = entry.get("sgv") or entry.get("mbg") or entry.get("glucose")
+            if sgv_raw is None:
+                continue
+
+            # Standardize mg/dL to mmol/L if raw sgv > 35
+            val = float(sgv_raw)
+            if val > 35.0:
+                val = round(val / 18.0182, 2)
+
+            ts_raw = entry.get("dateString") or entry.get("sysTime")
+            if ts_raw:
+                try:
+                    ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                except ValueError:
+                    ts = datetime.now(timezone.utc)
+            elif "date" in entry:
+                try:
+                    ts = datetime.fromtimestamp(float(entry["date"]) / 1000.0, tz=timezone.utc)
+                except Exception:
+                    ts = datetime.now(timezone.utc)
+            else:
+                ts = datetime.now(timezone.utc)
+
+            trend = str(entry.get("direction") or entry.get("trend") or "Flat")
+
+            reading = GlucoseReading(
+                timestamp=ts,
+                value=val,
+                trend=trend,
+                source="ingress_gateway",
+            )
+
+            if COORDINATOR_REF:
+                await COORDINATOR_REF._process_reading(reading, tenant_id=tenant_id)
+                ingested_count += 1
+        except Exception as e:
+            logger.warning("[Ingress] Failed parsing reading for tenant %s: %s", tenant_id, e)
+
+    return {"status": "ok", "tenant": tenant_id, "inserted": ingested_count}
+
+
+@app.get("/t/{slug}/api/v1/hud")
+async def get_tenant_hud_data(request: Request, slug: str):
+    """Returns isolated HUD state for a specific tenant slug."""
+    if not COORDINATOR_REF:
+        return HUDState(
+            state="waiting",
+            ready=False,
+            fresh=False,
+            glucose=None,
+            velocity=None,
+            trend="FLAT",
+            active_carbs=0.0,
+            active_insulin=0.0,
+            confidence=0.0,
+            timestamp=None,
+            age_seconds=None,
+            degraded_reasons=["coordinator_not_initialized"],
+        )
+
+    pipeline = COORDINATOR_REF.get_pipeline(slug)
+    if not pipeline.snapshots:
+        return HUDState(
+            state="waiting",
+            ready=False,
+            fresh=False,
+            glucose=None,
+            velocity=None,
+            trend="FLAT",
+            active_carbs=0.0,
+            active_insulin=0.0,
+            confidence=0.0,
+            timestamp=None,
+            age_seconds=None,
+            degraded_reasons=["no_metabolic_snapshot"],
+        )
+
+    latest: MetabolicSnapshot = pipeline.snapshots[-1]
+    timestamp = latest.glucose.timestamp
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    age = max(0.0, (datetime.now(timezone.utc) - timestamp).total_seconds())
+    fresh = age <= config.HUD_STALE_AFTER_SECS
+
+    return HUDState(
+        state="live" if fresh else "stale",
+        ready=fresh,
+        fresh=fresh,
+        glucose=latest.filtered_value,
+        velocity=latest.velocity,
+        trend=latest.glucose.trend,
+        active_carbs=latest.active_carbs,
+        active_insulin=latest.active_insulin,
+        confidence=latest.confidence_index,
+        timestamp=timestamp.isoformat(),
+        age_seconds=round(age, 1),
+        degraded_reasons=[] if fresh else ["stale_metabolic_snapshot"],
+    )
+
 
 @app.post("/api/v1/calibration", dependencies=[Depends(require_twa_user)])
 async def update_calibration(traits: dict):

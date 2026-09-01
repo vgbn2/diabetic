@@ -13,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from diabetic.storage.engine import get_session_factory
-from diabetic.storage.models import BioTraits, CulturalMarkers, MedicalStates, User
+from diabetic.storage.models import BioTraits, CulturalMarkers, MedicalStates, User, DeviceBinding
+from diabetic.utils.ip_resolver import matches_ip_rule, normalize_ip
 
 logger = logging.getLogger("Bio-Quant.VesselRegistry")
 
@@ -174,6 +175,100 @@ class VesselRegistry:
                 select(MedicalStates).where(MedicalStates.user_id == user.id)
             )
             return result.scalar_one_or_none()
+
+    # -------------------------------------------------------------------------
+    # Device Binding & Multi-Tenant Ingress Mapping
+    # -------------------------------------------------------------------------
+
+    async def bind_device(
+        self,
+        telegram_id: int,
+        device_name: str,
+        custom_url_slug: str,
+        ip_address: Optional[str] = None,
+        api_secret_hash: Optional[str] = None,
+    ) -> Optional[DeviceBinding]:
+        """
+        Binds a physical device / dual-stack IP address and custom slug to a user tenant.
+        """
+        async with self._session() as session:
+            user_result = await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = user_result.scalar_one_or_none()
+            if user is None:
+                logger.warning("[Registry] bind_device: User %s not found.", telegram_id)
+                return None
+
+            # Check if custom slug is already claimed by another device
+            slug_clean = custom_url_slug.strip().lower()
+            existing_slug_res = await session.execute(
+                select(DeviceBinding).where(DeviceBinding.custom_url_slug == slug_clean)
+            )
+            binding = existing_slug_res.scalar_one_or_none()
+
+            if binding is None:
+                binding = DeviceBinding(
+                    user_id=user.id,
+                    device_name=device_name,
+                    custom_url_slug=slug_clean,
+                    ip_address=ip_address.strip() if ip_address else None,
+                    api_secret_hash=api_secret_hash,
+                )
+                session.add(binding)
+            else:
+                if binding.user_id != user.id:
+                    raise ValueError(f"Custom URL slug '{slug_clean}' is already assigned to another user.")
+                binding.device_name = device_name
+                binding.ip_address = ip_address.strip() if ip_address else None
+                if api_secret_hash:
+                    binding.api_secret_hash = api_secret_hash
+                binding.is_active = True
+
+            await session.commit()
+            await session.refresh(binding)
+            logger.info(
+                "[Registry] Bound device '%s' (slug: %s, ip: %s) to user %s",
+                device_name,
+                slug_clean,
+                ip_address,
+                telegram_id,
+            )
+            return binding
+
+    async def resolve_tenant_by_slug(self, custom_url_slug: str) -> Optional[User]:
+        """Resolves User tenant record by custom URL slug."""
+        if not custom_url_slug:
+            return None
+        slug_clean = custom_url_slug.strip().lower()
+        async with self._session() as session:
+            result = await session.execute(
+                select(User)
+                .join(DeviceBinding, DeviceBinding.user_id == User.id)
+                .where(DeviceBinding.custom_url_slug == slug_clean, DeviceBinding.is_active == True)
+            )
+            return result.scalar_one_or_none()
+
+    async def resolve_tenant_by_ip(self, client_ip: str) -> Optional[User]:
+        """
+        Resolves User tenant record by inspecting client IP against all active device bindings.
+        Supports dual-stack IPv4 (LAN, Tailscale) and IPv6 ULA matching.
+        """
+        if not client_ip:
+            return None
+
+        async with self._session() as session:
+            result = await session.execute(
+                select(DeviceBinding, User)
+                .join(User, DeviceBinding.user_id == User.id)
+                .where(DeviceBinding.is_active == True, DeviceBinding.ip_address.is_not(None))
+            )
+            rows = result.all()
+            for binding, user in rows:
+                if binding.ip_address and matches_ip_rule(client_ip, binding.ip_address):
+                    return user
+            return None
+
 
     # -------------------------------------------------------------------------
     # Legacy Migration from .env
