@@ -513,19 +513,29 @@ async def get_client_summary(request: Request, slug: Optional[str] = None):
 async def get_cgm_config(request: Request, slug: Optional[str] = None):
     """
     Returns copy-pasteable CGM uploader parameters (URL, API secret hash, direct webhook)
-    for mobile apps (xDrip+, Ottai, Nightscout).
+    for mobile apps (xDrip+, Ottai, Nightscout, LibreLink).
     """
-    import hashlib
     tenant_id = await _resolve_tenant_id(request, slug=slug)
     user_slug = slug or (tenant_id if not tenant_id.startswith("user_") else "default")
 
     raw_secret = config.API_SECRET or "bioquant123"
     sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest()
+
+    # If tenant has a dedicated device binding with a distinct secret hash, surface it
+    if user_slug != "default":
+        try:
+            reg = _get_registry()
+            binding = await reg.resolve_device_binding_by_slug(user_slug)
+            if binding and binding.api_secret_hash:
+                sha1_secret = binding.api_secret_hash.strip().lower()
+        except Exception as e:
+            logger.debug("Failed querying custom tenant secret for cgm_config: %s", e)
+
     base_host = "https://hpdesk-1.tail285cce.ts.net"
 
     return {
         "nightscout_url": base_host,
-        "api_secret": raw_secret,
+        "api_secret": raw_secret if user_slug == "default" else f"device_key_{user_slug}",
         "api_secret_sha1": sha1_secret,
         "direct_upload_url": f"{base_host}/t/{user_slug}/api/v1/entries?secret={sha1_secret}",
         "tenant_slug": user_slug,
