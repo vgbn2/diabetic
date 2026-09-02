@@ -1,6 +1,7 @@
 import unittest
 import asyncio
 from datetime import datetime, timezone
+from unittest.mock import patch
 import httpx
 from diabetic.coordinator import Coordinator
 from diabetic.telegram_bot import twa_api
@@ -20,6 +21,7 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
     async def test_ingress_entries_and_tenant_hud(self):
         now_iso = datetime.now(timezone.utc).isoformat()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        auth_params = {"secret": "bioquant_tam2026"}
 
         # 1. Ingest for custom slug tenant 'tam' (array payload with ISO dateString)
         payload_tam = [
@@ -30,7 +32,7 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
             }
         ]
 
-        resp = await self.client.post("/t/tam/api/v1/entries", json=payload_tam)
+        resp = await self.client.post("/t/tam/api/v1/entries", params=auth_params, json=payload_tam)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["status"], "ok")
@@ -43,7 +45,7 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
             "direction": "Flat",
             "date": now_ms,
         }
-        resp_single = await self.client.post("/api/v1/entries", json=payload_single)
+        resp_single = await self.client.post("/api/v1/entries", params=auth_params, json=payload_single)
         self.assertEqual(resp_single.status_code, 200)
         self.assertEqual(resp_single.json()["tenant"], "default")
         self.assertEqual(resp_single.json()["inserted"], 1)
@@ -56,7 +58,8 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
                 "date": now_ms,
             }
         ]
-        resp_bob = await self.client.post("/t/bob/api/v1/entries", json=payload_bob)
+        resp_bob = await self.client.post("/t/bob/api/v1/entries", params=auth_params, json=payload_bob)
+        self.assertEqual(resp_bob.status_code, 200)
         self.assertEqual(resp_bob.status_code, 200)
         self.assertEqual(resp_bob.json()["tenant"], "bob")
 
@@ -86,6 +89,33 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
         cfg_data = cfg_resp.json()
         self.assertEqual(cfg_data["tenant_slug"], "tam")
         self.assertIn("326cb029ba1a2c0e9452e050e16cc31d0e658da1", cfg_data["direct_upload_url"])
+
+    async def test_ingress_auth_enforcement(self):
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = [{"sgv": 120, "direction": "Flat", "dateString": now_iso}]
+
+        with patch("diabetic.config.config.API_SECRET", "test_secret_123"):
+            # 1. Unauthenticated push rejected with 401
+            r_unauth = await self.client.post("/t/tam/api/v1/entries", json=payload)
+            self.assertEqual(r_unauth.status_code, 401)
+
+            # 2. Wrong secret rejected with 401
+            r_wrong = await self.client.post("/t/tam/api/v1/entries?secret=wrong", json=payload)
+            self.assertEqual(r_wrong.status_code, 401)
+
+            # 3. Valid raw secret in query param accepted
+            r_raw = await self.client.post("/t/tam/api/v1/entries?secret=test_secret_123", json=payload)
+            self.assertEqual(r_raw.status_code, 200)
+
+            # 4. Valid SHA-1 in query param accepted
+            import hashlib
+            sha1_sec = hashlib.sha1("test_secret_123".encode()).hexdigest()
+            r_sha1 = await self.client.post(f"/t/tam/api/v1/entries?secret={sha1_sec}", json=payload)
+            self.assertEqual(r_sha1.status_code, 200)
+
+            # 5. Valid api-secret header accepted
+            r_hdr = await self.client.post("/t/tam/api/v1/entries", json=payload, headers={"api-secret": sha1_sec})
+            self.assertEqual(r_hdr.status_code, 200)
 
 
 if __name__ == "__main__":

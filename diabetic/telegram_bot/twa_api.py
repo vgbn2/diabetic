@@ -6,6 +6,8 @@ from fastapi.responses import FileResponse
 import uvicorn
 import logging
 import os
+import hashlib
+import hmac
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -227,6 +229,42 @@ async def _resolve_tenant_id(request: Request, slug: Optional[str] = None) -> st
     return "default"
 
 
+async def _validate_ingress_auth(request: Request) -> None:
+    """
+    Validates Nightscout-compatible API secret from query parameters or headers.
+    Accepts raw secret, SHA-1 hash, or 'api-secret: <hash>' / 'api-secret: <raw>' header.
+    """
+    configured_secret = (config.API_SECRET or "").strip()
+    if not configured_secret:
+        return  # Ingress open if no API_SECRET configured
+
+    expected_raw = configured_secret
+    expected_sha1 = hashlib.sha1(configured_secret.encode("utf-8")).hexdigest()
+
+    # 1. Query parameter secret=... or token=...
+    q_secret = request.query_params.get("secret") or request.query_params.get("token") or request.query_params.get("api-secret")
+    if q_secret:
+        q_val = q_secret.strip()
+        if hmac.compare_digest(q_val, expected_raw) or hmac.compare_digest(q_val, expected_sha1):
+            return
+
+    # 2. Header api-secret or Authorization
+    hdr_secret = request.headers.get("api-secret")
+    if hdr_secret:
+        h_val = hdr_secret.strip()
+        if hmac.compare_digest(h_val, expected_raw) or hmac.compare_digest(h_val, expected_sha1):
+            return
+
+    auth_hdr = request.headers.get("authorization", "")
+    if auth_hdr.lower().startswith("bearer "):
+        bearer_val = auth_hdr[7:].strip()
+        if hmac.compare_digest(bearer_val, expected_raw) or hmac.compare_digest(bearer_val, expected_sha1):
+            return
+
+    logger.warning("[Ingress] Unauthorized CGM push attempt rejected.")
+    raise HTTPException(status_code=401, detail="Unauthorized: invalid api-secret or token")
+
+
 @app.post("/api/v1/entries")
 @app.post("/t/{slug}/api/v1/entries")
 async def ingest_cgm_entries(
@@ -237,6 +275,7 @@ async def ingest_cgm_entries(
     Inbound Nightscout-compatible CGM ingestion endpoint.
     Accepts telemetry from xDrip+, Ottai, Nightscout Uploader, and synthetic streams.
     """
+    await _validate_ingress_auth(request)
     try:
         body = await request.json()
     except Exception:

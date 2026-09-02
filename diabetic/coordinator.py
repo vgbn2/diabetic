@@ -1015,6 +1015,11 @@ class Coordinator:
         from diabetic.storage.engine import close_db as close_storage_db
         await close_storage_db()
 
+        self.snapshots.clear()
+        self.pipelines.clear()
+        Coordinator._instance = None
+        self._initialized = False
+
         self.logger.info("Coordinator shutdown complete.")
 
 if __name__ == "__main__":
