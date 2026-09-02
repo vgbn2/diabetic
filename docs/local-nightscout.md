@@ -83,3 +83,11 @@ For custom vanity domains (e.g. `https://cgm.yourdomain.com`):
    - **Raw API Secret**: `${NIGHTSCOUT_API_SECRET}` (from `.env`)
    - **API Secret (SHA-1)**: SHA-1 hash of `${NIGHTSCOUT_API_SECRET}`
 
+### Option 3: Synology NAS (DS220+ / Low-Spec / No-AVX Hardware)
+If deploying Nightscout & Bio-Quant on resource-constrained NAS hardware (e.g. Synology DS220+ or Intel Celeron CPUs without AVX):
+- **MongoDB Compatibility**: MongoDB 5.0+ requires AVX CPU instructions. Use `mongo:3.6` (e.g. `mongod --smallfiles --oplogSize 128 --wiredTigerCacheSizeGB 0.25`).
+- **Memory & CPU Limits**: DS220+ Linux kernel does not support Docker CFS CPU quotas (`deploy.resources.limits.cpus`). Use `mem_limit: 400m` instead.
+- **LibreLink Bridge Integration**: When using `timoschlueter/nightscout-librelink-up`:
+  - `NIGHTSCOUT_URL`: Must omit protocol prefix (use `nightscout:1337`).
+  - `NIGHTSCOUT_API_TOKEN`: Must be the exact 40-character SHA-1 hash of your `API_SECRET`.
+
