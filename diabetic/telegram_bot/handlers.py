@@ -146,8 +146,9 @@ class TelegramApp:
         async def post_init(application):
             commands = [
                 BotCommand("start", "Boot the Metabolic Engine HUD"),
+                BotCommand("status", "Get current metabolic engine status"),
                 BotCommand("meal", "Log carbs [desc] [grams] (e.g. /meal rice 60)"),
-                BotCommand("status", "Get current metabolic engine status")
+                BotCommand("cgm_setup", "Get CGM uploader credentials and URLs"),
             ]
             await application.bot.set_my_commands(commands)
             self.logger.info("Telegram command menu registered successfully.")
@@ -158,6 +159,7 @@ class TelegramApp:
         self.app.add_handler(CommandHandler("start", self._start_cmd))
         self.app.add_handler(CommandHandler("meal", self._meal_cmd))
         self.app.add_handler(CommandHandler("status", self._status_cmd))
+        self.app.add_handler(CommandHandler("cgm_setup", self._cgm_setup_cmd))
         self.app.add_handler(CallbackQueryHandler(self._handle_button))
 
     def authorized_only(func):
@@ -182,6 +184,52 @@ class TelegramApp:
                 return
             return await func(self, update, context)
         return wrapper
+
+    @authorized_only
+    async def _cgm_setup_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler for /cgm_setup — generates one-click copyable CGM credentials."""
+        import hashlib
+        user = update.effective_user
+        telegram_id = user.id
+
+        # Determine user slug from registry or fallback to user_id
+        slug = f"user_{telegram_id}"
+        if self.coordinator and hasattr(self.coordinator, "vessel_registry"):
+            reg = self.coordinator.vessel_registry
+            try:
+                # Find device binding if exists
+                async with reg._session() as session:
+                    from sqlalchemy import select
+                    from diabetic.storage.models import DeviceBinding, User
+                    res = await session.execute(
+                        select(DeviceBinding)
+                        .join(User, DeviceBinding.user_id == User.id)
+                        .where(User.telegram_id == telegram_id, DeviceBinding.is_active == True)
+                    )
+                    binding = res.scalar_one_or_none()
+                    if binding and binding.custom_url_slug:
+                        slug = binding.custom_url_slug
+            except Exception as e:
+                self.logger.debug("Failed querying custom slug in /cgm_setup: %s", e)
+
+        raw_secret = config.API_SECRET or "bioquant123"
+        sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest()
+        base_host = "https://hpdesk-1.tail285cce.ts.net"
+
+        setup_msg = (
+            "📱 <b>CGM Mobile App Setup (xDrip+ / Ottai / Nightscout)</b>\n"
+            "--------------------------------------------------\n\n"
+            "<b>Option 1: Direct Nightscout REST API (Recommended)</b>\n"
+            f"• <b>Base URL:</b> <code>{base_host}</code>\n"
+            f"• <b>API Secret (SHA-1):</b> <code>{sha1_secret}</code>\n"
+            f"• <b>API Secret (Raw):</b> <code>{raw_secret}</code>\n\n"
+            "<b>Option 2: Direct Ingress Webhook (Zero Auth Query)</b>\n"
+            f"• <b>Upload URL:</b>\n<code>{base_host}/t/{slug}/api/v1/entries?secret={sha1_secret}</code>\n\n"
+            "<b>Option 3: Multi-Tenant Dedicated HUD</b>\n"
+            f"• <b>Your HUD:</b> <code>{base_host}/t/{slug}/</code>\n\n"
+            "<i>Copy the values above into your CGM app's Cloud Upload settings.</i>"
+        )
+        await update.message.reply_text(setup_msg, parse_mode=ParseMode.HTML)
 
     @authorized_only
     async def _start_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

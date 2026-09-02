@@ -419,6 +419,30 @@ async def get_client_summary(request: Request, slug: Optional[str] = None):
     }
 
 
+@app.get("/api/v1/client/cgm_config")
+@app.get("/t/{slug}/api/v1/client/cgm_config")
+async def get_cgm_config(request: Request, slug: Optional[str] = None):
+    """
+    Returns copy-pasteable CGM uploader parameters (URL, API secret hash, direct webhook)
+    for mobile apps (xDrip+, Ottai, Nightscout).
+    """
+    import hashlib
+    tenant_id = await _resolve_tenant_id(request, slug=slug)
+    user_slug = slug or (tenant_id if not tenant_id.startswith("user_") else "default")
+
+    raw_secret = config.API_SECRET or "bioquant123"
+    sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest()
+    base_host = "https://hpdesk-1.tail285cce.ts.net"
+
+    return {
+        "nightscout_url": base_host,
+        "api_secret": raw_secret,
+        "api_secret_sha1": sha1_secret,
+        "direct_upload_url": f"{base_host}/t/{user_slug}/api/v1/entries?secret={sha1_secret}",
+        "tenant_slug": user_slug,
+    }
+
+
 @app.post("/api/v1/calibration", dependencies=[Depends(require_twa_user)])
 async def update_calibration(traits: dict):
     """Allows the user to update Bio-Traits (Weight, Age, Sensitivity) via GUI."""
