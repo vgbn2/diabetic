@@ -10,7 +10,10 @@ Namespacing: tool names are `bio_*` per CROSS_PROJECT_LEARNINGS §5.
 DB-agnostic: tools read through `get_system_health()` / config, so a future
 MongoDB→Supabase migration does not change this surface.
 """
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 mcp = FastMCP("bio-quant")
 
