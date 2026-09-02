@@ -57,9 +57,9 @@ tailscale serve --bg 1337
 tailscale funnel --https=443 on
 ```
 - **Public URL**: `https://hpdesk-1.tail285cce.ts.net`
-- **Raw API Secret**: `bioquant_tam2026`
-- **CGM Uploader Secret (SHA-1)**: `326cb029ba1a2c0e9452e050e16cc31d0e658da1`
-- **Direct Entry Webhook**: `https://hpdesk-1.tail285cce.ts.net/api/v1/entries?secret=326cb029ba1a2c0e9452e050e16cc31d0e658da1`
+- **Raw API Secret**: `bioq_tam2026`
+- **CGM Uploader Secret (SHA-1)**: `97c161991d8c547090c0f65e8e052bff9e1d36c5`
+- **Direct Entry Webhook**: `https://hpdesk-1.tail285cce.ts.net/api/v1/entries?secret=97c161991d8c547090c0f65e8e052bff9e1d36c5`
 
 ### Option 2: Cloudflare Zero Trust Named Tunnel (Custom Domain)
 For custom vanity domains (e.g. `https://cgm.yourdomain.com`):
@@ -80,6 +80,6 @@ For custom vanity domains (e.g. `https://cgm.yourdomain.com`):
    - Save hostname.
 4. **CGM App Settings**:
    - **Base URL**: `https://cgm.<yourdomain>.com`
-   - **Raw API Secret**: `bioquant_tam2026`
-   - **API Secret (SHA-1)**: `326cb029ba1a2c0e9452e050e16cc31d0e658da1`
+   - **Raw API Secret**: `bioq_tam2026`
+   - **API Secret (SHA-1)**: `97c161991d8c547090c0f65e8e052bff9e1d36c5`
 
