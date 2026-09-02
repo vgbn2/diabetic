@@ -93,6 +93,14 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
         expected_hash = hashlib.sha1((config.API_SECRET or "bioquant123").encode()).hexdigest()
         self.assertIn(expected_hash, cfg_data["direct_upload_url"])
 
+        # 5. Verify GET /api/v1/entries and /t/tam/api/v1/entries return readings
+        get_entries_resp = await self.client.get("/t/tam/api/v1/entries", params=auth_params)
+        self.assertEqual(get_entries_resp.status_code, 200)
+        entries_data = get_entries_resp.json()
+        self.assertTrue(isinstance(entries_data, list))
+        self.assertGreaterEqual(len(entries_data), 1)
+        self.assertEqual(entries_data[0]["type"], "sgv")
+
     async def test_ingress_auth_enforcement(self):
         now_iso = datetime.now(timezone.utc).isoformat()
         payload = [{"sgv": 120, "direction": "Flat", "dateString": now_iso}]

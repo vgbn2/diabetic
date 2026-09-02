@@ -291,15 +291,43 @@ async def _validate_ingress_auth(request: Request, slug: Optional[str] = None) -
 
 @app.post("/api/v1/entries")
 @app.post("/t/{slug}/api/v1/entries")
+@app.get("/api/v1/entries")
+@app.get("/t/{slug}/api/v1/entries")
 async def ingest_cgm_entries(
     request: Request,
     slug: Optional[str] = None,
 ):
     """
-    Inbound Nightscout-compatible CGM ingestion endpoint.
-    Accepts telemetry from xDrip+, Ottai, Nightscout Uploader, and synthetic streams.
+    Nightscout-compatible CGM ingestion and query endpoint.
+    Accepts POST telemetry from xDrip+, Ottai, Nightscout Uploader, and synthetic streams.
+    Accepts GET requests from web browsers/uploaders to inspect recent readings.
     """
     await _validate_ingress_auth(request, slug=slug)
+
+    tenant_id = await _resolve_tenant_id(request, slug=slug)
+
+    # If accessed via GET (browser or uploader checking connection)
+    if request.method == "GET":
+        pipeline = COORDINATOR_REF.get_pipeline(tenant_id) if COORDINATOR_REF else None
+        if not pipeline or not pipeline.snapshots:
+            return []
+
+        # Return recent readings in standard Nightscout format
+        results = []
+        for s in list(pipeline.snapshots)[-10:]:
+            ts = s.glucose.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            results.append({
+                "sgv": round(s.filtered_value * 18.0182, 0),
+                "date": int(ts.timestamp() * 1000),
+                "dateString": ts.isoformat(),
+                "trend": s.glucose.trend,
+                "direction": s.glucose.trend,
+                "type": "sgv",
+            })
+        return results[::-1]
+
     try:
         body = await request.json()
     except Exception:
@@ -308,8 +336,6 @@ async def ingest_cgm_entries(
     entries_list = body if isinstance(body, list) else [body]
     if not entries_list:
         return {"status": "ok", "inserted": 0}
-
-    tenant_id = await _resolve_tenant_id(request, slug=slug)
 
     ingested_count = 0
     for entry in entries_list:
