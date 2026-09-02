@@ -88,7 +88,10 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cfg_resp.status_code, 200)
         cfg_data = cfg_resp.json()
         self.assertEqual(cfg_data["tenant_slug"], "tam")
-        self.assertIn("326cb029ba1a2c0e9452e050e16cc31d0e658da1", cfg_data["direct_upload_url"])
+        import hashlib
+        from diabetic.config import config
+        expected_hash = hashlib.sha1((config.API_SECRET or "bioquant123").encode()).hexdigest()
+        self.assertIn(expected_hash, cfg_data["direct_upload_url"])
 
     async def test_ingress_auth_enforcement(self):
         now_iso = datetime.now(timezone.utc).isoformat()
