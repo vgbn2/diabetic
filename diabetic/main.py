@@ -174,7 +174,8 @@ async def main():
                 old_pid = int(f.read().strip())
             
             # Check if process is still running
-            if psutil.pid_exists(old_pid):
+            current_pid = os.getpid()
+            if old_pid != current_pid and psutil.pid_exists(old_pid):
                 logging.fatal(f"CONFLICT: Another instance of Bio-Quant is already running (PID: {old_pid}). Exiting to prevent Split-Brain.")
                 sys.exit(1)
             else:
