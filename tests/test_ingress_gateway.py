@@ -21,7 +21,7 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
     async def test_ingress_entries_and_tenant_hud(self):
         now_iso = datetime.now(timezone.utc).isoformat()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        auth_params = {"secret": "bioq_tam2026"}
+        auth_params = {"secret": "bioquant_tam2026"}
 
         # 1. Ingest for custom slug tenant 'tam' (array payload with ISO dateString)
         payload_tam = [
@@ -88,7 +88,7 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cfg_resp.status_code, 200)
         cfg_data = cfg_resp.json()
         self.assertEqual(cfg_data["tenant_slug"], "tam")
-        self.assertIn("97c161991d8c547090c0f65e8e052bff9e1d36c5", cfg_data["direct_upload_url"])
+        self.assertIn("326cb029ba1a2c0e9452e050e16cc31d0e658da1", cfg_data["direct_upload_url"])
 
     async def test_ingress_auth_enforcement(self):
         now_iso = datetime.now(timezone.utc).isoformat()
