@@ -51,6 +51,12 @@ class TestMultiTenantCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(pipeline_tam.last_snapshot.glucose.value, 10.0)
         self.assertAlmostEqual(pipeline_bob.last_snapshot.glucose.value, 8.0)
 
+        # Ensure predictions and confidence are computed on isolated tenant history
+        self.assertIsNotNone(pipeline_tam.last_snapshot.predict_30m)
+        self.assertIsNotNone(pipeline_bob.last_snapshot.predict_30m)
+        self.assertGreater(pipeline_tam.last_snapshot.predict_30m, 10.0)
+        self.assertLess(pipeline_bob.last_snapshot.predict_30m, 8.0)
+
 
 if __name__ == "__main__":
     unittest.main()

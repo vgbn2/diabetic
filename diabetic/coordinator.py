@@ -393,11 +393,20 @@ class Coordinator:
             insulin_type = snapshot.last_insulin.type or "RAPID"
             snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i, insulin_type=insulin_type))
 
-    def _compute_features_and_forecasts(self, snapshot: MetabolicSnapshot, now: datetime) -> float:
+    def _compute_features_and_forecasts(
+        self,
+        snapshot: MetabolicSnapshot,
+        now: datetime,
+        pipeline: Optional[TenantPipeline] = None,
+    ) -> float:
         """Extracts features, neural/kinematic blend, and tactical horizons."""
-        snapshot.atr_14 = MetabolicMath.calculate_atr(list(self.snapshots) + [snapshot], period=14)
+        history_snapshots = list(pipeline.snapshots) if pipeline is not None else list(self.snapshots)
+        neural_runner = pipeline.neural_runner if pipeline is not None else self.neural_runner
+        oracle = pipeline.oracle if pipeline is not None else self.oracle
 
-        neural_res = self.neural_runner.run_inference_on_snapshots(list(self.snapshots) + [snapshot])
+        snapshot.atr_14 = MetabolicMath.calculate_atr(history_snapshots + [snapshot], period=14)
+
+        neural_res = neural_runner.run_inference_on_snapshots(history_snapshots + [snapshot])
         cnn_prediction = None
         if neural_res:
             cnn_prediction = neural_res["glucose"]
@@ -408,8 +417,8 @@ class Coordinator:
         acceleration = snapshot.acceleration
 
         oracle_offset = 0.0
-        if self.oracle.params is not None:
-            oracle_absolute = self.oracle.get_expected_basal(now + timedelta(minutes=30), now)
+        if oracle.params is not None:
+            oracle_absolute = oracle.get_expected_basal(now + timedelta(minutes=30), now)
             oracle_offset = oracle_absolute - snapshot.filtered_value
             self.logger.info(f"ORACLE_BIAS: Expected={oracle_absolute:.2f}, Current={snapshot.filtered_value:.2f}, Delta={oracle_offset:+.2f}")
 
@@ -430,7 +439,7 @@ class Coordinator:
 
         points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
         points_90m = int(90 / medical_constants.SAMPLING_INTERVAL_MINS)
-        full_history = list(self.snapshots) + [snapshot]
+        full_history = history_snapshots + [snapshot]
 
         raw_history: list[tuple[datetime, float]] = [
             (s.glucose.timestamp, s.glucose.value)
@@ -446,8 +455,12 @@ class Coordinator:
         snapshot.velocity_score = tactical["velocity"]
 
         raw_confidence = compute_confidence_index(confidence_history)
-        self._confidence_smoothed = 0.8 * self._confidence_smoothed + 0.2 * raw_confidence
-        snapshot.confidence_index = self._confidence_smoothed
+        if pipeline is not None:
+            pipeline._confidence_smoothed = 0.8 * pipeline._confidence_smoothed + 0.2 * raw_confidence
+            snapshot.confidence_index = pipeline._confidence_smoothed
+        else:
+            self._confidence_smoothed = 0.8 * self._confidence_smoothed + 0.2 * raw_confidence
+            snapshot.confidence_index = self._confidence_smoothed
 
         snapshot.activity_label = classify_context(snapshot).value
         return prediction_30m
@@ -549,7 +562,7 @@ class Coordinator:
         await self._collect_metabolic_context(snapshot, now, is_backfill=is_backfill)
 
         # 4. Feature Extraction & Forecasting
-        prediction_30m = self._compute_features_and_forecasts(snapshot, now)
+        prediction_30m = self._compute_features_and_forecasts(snapshot, now, pipeline=pipeline)
 
         # 5. Alert Decision
         await self._evaluate_and_dispatch_alerts(snapshot, prediction_30m, reading, is_backfill=is_backfill)
