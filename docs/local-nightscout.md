@@ -46,3 +46,38 @@ SOURCE_MONGODB_URI='mongodb+srv://...' \
 Restore always targets a new staging database. Compare its counts with the
 manifest before any manual cutover. Take a local backup with
 `scripts/ops/backup_local_nightscout.sh`.
+
+## Public Ingress Routing
+
+### Option 1: Tailscale Funnel (Active & Zero-Domain)
+Exposes Nightscout securely over Tailscale Public HTTPS with automated Let's Encrypt certificates:
+```bash
+# Enable Funnel proxy on port 1337
+tailscale serve --bg 1337
+tailscale funnel --https=443 on
+```
+- **Public URL**: `https://hpdesk-1.tail285cce.ts.net`
+- **CGM Uploader Secret (SHA-1)**: `05f9d3e09a074740a208f05ad5668cf64804683d`
+- **Direct Entry Webhook**: `https://hpdesk-1.tail285cce.ts.net/api/v1/entries?secret=05f9d3e09a074740a208f05ad5668cf64804683d`
+
+### Option 2: Cloudflare Zero Trust Named Tunnel (Custom Domain)
+For custom vanity domains (e.g. `https://cgm.yourdomain.com`):
+
+1. **Pre-requisite**: An active domain registered or DNS-delegated inside Cloudflare.
+2. **Tunnel Infrastructure**:
+   `cloudflared` is already installed as a systemd service across:
+   - `hpdesk-vm` (`192.168.4.101`)
+   - `hpdesk-pve` (`192.168.4.110`)
+   - `dell-pve` (`192.168.4.102`)
+   Clustered under Tunnel ID: `3d32116d-b8bf-4041-bf0e-338f3d054ee6` (`vgbn-tunnel`).
+3. **Adding the Route**:
+   - Go to Cloudflare Zero Trust Dashboard -> Networks -> Tunnels -> `vgbn-tunnel`.
+   - Under **Public Hostnames**, click **Add a public hostname**.
+   - Subdomain: `cgm` (or `ns`).
+   - Domain: Select your registered Cloudflare domain from the dropdown.
+   - Service: `HTTP` -> `127.0.0.1:1337` (or `192.168.4.101:1337`).
+   - Save hostname.
+4. **CGM App Settings**:
+   - **Base URL**: `https://cgm.<yourdomain>.com`
+   - **API Secret (SHA-1)**: `05f9d3e09a074740a208f05ad5668cf64804683d`
+
