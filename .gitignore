@@ -62,7 +62,12 @@ ENV/
 env.bak/
 venv.bak/
 
-# Project specific
+# Firmware build artifacts
+firmware/**/build/*.o
+firmware/**/build/*.elf
+firmware/**/build/*.bin
+firmware/**/build/*.hex
+package-lock.json
 .gsd/
 .agent/
 .agents/
