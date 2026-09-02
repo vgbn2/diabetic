@@ -117,6 +117,18 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
             r_hdr = await self.client.post("/t/tam/api/v1/entries", json=payload, headers={"api-secret": sha1_sec})
             self.assertEqual(r_hdr.status_code, 200)
 
+            # 6. Tenant-specific dedicated device secret accepted
+            reg = twa_api._get_registry()
+            user_da = await reg.upsert_user(telegram_id=999002, name="Duc Anh Test")
+            await reg.bind_device(
+                telegram_id=999002,
+                device_name="iphone12-promax",
+                custom_url_slug="ducanh_test",
+                api_secret_hash="5aff4eb03c7be0cecd038d60e620a23850920cbf"
+            )
+            r_tenant_sec = await self.client.post("/t/ducanh_test/api/v1/entries?secret=bioquant_ducanh2026", json=payload)
+            self.assertEqual(r_tenant_sec.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -229,36 +229,60 @@ async def _resolve_tenant_id(request: Request, slug: Optional[str] = None) -> st
     return "default"
 
 
-async def _validate_ingress_auth(request: Request) -> None:
+async def _validate_ingress_auth(request: Request, slug: Optional[str] = None) -> None:
     """
     Validates Nightscout-compatible API secret from query parameters or headers.
+    Supports system-wide API_SECRET and per-device/tenant specific secret hashes.
     Accepts raw secret, SHA-1 hash, or 'api-secret: <hash>' / 'api-secret: <raw>' header.
     """
     configured_secret = (config.API_SECRET or "").strip()
-    if not configured_secret:
-        return  # Ingress open if no API_SECRET configured
 
-    expected_raw = configured_secret
-    expected_sha1 = hashlib.sha1(configured_secret.encode("utf-8")).hexdigest()
+    allowed_hashes = set()
+    allowed_raws = set()
+
+    if configured_secret:
+        allowed_raws.add(configured_secret)
+        allowed_hashes.add(hashlib.sha1(configured_secret.encode("utf-8")).hexdigest())
+
+    # Check for per-device specific secret in VesselRegistry
+    if slug:
+        try:
+            reg = _get_registry()
+            binding = await reg.resolve_device_binding_by_slug(slug)
+            if binding and binding.api_secret_hash:
+                allowed_hashes.add(binding.api_secret_hash.strip().lower())
+        except Exception as e:
+            logger.debug("Failed checking tenant-specific secret: %s", e)
+
+    if not allowed_raws and not allowed_hashes:
+        return  # Ingress open if no secrets configured
+
+    def check_candidate(candidate: str) -> bool:
+        c = candidate.strip()
+        c_lower = c.lower()
+        if any(hmac.compare_digest(c, r) for r in allowed_raws):
+            return True
+        if any(hmac.compare_digest(c_lower, h) for h in allowed_hashes):
+            return True
+        c_sha1 = hashlib.sha1(c.encode("utf-8")).hexdigest()
+        if any(hmac.compare_digest(c_sha1, h) for h in allowed_hashes):
+            return True
+        return False
 
     # 1. Query parameter secret=... or token=...
     q_secret = request.query_params.get("secret") or request.query_params.get("token") or request.query_params.get("api-secret")
-    if q_secret:
-        q_val = q_secret.strip()
-        if hmac.compare_digest(q_val, expected_raw) or hmac.compare_digest(q_val, expected_sha1):
-            return
+    if q_secret and check_candidate(q_secret):
+        return
 
     # 2. Header api-secret or Authorization
     hdr_secret = request.headers.get("api-secret")
-    if hdr_secret:
-        h_val = hdr_secret.strip()
-        if hmac.compare_digest(h_val, expected_raw) or hmac.compare_digest(h_val, expected_sha1):
-            return
+    if hdr_secret and check_candidate(hdr_secret):
+        return
 
     auth_hdr = request.headers.get("authorization", "")
     if auth_hdr.lower().startswith("bearer "):
-        bearer_val = auth_hdr[7:].strip()
-        if hmac.compare_digest(bearer_val, expected_raw) or hmac.compare_digest(bearer_val, expected_sha1):
+        bearer_val = auth_hdr[7:]
+        if check_candidate(bearer_val):
             return
 
     logger.warning("[Ingress] Unauthorized CGM push attempt rejected.")
@@ -275,7 +299,7 @@ async def ingest_cgm_entries(
     Inbound Nightscout-compatible CGM ingestion endpoint.
     Accepts telemetry from xDrip+, Ottai, Nightscout Uploader, and synthetic streams.
     """
-    await _validate_ingress_auth(request)
+    await _validate_ingress_auth(request, slug=slug)
     try:
         body = await request.json()
     except Exception:
