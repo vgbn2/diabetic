@@ -205,8 +205,16 @@ async def _resolve_tenant_id(request: Request, slug: Optional[str] = None) -> st
     if hdr_tenant:
         return hdr_tenant.strip().lower()
 
-    # Client IP match
-    client_host = request.client.host if request.client else None
+    # Client IP match (check X-Forwarded-For, X-Real-IP, then socket host)
+    client_host = None
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        client_host = xff.split(",")[0].strip()
+    elif request.headers.get("x-real-ip"):
+        client_host = request.headers.get("x-real-ip").strip()
+    elif request.client:
+        client_host = request.client.host
+
     if client_host:
         try:
             reg = _get_registry()
@@ -342,6 +350,73 @@ async def get_tenant_hud_data(request: Request, slug: str):
         age_seconds=round(age, 1),
         degraded_reasons=[] if fresh else ["stale_metabolic_snapshot"],
     )
+
+
+@app.get("/t/{slug}/api/v1/forecast")
+async def get_tenant_forecast(request: Request, slug: str):
+    """Returns the 4h trajectory for a specific tenant slug."""
+    if not COORDINATOR_REF:
+        return {"state": "waiting", "points": [], "horizon": [], "horizon_1d": []}
+
+    pipeline = COORDINATOR_REF.get_pipeline(slug)
+    if not pipeline.snapshots:
+        return {"state": "waiting", "points": [], "horizon": [], "horizon_1d": []}
+
+    history_pts = int(150 / config.SAMPLING_INTERVAL_MINS)
+    timestamp = pipeline.snapshots[-1].glucose.timestamp
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    fresh = (
+        datetime.now(timezone.utc) - timestamp
+    ).total_seconds() <= config.HUD_STALE_AFTER_SECS
+    return {
+        "state": "live" if fresh else "stale",
+        "tenant": slug,
+        "timestamp": timestamp.isoformat(),
+        "points": [s.filtered_value for s in pipeline.snapshots[-history_pts:]],
+        "horizon": getattr(pipeline, "last_prediction_4h", []),
+        "horizon_1d": getattr(pipeline, "last_prediction_1d", []),
+        "resolution_mins": config.SAMPLING_INTERVAL_MINS,
+    }
+
+
+@app.get("/api/v1/client/summary")
+@app.get("/t/{slug}/api/v1/client/summary")
+async def get_client_summary(request: Request, slug: Optional[str] = None):
+    """
+    Consolidated client-side endpoint for web, mobile apps, and TWA clients.
+    Provides instant HUD, forecast, and biometric metadata in a single round-trip.
+    """
+    tenant_id = await _resolve_tenant_id(request, slug=slug)
+
+    # Resolve user details if available
+    user_name = "Default Patient"
+    telegram_id = None
+    try:
+        reg = _get_registry()
+        if slug:
+            user = await reg.resolve_tenant_by_slug(slug)
+            if user:
+                user_name = user.name
+                telegram_id = user.telegram_id
+        elif tenant_id.startswith("user_"):
+            tid = int(tenant_id.replace("user_", ""))
+            user = await reg.get_user(tid)
+            if user:
+                user_name = user.name
+                telegram_id = user.telegram_id
+    except Exception as e:
+        logger.debug("Failed getting user metadata for summary: %s", e)
+
+    hud_data = await (get_tenant_hud_data(request, slug=tenant_id) if tenant_id != "default" else get_hud_data())
+
+    return {
+        "tenant_id": tenant_id,
+        "patient_name": user_name,
+        "telegram_id": telegram_id,
+        "hud": hud_data,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.post("/api/v1/calibration", dependencies=[Depends(require_twa_user)])
