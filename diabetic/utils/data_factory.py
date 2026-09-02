@@ -90,9 +90,12 @@ class TacticalForecaster:
 
         g_now = values[-1]
 
-        if len(readings) < _MIN_POINTS_FOR_REGRESSION:
+        # Check if times_min has distinct timestamps to avoid singular Vandermonde matrix in polyfit
+        has_distinct_times = len(set(times_min)) >= 3 if len(times_min) >= 3 else False
+
+        if len(readings) < _MIN_POINTS_FOR_REGRESSION or not has_distinct_times:
             # Simple linear delta fallback
-            if len(readings) >= 2:
+            if len(readings) >= 2 and readings[-1][0] != readings[-2][0]:
                 dt = max((readings[-1][0] - readings[-2][0]).total_seconds() / 60.0, 1.0)
                 v = (readings[-1][1] - readings[-2][1]) / dt
             else:
