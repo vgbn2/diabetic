@@ -3,9 +3,12 @@ import sys
 import os
 from datetime import datetime, timezone
 
+from pathlib import Path
+
 # Add project root to path
-PROJECT_ROOT = r"c:\Users\Lenovo\Desktop\VGBN\.vscode\CODEPTIT\hyperglycemia-faint-predictor"
-sys.path.append(PROJECT_ROOT)
+PROJECT_ROOT = str(Path(__file__).resolve().parents[3])
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from diabetic.ingestion.weather import WeatherIngestor
 from diabetic.config import config
@@ -16,7 +19,7 @@ async def test_weather_ingestion():
     
     # 1. Test Ingestor Integrity (Mock Baseline)
     print("Verifying Ingestor logic and data structure...")
-    ingestor = WeatherIngestor(api_key=None)
+    ingestor = WeatherIngestor(api_key=None, allow_synthetic=True)
     reading = await ingestor.fetch_current(21.0285, 105.8542)
     
     print(f"Reading: {reading.temperature}°C | {reading.humidity}% Hum | AQI: {reading.aqi}")
@@ -24,12 +27,15 @@ async def test_weather_ingestion():
     # Fail Fast on Impossible Data (Biological Boundaries)
     if not (-30.0 < reading.temperature < 60.0):
         print(f"CRITICAL: Impossible temperature detected: {reading.temperature}")
-        sys.exit(1)
-        
-    if not (0 <= reading.humidity <= 100):
-        print(f"CRITICAL: Invalid humidity detected: {reading.humidity}")
+        await ingestor.close()
         sys.exit(1)
 
+    if not (0 <= reading.humidity <= 100):
+        print(f"CRITICAL: Invalid humidity detected: {reading.humidity}")
+        await ingestor.close()
+        sys.exit(1)
+
+    await ingestor.close()
     print("✅ Logic Check: Data structure and boundaries verified.")
     
     # 2. Test Real Acquisition (Strict Mode - Fail Fast)

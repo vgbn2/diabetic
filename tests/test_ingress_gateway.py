@@ -83,15 +83,17 @@ class TestIngressGateway(unittest.IsolatedAsyncioTestCase):
         other_data = other_hud_resp.json()
         self.assertEqual(other_data["state"], "waiting")
 
-        # 4. Verify cgm_config endpoint output
-        cfg_resp = await self.client.get("/t/tam/api/v1/client/cgm_config")
+        # 4. Verify cgm_config endpoint output (authenticated)
+        cfg_resp = await self.client.get("/t/tam/api/v1/client/cgm_config", params=auth_params)
         self.assertEqual(cfg_resp.status_code, 200)
         cfg_data = cfg_resp.json()
         self.assertEqual(cfg_data["tenant_slug"], "tam")
         import hashlib
         from diabetic.config import config
-        expected_hash = hashlib.sha1((config.API_SECRET or "bioquant123").encode()).hexdigest()
-        self.assertIn(expected_hash, cfg_data["direct_upload_url"])
+        expected_secret = config.API_SECRET or ""
+        expected_hash = hashlib.sha1(expected_secret.encode()).hexdigest() if expected_secret else ""
+        if expected_hash:
+            self.assertIn(expected_hash, cfg_data["direct_upload_url"])
 
         # 5. Verify GET /api/v1/entries and /t/tam/api/v1/entries return readings
         get_entries_resp = await self.client.get("/t/tam/api/v1/entries", params=auth_params)

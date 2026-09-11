@@ -125,6 +125,9 @@ class GlucoseFilter:
                 f"Clamped to {safe_value:.1f} mmol/L."
             )
         self.kf.x = np.array([[safe_value], [0.0], [0.0]])
+        # ponytail: reset covariance on initialization or gap reset so 3-sigma gate doesn't reject post-gap reading
+        self.kf.P = np.eye(3) * 10.0
+        self.kf.P[0, 0] = 1.0
         self.last_ts = reading.timestamp
         self.initialized = True
         self._update_matrices(self.dt)

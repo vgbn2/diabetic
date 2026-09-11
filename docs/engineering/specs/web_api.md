@@ -1,99 +1,83 @@
-# Web REST & WebSocket API Specification
+# Web REST API Specification
 
 > **Diátaxis Type**: Reference & Specification | **Status**: Canonical | **Owner**: Platform Engineering | **Review**: Continuous
 
-The Bio-Quant TWA Gateway (`diabetic.telegram_bot.twa_api`) exposes REST endpoints and real-time WebSocket channels on Port 8000.
+The Bio-Quant TWA Gateway (`diabetic.telegram_bot.twa_api`) exposes REST endpoints for Telegram Mini App (TWA) HUD interfaces and Nightscout-compatible CGM ingress on Port 8000.
 
 ---
 
 ## 1. Authentication Protocols
 
-The gateway supports three authentication mechanisms:
+The gateway supports three fail-closed authentication mechanisms:
 
-1. **SHA-1 API Secret (`api-secret`)**: Header-based SHA-1 hash matching `NIGHTSCOUT_API_SECRET` for Nightscout compatibility.
-2. **Bearer Token (`Authorization: Bearer <token>`)**: JWT/Session token for web client and Telegram Mini App sessions.
-3. **Tenant Device Secret (`X-Device-Key`)**: Per-device secret resolved dynamically via `VesselRegistry`.
+1. **Telegram Mini App initData (`Authorization: tma <initData>`)**: Validates Telegram HMAC-SHA256 signatures against `TELEGRAM_BOT_TOKEN`.
+2. **Nightscout SHA-1 Secret (`api-secret` header or `?secret=<token>`)**: Header- or query-based raw secret or SHA-1 hash matching `API_SECRET` or the tenant's device secret hash.
+3. **Development Token (`Authorization: dev <token>`)**: Optional loopback/browser testing token matching `TWA_DEV_TOKEN`.
 
 ---
 
-## 2. REST Endpoints
+## 2. Ingress & Telemetry Endpoints
 
-### `GET /api/v1/entries`
-Retrieves historical CGM readings or browser inspection data.
+### `POST /api/v1/entries` and `POST /t/{slug}/api/v1/entries`
+Ingests continuous glucose readings from xDrip+, Ottai, or Nightscout uploader clients.
 
-- **Query Parameters**:
-  - `count` (*int*, default 10): Number of entries to retrieve.
-  - `find[date][$gte]` (*int*, optional): Millisecond timestamp lower bound.
-- **Response `200 OK`**:
-```json
-[
-  {
-    "_id": "65f0a1b2c3d4e5f6a7b8c9d0",
-    "sgv": 112,
-    "date": 1710288000000,
-    "dateString": "2026-03-13T00:00:00.000Z",
-    "direction": "Flat",
-    "type": "sgv"
-  }
-]
-```
-
-### `POST /api/v1/entries`
-Ingests continuous glucose readings.
-
-- **Request Body**:
+- **Authentication**: Required (`api-secret` header, query `?secret=...`, or TMA session).
+- **Request Body**: Single object or array of objects:
 ```json
 [
   {
     "sgv": 118,
     "date": 1710288300000,
+    "dateString": "2026-03-13T00:05:00.000Z",
     "direction": "Flat",
     "type": "sgv"
   }
 ]
 ```
-- **Response `200 OK`**: `{"status": "ok", "inserted": 1}`
+- **Response `200 OK`**: `{"status": "ok", "tenant": "default", "inserted": 1}`
 
-### `GET /api/v1/hud/live`
-Retrieves instantaneous HUD state formatted by `diabetic.ui.glucose_display`.
+### `GET /api/v1/entries` and `GET /t/{slug}/api/v1/entries`
+Retrieves recent readings in reverse chronological order.
+
+- **Authentication**: Required.
+- **Query Parameters**:
+  - `count` (*int*, default 10): Number of entries to retrieve.
+- **Response `200 OK`**: Array of Nightscout SGV entries.
+
+---
+
+## 3. HUD & Configuration Endpoints
+
+### `GET /api/v1/hud` and `GET /t/{slug}/api/v1/hud`
+Retrieves instantaneous HUD state and forecast horizons.
 
 - **Response `200 OK`**:
 ```json
 {
-  "timestamp": "2026-03-13T00:05:00Z",
+  "state": "live",
   "glucose": 6.2,
-  "unit": "mmol/L",
   "velocity": 0.02,
-  "range_state": "in_range",
-  "confidence_index": 0.94,
-  "forecast_30m": 6.3,
-  "haptic_warning": false
+  "predicted_30m": 6.3,
+  "points": [6.0, 6.1, 6.2],
+  "horizon": [6.3, 6.4, 6.2],
+  "horizon_1d": [6.5, 6.6, 6.4]
 }
 ```
 
-### `GET /healthz`
-Health check for Docker Compose and Kubernetes readiness probes.
+### `GET /api/v1/client/cgm_config` and `GET /t/{slug}/api/v1/client/cgm_config`
+Retrieves pre-computed client connection parameters for xDrip+/Nightscout configuration.
 
-- **Response `200 OK`**: `{"status": "healthy", "uptime_sec": 3600}`
-
----
-
-## 3. WebSocket Real-Time Stream
-
-### `WS /api/v1/ws/live`
-Streams live `MetabolicSnapshot` updates every polling epoch.
-
-- **Client Message (Ping)**: `{"action": "ping"}`
-- **Server Message (Telemetry)**:
+- **Authentication**: Required (`require_twa_user`).
+- **Response `200 OK`**:
 ```json
 {
-  "event": "snapshot",
-  "data": {
-    "glucose": 6.2,
-    "velocity": 0.02,
-    "predicted_30m": 6.3,
-    "predicted_4h": [6.3, 6.4, 6.2, 5.9],
-    "risk_level": "NOMINAL"
-  }
+  "tenant_slug": "tam",
+  "direct_upload_url": "https://bioquant.example.com/t/tam/api/v1/entries?secret=...",
+  "instructions": "Enter direct_upload_url in xDrip+ Cloud Upload settings."
 }
 ```
+
+### `GET /healthz` and `GET /readyz`
+Health check and readiness probes for container runtime monitoring.
+
+- **Response `200 OK`**: `{"status": "healthy"}` / `{"status": "ready"}`

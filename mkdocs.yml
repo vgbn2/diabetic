@@ -95,5 +95,3 @@ nav:
       - Legacy Architecture: architecture.md
       - Legacy Engineering Arch: engineering/architecture.md
       - Legacy Local Nightscout: local-nightscout.md
-      - Legacy Tenancy & Identity: engineering/tenancy-and-identity.md
-      - Legacy TUI Feature Map: engineering/tui_feature_map.md

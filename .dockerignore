@@ -19,6 +19,13 @@ practice/
 scratch/
 testsprite_tests/
 
+# 📚 DOCS & TESTS (Production image trim)
+docs/
+tests/
+ops/
+site/
+graphify-out/
+
 # ☁️ CLOUD & GIT
 .git
 .gitignore

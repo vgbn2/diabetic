@@ -2,8 +2,8 @@ CC = arm-none-eabi-gcc
 OBJCOPY = arm-none-eabi-objcopy
 SIZE = arm-none-eabi-size
 
-CFLAGS = -mcpu=cortex-m3 -mthumb -Wall -Wextra -O2 -Iinclude -nostdlib -ffreestanding
-LDFLAGS = -Tstm32f103.ld -nostartfiles -Wl,--gc-sections
+CFLAGS = -mcpu=cortex-m3 -mthumb -Wall -Wextra -O2 -Iinclude -ffreestanding
+LDFLAGS = -Tstm32f103.ld -nostartfiles -Wl,--gc-sections --specs=nano.specs -lc -lgcc
 
 BUILD_DIR = build
 SRC_DIR = src

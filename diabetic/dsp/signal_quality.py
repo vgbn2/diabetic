@@ -11,7 +11,7 @@ class SignalQuality:
     def is_compression_low(last_readings: List[GlucoseReading]) -> bool:
         """
         Detects sudden, non-physiological drops caused by sleeping on the sensor.
-        Logic: a drop with immediate recovery OR a non-physiological drop rate.
+        Logic: unphysiological drop rate on the current reading.
         """
         from diabetic.dsp.metabolic_math import MetabolicMath
 
@@ -22,7 +22,7 @@ class SignalQuality:
         r_prev = last_readings[-2]
 
         dt = MetabolicMath.get_dt(r_curr.timestamp, r_prev.timestamp)
-        velocity = (r_curr.value - r_prev.value) / dt  # mmol/L per minute
+        velocity = (r_curr.value - r_prev.value) / max(0.1, dt)  # mmol/L per minute
 
         # 1. Recovery Check (Requires 3 readings)
         if len(last_readings) >= 3:
@@ -34,7 +34,7 @@ class SignalQuality:
             if v12 < -mc.COMPRESSION_DROP_LIMIT and recovery > mc.COMPRESSION_RECOVERY_MIN:
                 return True
 
-        # 2. Hard boundary (Artifact-level drop rate)
+        # 2. Hard boundary (Artifact-level drop rate on current reading)
         if velocity < -mc.COMPRESSION_DROP_LIMIT:
             return True
 

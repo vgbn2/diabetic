@@ -90,13 +90,13 @@ class AuditLogger:
     async def record_glucose_gap(self, payload: dict) -> AuditWriteResult:
         """Records or updates a durable glucose gap."""
         gap_id = payload.get("gap_id")
-        if not gap_id:
+        if not gap_id or not getattr(self, "local_conn", None):
             return AuditWriteResult(local_persisted=False)
         source = payload.get("source", "nightscout")
         state = payload.get("state", "replay_pending")
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        async with self.sql_lock:
+        def _write_gap():
             cursor = self.local_conn.cursor()
             cursor.execute("SELECT gap_id FROM glucose_gaps WHERE gap_id = ?", (gap_id,))
             exists = cursor.fetchone()
@@ -125,30 +125,47 @@ class AuditLogger:
                     now_iso
                 ))
             self.local_conn.commit()
-        return AuditWriteResult(local_persisted=True, mongo_persisted=False)
+
+        async with self.sql_lock:
+            try:
+                await asyncio.to_thread(_write_gap)
+                return AuditWriteResult(local_persisted=True, mongo_persisted=False)
+            except Exception as e:
+                self.logger.error(f"Failed to record glucose gap: {e}")
+                return AuditWriteResult(local_persisted=False, mongo_persisted=False)
 
     async def get_pending_glucose_gaps(self) -> List[dict]:
         """Retrieves all glucose gaps with state='replay_pending'."""
-        async with self.sql_lock:
+        if not getattr(self, "local_conn", None):
+            return []
+
+        def _query_gaps():
             cursor = self.local_conn.cursor()
             cursor.execute("""
                 SELECT gap_id, source, state, reason, from_event_id, through_event_id, from_timestamp, through_timestamp
                 FROM glucose_gaps WHERE state = 'replay_pending'
             """)
-            rows = cursor.fetchall()
-            results = []
-            for row in rows:
-                results.append({
-                    "gap_id": row[0],
-                    "source": row[1],
-                    "state": row[2],
-                    "reason": row[3],
-                    "from_event_id": row[4],
-                    "through_event_id": row[5],
-                    "from_timestamp": row[6],
-                    "through_timestamp": row[7],
-                })
-            return results
+            return cursor.fetchall()
+
+        async with self.sql_lock:
+            try:
+                rows = await asyncio.to_thread(_query_gaps)
+                results = []
+                for row in rows:
+                    results.append({
+                        "gap_id": row[0],
+                        "source": row[1],
+                        "state": row[2],
+                        "reason": row[3],
+                        "from_event_id": row[4],
+                        "through_event_id": row[5],
+                        "from_timestamp": row[6],
+                        "through_timestamp": row[7],
+                    })
+                return results
+            except Exception as e:
+                self.logger.error(f"Failed to get pending glucose gaps: {e}")
+                return []
 
 # =============================================================================
 # 📝 [EVENT LOGGING ENGINE]

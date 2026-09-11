@@ -299,9 +299,9 @@ class TelegramApp:
             except Exception as e:
                 self.logger.debug("Failed querying custom slug in /cgm_setup: %s", e)
 
-        raw_secret = config.API_SECRET or "bioquant123"
-        sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest()
-        base_host = "https://hpdesk-1.tail285cce.ts.net"
+        raw_secret = config.API_SECRET or ""
+        sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest() if raw_secret else ""
+        base_host = (config.TWA_BASE_URL or config.NIGHTSCOUT_URL or "http://localhost:8000").rstrip("/")
 
         setup_msg = (
             "📱 <b>CGM Mobile App Setup (xDrip+ / Ottai / Nightscout)</b>\n"

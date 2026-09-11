@@ -38,8 +38,16 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user and prepare writable dirs
+RUN useradd -u 1000 -m -s /bin/bash appuser && \
+    mkdir -p /app/storage /app/charts /app/storage/exports && \
+    chown -R appuser:appuser /app
+
 # Copy project files
 COPY . .
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 # Set PYTHONPATH to ensure 'diabetic' package is importable
 ENV PYTHONPATH=/app

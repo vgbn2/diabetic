@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from diabetic.config import config
+from diabetic import medical_constants
 from diabetic.registry import MetabolicSnapshot, GlucoseReading
 from diabetic.auth.dependencies import require_twa_user
 from diabetic.storage.vessel_registry import VesselRegistry
@@ -284,13 +285,19 @@ async def _validate_ingress_auth(request: Request, tenant_id: str, slug: Optiona
         elif tenant_id.startswith("user_"):
             tid = int(tenant_id.replace("user_", ""))
             user = await reg.get_user(tid)
-        if user and getattr(user, "api_secret_hash", None):
-            expected_secrets.add(user.api_secret_hash)
+            if hasattr(reg, "get_device_by_user_id"):
+                dev = await reg.get_device_by_user_id(tid)
+                if dev and getattr(dev, "api_secret_hash", None):
+                    expected_secrets.add(dev.api_secret_hash)
     except Exception as e:
         logger.debug("Failed resolving tenant secret: %s", e)
 
+    # ponytail: fail-closed; refuse unauthenticated access if no secrets configured
     if not expected_secrets:
-        return
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Ingress API Secret Not Configured",
+        )
 
     provided = (
         request.headers.get("api-secret")
@@ -337,7 +344,7 @@ async def get_entries(
     for s in list(pipeline.snapshots)[-count:]:
         ts = s.glucose.timestamp
         ts_ms = int(ts.timestamp() * 1000)
-        sgv_mgdl = round(s.glucose.value * 18.0182)
+        sgv_mgdl = round(s.glucose.value * medical_constants.MMOL_TO_MGDL)
         entries.append({
             "_id": f"entry_{ts_ms}",
             "sgv": sgv_mgdl,
@@ -384,7 +391,7 @@ async def ingest_cgm_entries(
             # Standardize mg/dL to mmol/L if raw sgv > 35
             val = float(sgv_raw)
             if val > 35.0:
-                val = round(val / 18.0182, 2)
+                val = round(val / medical_constants.MMOL_TO_MGDL, 2)
 
             ts_raw = entry.get("dateString") or entry.get("sysTime")
             if ts_raw:
@@ -531,6 +538,15 @@ async def get_client_summary(request: Request, slug: Optional[str] = None):
     Consolidated client-side endpoint for web, mobile apps, and TWA clients.
     Provides instant HUD, forecast, and biometric metadata in a single round-trip.
     """
+    auth_hdr = request.headers.get("Authorization", "")
+    if auth_hdr:
+        try:
+            await require_twa_user(auth_hdr)
+        except HTTPException:
+            await _validate_ingress_auth(request, tenant_id=slug or "default", slug=slug)
+    else:
+        await _validate_ingress_auth(request, tenant_id=slug or "default", slug=slug)
+
     tenant_id = await _resolve_tenant_id(request, slug=slug)
 
     # Resolve user details if available
@@ -570,19 +586,34 @@ async def get_cgm_config(request: Request, slug: Optional[str] = None):
     Returns copy-pasteable CGM uploader parameters (URL, API secret hash, direct webhook)
     for mobile apps (xDrip+, Ottai, Nightscout).
     """
+    auth_hdr = request.headers.get("Authorization", "")
+    if auth_hdr:
+        try:
+            await require_twa_user(auth_hdr)
+        except HTTPException:
+            await _validate_ingress_auth(request, tenant_id=slug or "default", slug=slug)
+    else:
+        await _validate_ingress_auth(request, tenant_id=slug or "default", slug=slug)
+
     import hashlib
     tenant_id = await _resolve_tenant_id(request, slug=slug)
     user_slug = slug or (tenant_id if not tenant_id.startswith("user_") else "default")
 
-    raw_secret = config.API_SECRET or "bioquant123"
-    sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest()
-    base_host = "https://hpdesk-1.tail285cce.ts.net"
+    raw_secret = config.API_SECRET or ""
+    sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest() if raw_secret else ""
+    base_host = str(request.base_url).rstrip("/")
+    if config.TWA_BASE_URL:
+        base_host = config.TWA_BASE_URL.rstrip("/")
+
+    upload_url = f"{base_host}/t/{user_slug}/api/v1/entries"
+    if sha1_secret:
+        upload_url += f"?secret={sha1_secret}"
 
     return {
         "nightscout_url": base_host,
-        "api_secret": raw_secret,
+        "api_secret": raw_secret if raw_secret else None,
         "api_secret_sha1": sha1_secret,
-        "direct_upload_url": f"{base_host}/t/{user_slug}/api/v1/entries?secret={sha1_secret}",
+        "direct_upload_url": upload_url,
         "tenant_slug": user_slug,
     }
 

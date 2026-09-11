@@ -8,8 +8,10 @@ from typing import List, Optional, Tuple, Dict
 from diabetic.registry import CardiacReading
 from diabetic.config import config
 from diabetic.medical_constants import (
-    CARDIAC_WINDOW_SAMPLES, 
+    CARDIAC_WINDOW_SAMPLES,
     CARDIAC_QUALITY_DIVISOR,
+    PHYSIO_BPM_FLOOR,
+    PHYSIO_BPM_CEILING,
     BPM_MOCK_CEILING,
     BPM_MOCK_FLOOR,
     HRV_MOCK_CEILING,
@@ -145,7 +147,7 @@ class HeartRateIngestor:
                 hr = int.from_bytes(data[1:3], "little") if hr_format_16bit else data[1]
                 
                 # Health Check: Filter out physiological impossibilities
-                if hr < 30 or hr > 220:
+                if hr < PHYSIO_BPM_FLOOR or hr > PHYSIO_BPM_CEILING:
                     return
 
                 # Parse RR intervals (Task 8.4.1)

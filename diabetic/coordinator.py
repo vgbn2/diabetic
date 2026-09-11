@@ -279,6 +279,14 @@ class Coordinator:
             self.logger.info("[Multi-Tenant] Initialized isolated TenantPipeline for tenant: '%s'", tid)
         return self.pipelines[tid]
 
+    def get_tenant_pipeline(self, tenant_id: Optional[str] = None) -> TenantPipeline:
+        """Alias for get_pipeline to retrieve tenant-isolated processing state."""
+        return self.get_pipeline(tenant_id)
+
+    async def enqueue_reading(self, reading: GlucoseReading):
+        """Admit a live reading to the ingestion buffer with fail-stop contract."""
+        return await self._admit_live_reading(reading)
+
     async def _record_gap_event(self, payload: dict) -> bool:
         """Helper to write gap projection markers to audit logger."""
         if not hasattr(self, "audit") or not hasattr(self.audit, "record_glucose_gap"):
@@ -483,7 +491,13 @@ class Coordinator:
 
         return True, reading_ts
 
-    async def _collect_metabolic_context(self, snapshot: MetabolicSnapshot, now: datetime, is_backfill: bool = False):
+    async def _collect_metabolic_context(
+        self,
+        snapshot: MetabolicSnapshot,
+        now: datetime,
+        is_backfill: bool = False,
+        pipeline: Optional[TenantPipeline] = None,
+    ):
         """Fetches treatments, biometric data, weather, and computes COB/IOB."""
         if is_backfill:
             snapshot.cardiac = None
@@ -573,10 +587,11 @@ class Coordinator:
             snapshot.is_sick = False
 
         # Estimate Active Carbs/Insulin (COB/IOB) for Oracle Filtering
+        twin = pipeline.twin if pipeline is not None and hasattr(pipeline, "twin") else self.twin
         if snapshot.last_meal and snapshot.last_meal.carbs is not None:
             dt_m = (now - snapshot.last_meal.timestamp).total_seconds() / 60.0
             gi_type = snapshot.last_meal.gi_type or "STARCH"
-            full_curve = self.twin.simulate_carb_impact(
+            full_curve = twin.simulate_carb_impact(
                 snapshot.last_meal.carbs, gi_type=gi_type, resolution_mins=1.0
             )
             total_area = float(full_curve.sum())
@@ -591,13 +606,14 @@ class Coordinator:
         if snapshot.last_insulin and snapshot.last_insulin.units is not None:
             dt_i = (now - snapshot.last_insulin.timestamp).total_seconds() / 60.0
             insulin_type = snapshot.last_insulin.type or "RAPID"
-            snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * self.twin.get_iob_fraction(dt_i, insulin_type=insulin_type))
+            snapshot.active_insulin = max(0.0, snapshot.last_insulin.units * twin.get_iob_fraction(dt_i, insulin_type=insulin_type))
 
     def _compute_features_and_forecasts(
         self,
         snapshot: MetabolicSnapshot,
         now: datetime,
         tenant_snapshots: Optional[list[MetabolicSnapshot]] = None,
+        pipeline: Optional[TenantPipeline] = None,
     ) -> float:
         """Extracts features, neural/kinematic blend, and tactical horizons."""
         active_snaps = tenant_snapshots if tenant_snapshots is not None else list(self.snapshots)
@@ -641,11 +657,14 @@ class Coordinator:
         velocity = snapshot.velocity
         acceleration = snapshot.acceleration
 
+        oracle = pipeline.oracle if pipeline is not None and hasattr(pipeline, "oracle") else (self.oracle if hasattr(self, "oracle") else None)
         oracle_offset = 0.0
-        if hasattr(self, "oracle") and self.oracle and self.oracle.params is not None:
-            oracle_absolute = self.oracle.get_expected_basal(now + timedelta(minutes=30), now)
-            oracle_offset = oracle_absolute - snapshot.filtered_value
-            self.logger.info(f"ORACLE_BIAS: Expected={oracle_absolute:.2f}, Current={snapshot.filtered_value:.2f}, Delta={oracle_offset:+.2f}")
+        if oracle and getattr(oracle, "params", None) is not None:
+            oracle_now = oracle.get_expected_basal(now)
+            oracle_future = oracle.get_expected_basal(now + timedelta(minutes=30))
+            # ponytail: forward delta preserves current glucose baseline and adds circadian slope
+            oracle_offset = oracle_future - oracle_now
+            self.logger.info(f"ORACLE_BIAS: Expected30m={oracle_future:.2f}, BasalNow={oracle_now:.2f}, Delta={oracle_offset:+.2f}")
 
         kinematic_prediction = snapshot.filtered_value + (velocity * 30.0) + oracle_offset
         prediction_30m = kinematic_prediction
@@ -659,10 +678,6 @@ class Coordinator:
                 prediction_30m = 0.5 * kinematic_prediction + 0.5 * cnn_prediction
         else:
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
-
-        snapshot.predict_30m = prediction_30m
-        snapshot.activity_label = classify_context(snapshot).value
-        return prediction_30m
 
         snapshot.predict_30m = prediction_30m
         snapshot.activity_label = classify_context(snapshot).value
@@ -765,17 +780,24 @@ class Coordinator:
             _ = self.filter.update(reading)
 
         # 3. Treatment & Cardiac Context
-        await self._collect_metabolic_context(snapshot, now, is_backfill=is_backfill)
+        await self._collect_metabolic_context(snapshot, now, is_backfill=is_backfill, pipeline=pipeline)
 
         # 4. Feature Extraction & Forecasting
         active_snaps = list(pipeline.snapshots) if tid != self.default_tenant_id else list(self.snapshots)
-        prediction_30m = self._compute_features_and_forecasts(snapshot, now, tenant_snapshots=active_snaps)
+        prediction_30m = self._compute_features_and_forecasts(snapshot, now, tenant_snapshots=active_snaps, pipeline=pipeline)
 
         # 5. Alert Decision
         await self._evaluate_and_dispatch_alerts(snapshot, prediction_30m, reading, is_backfill=is_backfill)
 
         # 6. State update & Visualizations
         pipeline.snapshots.append(snapshot)
+        try:
+            p_horizons = build_horizons(pipeline.twin, pipeline.oracle, list(pipeline.snapshots), pipeline.last_meal)
+            pipeline.last_prediction_4h = p_horizons["h4"]
+            pipeline.last_prediction_1d = p_horizons["h1d"]
+        except Exception as e:
+            self.logger.error(f"Pipeline horizon refresh failed for {tid}: {e.__class__.__name__}")
+
         if tid == self.default_tenant_id:
             await self._update_state_and_visualizations(snapshot, reading, prediction_30m)
 
@@ -1068,13 +1090,7 @@ class Coordinator:
                     if (now - r_ts).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
                         self.logger.warning(f"Poll returned stale data ({r_ts}). Waiting for fresh reading...")
                     else:
-                        try:
-                            self.ingestion_queue.put_nowait(reading)
-                        except asyncio.QueueFull:
-                            self.logger.warning("Ingestion queue flooded (>120). Dropping oldest packet to maintain realtime processing.")
-                            _ = self.ingestion_queue.get_nowait()
-                            self.ingestion_queue.task_done()
-                            self.ingestion_queue.put_nowait(reading)
+                        await self.enqueue_reading(reading)
             except (ValueError, ConnectionError) as e:
                 # Only crash if both backends fail with fatal Auth errors
                 if ("URL" in str(e) or "token" in str(e).lower() or "Unauthorized" in str(e)) and self.mongo.entries is None:
@@ -1085,7 +1101,7 @@ class Coordinator:
             except Exception as e:
                 self.logger.error(f"Unexpected error: {e}")
 
-            await asyncio.sleep(config.DATA_POLLING_INTERVAL)
+            await self._wait_for_poll_interval(config.DATA_POLLING_INTERVAL)
 
     async def handle_meal_input(self, desc: str, grams: float, gi_type: str = "STARCH"):
         """Entry point for Telegram /meal command."""

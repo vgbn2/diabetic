@@ -2,7 +2,7 @@
 
 Updated: 2026-09-11 · Current scope: personal (patient + caregiver), single pipeline.
 
-The selected future target is a shared multi-tenant service. See [tenancy-and-identity.md](tenancy-and-identity.md) for the patient UUID, isolation, process, and scale gates.
+The selected future target is a shared multi-tenant service. See [tenancy_and_identity.md](specs/tenancy_and_identity.md) for the patient UUID, isolation, process, and scale gates.
 
 ---
 

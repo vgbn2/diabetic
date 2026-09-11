@@ -10,13 +10,14 @@ import os
 import io
 from diabetic.config import config
 from diabetic.medical_constants import (
-    SAMPLING_INTERVAL_MINS, 
-    FAINT_GLUCOSE, 
+    SAMPLING_INTERVAL_MINS,
+    FAINT_GLUCOSE,
     HYPO_WARNING,
     RENAL_THRESHOLD,
     LOW_SIDE_THRESHOLD
 )
 from diabetic.registry import MetabolicSnapshot
+from diabetic.ui import glucose_display
 
 logger = logging.getLogger("Bio-Quant.UI.Visualizer")
 
@@ -54,12 +55,18 @@ class MetabolicVisualizer:
         # Prepare Data (Wave 5/6: Dynamic Windowing)
         window_size = int(config.LIVE_HISTORY_HOURS * (60 / SAMPLING_INTERVAL_MINS))
         window = snapshots[-window_size:]
-        
+
+        unit = glucose_display.unit_label()
         # Relative time in minutes from present
         times = [(s.glucose.timestamp - snapshots[-1].glucose.timestamp).total_seconds() / 60 for s in window]
-        glucose = [s.glucose.value for s in window]
+        glucose = glucose_display.glucose_series([s.glucose.value for s in window])
         velocity = [s.velocity if s.velocity else 0.0 for s in window]
         bpm = [s.bpm if s.bpm else 0.0 for s in window]
+
+        faint_thresh = glucose_display.glucose_value(FAINT_GLUCOSE)
+        hypo_thresh = glucose_display.glucose_value(HYPO_WARNING)
+        low_side_thresh = glucose_display.glucose_value(LOW_SIDE_THRESHOLD)
+        renal_thresh = glucose_display.glucose_value(RENAL_THRESHOLD)
 
         from matplotlib.figure import Figure
         fig = Figure(figsize=(12, 10))
@@ -68,18 +75,18 @@ class MetabolicVisualizer:
 
         # --- SUBPLOT 1: GLUCOSE ---
         ax_g.set_facecolor('#0f0f0f')
-        ax_g.plot(times, glucose, color=self.colors['glucose'], linewidth=2.5, label='Glucose (mmol/L)')
+        ax_g.plot(times, glucose, color=self.colors['glucose'], linewidth=2.5, label=f'Glucose ({unit})')
         ax_g.scatter(times[-1], glucose[-1], color=self.colors['glucose'], s=100, zorder=5)
-        
+
         # Thresholds
-        ax_g.axhline(y=FAINT_GLUCOSE, color='#ff0000', linestyle='--', alpha=0.5, label='Faint Risk')
-        ax_g.axhline(y=HYPO_WARNING, color='#ffaa00', linestyle=':', alpha=0.5, label='Hypo Warning')
-        
+        ax_g.axhline(y=faint_thresh, color='#ff0000', linestyle='--', alpha=0.5, label='Faint Risk')
+        ax_g.axhline(y=hypo_thresh, color='#ffaa00', linestyle=':', alpha=0.5, label='Hypo Warning')
+
         # Shaded Time-in-Range
-        ax_g.fill_between(times, LOW_SIDE_THRESHOLD, RENAL_THRESHOLD, color=self.colors['zone_safe'], alpha=0.1)
-        
+        ax_g.fill_between(times, low_side_thresh, renal_thresh, color=self.colors['zone_safe'], alpha=0.1)
+
         ax_g.set_title(" LIVE METABOLIC DASHBOARD ", fontsize=16, fontweight='bold', color='white', pad=20)
-        ax_g.set_ylabel("Glucose", fontsize=12, color='white')
+        ax_g.set_ylabel(f"Glucose ({unit})", fontsize=12, color='white')
         ax_g.grid(True, which='both', color=self.colors['grid'], alpha=0.3)
         ax_g.legend(loc='upper left', frameon=False)
 
@@ -167,28 +174,34 @@ class MetabolicVisualizer:
         # Hardening: Use SAMPLING_INTERVAL_MINS instead of hardcoded 5
         history_t = np.arange(-SAMPLING_INTERVAL_MINS * len(history), 0, SAMPLING_INTERVAL_MINS)
         predict_t = np.arange(0, SAMPLING_INTERVAL_MINS * len(prediction), SAMPLING_INTERVAL_MINS)
-        
+
+        unit = glucose_display.unit_label()
+        history_disp = glucose_display.glucose_series(history)
+        prediction_disp = np.array(glucose_display.glucose_series(prediction))
+        faint_thresh = glucose_display.glucose_value(FAINT_GLUCOSE)
+        band_delta = glucose_display.glucose_value(0.5)
+
         # Plot History
-        ax.plot(history_t, history, color=self.colors['glucose'], linewidth=2.5, label='Actual (Historical)')
-        ax.scatter(history_t[-1], history[-1], color=self.colors['glucose'], s=50)
-        
+        ax.plot(history_t, history_disp, color=self.colors['glucose'], linewidth=2.5, label='Actual (Historical)')
+        ax.scatter(history_t[-1], history_disp[-1], color=self.colors['glucose'], s=50)
+
         # Plot Prediction
-        ax.plot(predict_t, prediction, color=self.colors['prediction'], linestyle='--', linewidth=2, label=f'Digital Twin ({meal_name})')
-        ax.fill_between(predict_t, prediction - 0.5, prediction + 0.5, color=self.colors['prediction'], alpha=0.1)
-        
+        ax.plot(predict_t, prediction_disp, color=self.colors['prediction'], linestyle='--', linewidth=2, label=f'Digital Twin ({meal_name})')
+        ax.fill_between(predict_t, prediction_disp - band_delta, prediction_disp + band_delta, color=self.colors['prediction'], alpha=0.1)
+
         # Annotate Peak
-        peak_idx = np.argmax(prediction)
-        peak_val = prediction[peak_idx]
+        peak_idx = np.argmax(prediction_disp)
+        peak_val = prediction_disp[peak_idx]
         peak_time = predict_t[peak_idx]
-        ax.annotate(f"Peak: {peak_val:.1f}", xy=(peak_time, peak_val), xytext=(peak_time+10, peak_val+1),
+        ax.annotate(f"Peak: {glucose_display.format_glucose(prediction[peak_idx])} {unit}", xy=(peak_time, peak_val), xytext=(peak_time+10, peak_val+band_delta*2),
                      arrowprops=dict(facecolor='white', shrink=0.05, width=1, headwidth=5),
                      color='white', fontweight='bold')
-        
-        ax.axhline(y=FAINT_GLUCOSE, color='red', linestyle='--', alpha=0.3)
-        
+
+        ax.axhline(y=faint_thresh, color='red', linestyle='--', alpha=0.3)
+
         ax.set_title(f"DIGITAL TWIN FORECAST: {meal_name.upper()}", fontsize=14, fontweight='bold', color='white')
         ax.set_xlabel("Minutes from Now", color='silver')
-        ax.set_ylabel("Glucose (mmol/L)", color='silver')
+        ax.set_ylabel(f"Glucose ({unit})", color='silver')
         ax.legend(frameon=False)
         ax.grid(True, color=self.colors['grid'], alpha=0.3)
         

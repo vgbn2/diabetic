@@ -220,7 +220,8 @@ class DigitalTwin:
         
         total_drop = units * effective_isf * self.regime_multiplier
         curve = differential_impact * onset_ramp * total_drop
-        return curve
+        # ponytail: return cumulative curve for RAPID matching LONG; single source of truth for cumulative drop
+        return np.cumsum(curve)
 
 # =============================================================================
 # 🔮 [TRAJECTORY PREDICTION]
@@ -244,7 +245,7 @@ class DigitalTwin:
         kinematic_delta = (latest.velocity * t) * velocity_decay
 
         base_curve = latest.filtered_value + kinematic_delta
-        
+
         if basal_drift is not None:
             if len(basal_drift) >= len(t):
                 base_curve += (basal_drift[:len(t)] - basal_drift[0])
@@ -257,10 +258,11 @@ class DigitalTwin:
 
                 full_meal_curve = self.simulate_carb_impact(meal.carbs, meal.gi_type, snapshot=latest, csf_override=csf_override)
                 start_idx = int(dt_meal_mins // dt)
-                meal_projection = full_meal_curve[start_idx : start_idx + len(t)]
-                
-                if len(meal_projection) < len(t):
-                    meal_projection = np.pad(meal_projection, (0, len(t) - len(meal_projection)))
+                needed_len = start_idx + len(t)
+                if len(full_meal_curve) < needed_len:
+                    full_meal_curve = np.pad(full_meal_curve, (0, needed_len - len(full_meal_curve)), mode="edge")
+                # ponytail: forward delta from start_idx avoids step jump and double-counting prior carbs
+                meal_projection = full_meal_curve[start_idx : start_idx + len(t)] - full_meal_curve[start_idx]
                 base_curve += meal_projection
 
         if insulin_doses:
@@ -272,10 +274,11 @@ class DigitalTwin:
 
                 full_insulin_curve = self.simulate_insulin_impact(dose.units, dose.type, snapshot=latest, isf_override=isf_override)
                 start_idx = int(max(0, dt_insulin_mins // dt))
-                insulin_projection = full_insulin_curve[start_idx : start_idx + len(t)]
-
-                if len(insulin_projection) < len(t):
-                    insulin_projection = np.pad(insulin_projection, (0, len(t) - len(insulin_projection)))
+                needed_len = start_idx + len(t)
+                if len(full_insulin_curve) < needed_len:
+                    full_insulin_curve = np.pad(full_insulin_curve, (0, needed_len - len(full_insulin_curve)), mode="edge")
+                # ponytail: forward delta from start_idx integrates remaining insulin effect without prior drop
+                insulin_projection = full_insulin_curve[start_idx : start_idx + len(t)] - full_insulin_curve[start_idx]
                 base_curve -= insulin_projection
 
         return np.maximum(mc.PHYSIO_FLOOR, base_curve)

@@ -112,9 +112,9 @@ class MetabolicInferenceRunner:
         vector = scaling_engine.assemble_static_vector(now, env_data=env_data, is_sick=is_sick).tolist()
         
         if not is_outdoor and env_data is None:
-            vector[12] = 0.0 # Heat
-            vector[13] = 0.0 # Humidity
-            vector[14] = 0.0 # AQI
+            vector[12] = 1.0  # Heat (neutral baseline)
+            vector[13] = 1.0  # Humidity (neutral baseline)
+            vector[14] = 1.0  # AQI (neutral baseline)
             
         return torch.tensor([vector], dtype=torch.float32)
 

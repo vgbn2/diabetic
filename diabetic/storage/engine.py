@@ -6,6 +6,7 @@ Supports SQLite (local dev) and PostgreSQL (Heroku/Cloud Run production).
 """
 import os
 import logging
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from diabetic.storage.models import Base
@@ -14,6 +15,14 @@ logger = logging.getLogger("Bio-Quant.Storage")
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    """Enable WAL mode and foreign key constraint enforcement for SQLite."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON;")
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.close()
 
 
 def _build_url() -> str:
@@ -51,6 +60,8 @@ def get_engine() -> AsyncEngine:
             echo=False,
             pool_pre_ping=True,
         )
+        if url.startswith("sqlite"):
+            event.listen(_engine.sync_engine, "connect", _set_sqlite_pragmas)
         logger.info("[Storage] Async engine initialized: %s", url.split("@")[-1])  # mask creds
     return _engine
 

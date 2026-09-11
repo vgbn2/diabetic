@@ -112,6 +112,7 @@ class Settings(BaseSettings):
     LOCAL_GUI_ENABLED: bool = True
 
     # TWA Web Auth (Telegram Mini App)
+    TWA_BASE_URL: str = ""                         # Base URL for TWA and external CGM endpoints
     TWA_ALLOWED_ORIGINS: list[str] = []           # CORS allow-list; empty = same-origin only
     TWA_DEV_TOKEN: str = ""                        # set to enable `Authorization: dev <token>` browser testing
     TWA_AUTH_MAX_AGE_SECS: int = 86400            # reject initData older than this (replay window)

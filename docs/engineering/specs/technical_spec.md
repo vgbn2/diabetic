@@ -41,21 +41,46 @@ torch.set_num_threads(1)
 
 ### MetabolicSnapshot Data Contract
 ```python
-@dataclass
-class MetabolicSnapshot:
-    timestamp: datetime
-    glucose: float            # mmol/L
-    velocity: float           # mmol/L/min
-    acceleration: float       # mmol/L/min^2
-    heart_rate: Optional[float] = None
-    temperature: Optional[float] = None
-    aqi: Optional[float] = None
-    carbs_on_board: float = 0.0
-    insulin_on_board: float = 0.0
-    confidence_index: float = 1.0
-    predicted_glucose_30m: Optional[float] = None
-    predicted_glucose_4h: Optional[list[float]] = None
-    faint_risk_flag: bool = False
+from pydantic import BaseModel, ConfigDict
+from typing import Optional
+
+class MetabolicSnapshot(BaseModel):
+    """A unified state representing a person's metabolic condition at a point in time (5-Layer Synthesis)."""
+    glucose: GlucoseReading
+    cardiac: Optional[CardiacReading] = None
+    last_insulin: Optional[InsulinDose] = None
+    last_meal: Optional[MealEvent] = None
+    last_hydration: Optional[HydrationEvent] = None
+    environment: Optional[EnvironmentReading] = None
+    feedback: Optional[UserFeedback] = None
+
+    # Layer 2 (Regimes)
+    cycle_day: Optional[int] = None
+    is_sick: bool = False
+
+    # Layer 4 (The Meta-Correction Layer)
+    filtered_value: float = 0.0
+    velocity: float = 0.0
+    acceleration: float = 0.0
+    atr_14: float = 0.0
+    predict_30m: float = 0.0
+    predicted_hr: float = 0.0
+    forecast: Optional[ProbabilisticForecast] = None
+    residual_error: float = 0.0
+    sensor_health: float = 1.0
+
+    # Tactical Prediction Horizons
+    predict_15m: float = 0.0
+    predict_60m: float = 0.0
+    confidence_index: float = 0.0
+    velocity_score: float = 0.0
+
+    # Layer 3 (The Behavioral Engine)
+    active_carbs: float = 0.0      # Carbs on Board (COB)
+    active_insulin: float = 0.0    # Insulin on Board (IOB)
+    activity_label: str = "UNKNOWN"
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 ```
 
 ### Ingress Entry Schema (Nightscout Format)

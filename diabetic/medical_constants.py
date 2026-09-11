@@ -37,6 +37,8 @@ MIN_DT_FLOOR             = 0.5    # minutes — prevents division by zero / filt
 # Source: Clinical telemetry defaults for T1D activity detection.
 CARDIAC_WINDOW_SAMPLES  = 12      # 1 hour window at 5 min sampling
 CARDIAC_QUALITY_DIVISOR = 4.0     # Threshold for signal-to-noise validation
+PHYSIO_BPM_FLOOR        = 30.0    # Absolute survivable bradycardia lower bound
+PHYSIO_BPM_CEILING      = 220.0   # Extreme tachycardia upper bound
 BPM_MOCK_CEILING        = 120.0   # Upper bound for internal logic testing
 BPM_MOCK_FLOOR          = 60.0    # Lower bound for internal logic testing
 HRV_MOCK_CEILING        = 80.0

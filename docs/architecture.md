@@ -103,7 +103,7 @@ sequenceDiagram
 
 Bio-Quant currently runs one patient pipeline. The selected shared multi-tenant
 future and its patient UUID, process isolation, failure, and capacity gates are
-defined in [tenancy-and-identity.md](engineering/tenancy-and-identity.md). That
+defined in [tenancy-and-identity.md](engineering/specs/tenancy_and_identity.md). That
 contract is a roadmap, not current multi-patient capability.
 
 Refer to project documentation and test baselines for current verified execution state, test baseline coverage, and deployment promotion prerequisites.

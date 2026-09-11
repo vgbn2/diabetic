@@ -3,8 +3,12 @@ import logging
 import sys
 import os
 
+from pathlib import Path
+
 # Add the project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+PROJECT_ROOT = str(Path(__file__).resolve().parents[3])
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.config import config
@@ -12,12 +16,12 @@ from diabetic.config import config
 async def verify_cardiac():
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
     logger = logging.getLogger("Bio-Quant.Verify.Cardiac")
-    
+
     print("\n" + "="*50)
     print("BIOMETRIC AUDIT: HEART RATE AGGREGATE VERIFICATION")
     print("="*50 + "\n")
-    
-    ingestor = HeartRateIngestor()
+
+    ingestor = HeartRateIngestor(allow_synthetic=True)
     
     # 1. Simulate 30 seconds of mock data accumulation
     logger.info("Step 1: Simulating 30 seconds of resting biometric data...")

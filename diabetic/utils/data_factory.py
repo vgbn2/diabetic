@@ -102,11 +102,22 @@ class TacticalForecaster:
             # Quadratic regression: G(t) = c0 + c1·t + c2·t²
             x = np.array(times_min)
             y = np.array(values)
-            # Fit degree-1 polynomial for velocity (degree-2 for acceleration)
-            poly2 = np.polyfit(x, y, 2)   # [c2, c1, c0]
-            poly1 = np.polyfit(x, y, 1)   # [c1, c0]
-            v = float(poly1[0])            # slope (mmol/L per min)
-            a = float(2 * poly2[0])        # 2nd derivative at t=0
+            # Guard against singular matrix / duplicate or sub-second timestamps
+            if np.ptp(x) <= 1e-3:
+                dt = max((readings[-1][0] - readings[-2][0]).total_seconds() / 60.0, 1.0)
+                v = (readings[-1][1] - readings[-2][1]) / dt
+                a = 0.0
+            else:
+                try:
+                    # Fit degree-1 polynomial for velocity (degree-2 for acceleration)
+                    poly2 = np.polyfit(x, y, 2)   # [c2, c1, c0]
+                    poly1 = np.polyfit(x, y, 1)   # [c1, c0]
+                    v = float(poly1[0])            # slope (mmol/L per min)
+                    a = float(2 * poly2[0])        # 2nd derivative at t=0
+                except (np.linalg.LinAlgError, ValueError):
+                    dt = max((readings[-1][0] - readings[-2][0]).total_seconds() / 60.0, 1.0)
+                    v = (readings[-1][1] - readings[-2][1]) / dt
+                    a = 0.0
 
         # [W1] Apply velocity correction factor based on physiological ISF
         v *= self.velocity_correction
