@@ -1,5 +1,5 @@
 site_name: Bio-Quant — Clinical Telemetry & Digital Twin Platform
-site_description: Real-time physiological monitoring, Kovatchev risk modeling, and neural faint prediction.
+site_description: Real-time physiological monitoring, Kovatchev risk modeling, physical-chemical digital twin simulation, and neural faint prediction.
 site_url: https://vgbn2.github.io/diabetic/
 repo_url: https://github.com/vgbn2/diabetic
 repo_name: vgbn2/diabetic
@@ -21,36 +21,79 @@ theme:
         name: Switch to dark mode
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
+    - navigation.path
     - navigation.top
+    - navigation.indexes
     - search.suggest
     - search.highlight
     - content.code.copy
 
 markdown_extensions:
-  - pymdownx.highlight:
-      anchor_linenums: true
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.snippets
   - admonition
   - tables
   - attr_list
+  - md_in_html
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
-  - Overview: index.md
+  - Overview:
+      - Overview: index.md
+      - Architecture Summary: ARCHITECTURE.md
   - Architecture:
-      - System Architecture: architecture.md
-      - Engineering Contracts: engineering/architecture.md
-      - Tenancy & Identity Roadmap: engineering/tenancy-and-identity.md
-  - Operations & CLI:
-      - TUI Feature Map: engineering/tui_feature_map.md
-      - Local Nightscout: local-nightscout.md
-      - Data Provenance: data-provenance.md
-  - Machine Learning:
+      - 01. System Topology & Invariants: engineering/architecture/01_ARCHITECTURE_AND_CODEBASE.md
+      - 02. Ingestion & Storage Pipeline: engineering/architecture/02_INGESTION_AND_STORAGE.md
+      - 03. Signal Processing & 3D Kalman Filter: engineering/architecture/03_DSP_SIGNAL_AND_KALMAN.md
+      - 04. Neural Engine & Digital Twin: engineering/architecture/04_NEURAL_ENGINE_AND_DIGITAL_TWIN.md
+      - 05. Decision Matrix & Alert Dispatch: engineering/architecture/05_DECISION_MATRIX_AND_ALERTS.md
+      - 06. Security, Ingress & Tenancy: engineering/architecture/06_SECURITY_INGRESS_AND_TENANCY.md
+      - 07. Clinical Primer for Engineers: engineering/architecture/07_CLINICAL_PRIMER_FOR_ENGINEERS.md
+  - Specifications:
+      - Product Specification: engineering/specs/product_spec.md
+      - Technical Specification: engineering/specs/technical_spec.md
+      - Capability Manifest: engineering/specs/capability_manifest.md
+      - Stack & Toolchain Manifest: engineering/specs/stack_manifest.md
+      - Web REST & WebSocket API: engineering/specs/web_api.md
+      - TUI Feature Map: engineering/specs/tui_feature_map.md
+      - Tenancy & Identity Roadmap: engineering/specs/tenancy_and_identity.md
+  - Operations & Guides:
+      - Quickstart Guide: operational/guides/QUICKSTART.md
+      - Operational Soak Runbook: OPERATIONAL_SOAK_RUNBOOK.md
+      - Local Nightscout Guide: operational/guides/LOCAL_NIGHTSCOUT.md
+      - Data Ingestion & Retention: operational/guides/DATA_INGESTION.md
+      - CLI Quick Guide: operational/guides/CLI_QUICK_GUIDE.md
+      - Testing Surface Matrix: operational/guides/TESTING_SURFACE.md
+  - Code Atlas:
+      - 3D Kalman State Filter: atlas/algorithms/kalman_3d_state_filter.md
+      - Kovatchev Risk Transform: atlas/algorithms/kovatchev_risk_transform.md
+      - Digital Twin Impulse Absorption: atlas/algorithms/digital_twin_impulse_absorption.md
+      - Alpha Gate Confidence Ordering: atlas/protocols/alpha_gate_confidence_ordering.md
+  - Standards:
+      - Documentation Standard: engineering/standards/documentation_standard.md
+      - Engineering Standards: engineering/standards/engineering_standards.md
+  - Archive:
       - ML Specification: ML_SPEC.md
+      - Data Provenance: data-provenance.md
       - Historical Chapter: history.md
+      - Legacy Architecture: architecture.md
+      - Legacy Engineering Arch: engineering/architecture.md
+      - Legacy Local Nightscout: local-nightscout.md
+      - Legacy Tenancy & Identity: engineering/tenancy-and-identity.md
+      - Legacy TUI Feature Map: engineering/tui_feature_map.md
