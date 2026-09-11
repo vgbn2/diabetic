@@ -56,8 +56,10 @@ class BasalOracle:
             popt, _ = curve_fit(self._harmonic_model, times, values, p0=guess, bounds=bounds)
             self.params = popt
             self.last_fit_time = datetime.now(timezone.utc)
-        except Exception:
-            pass
+        except Exception as e:
+            # ponytail: fallback to None when curve_fit fails on sparse data; get_expected_basal uses 6.5 default
+            logger.warning("BasalOracle curve_fit failed: %s (%s); reverting to baseline default", type(e).__name__, e)
+            self.params = None
 
     def get_expected_basal(self, target_time: datetime, reference_start: datetime) -> float:
         """Predicts basal glucose for a future timestamp."""

@@ -10,6 +10,7 @@ from rich.text import Text
 
 from diabetic.config import config
 from diabetic.registry import MetabolicSnapshot
+from diabetic.ui import glucose_display
 
 class RealTimeHUD:
     """
@@ -50,29 +51,29 @@ class RealTimeHUD:
         table.add_column("Unit", style="dim")
 
         if snapshot:
-            unit = "mmol/L" if config.PREFER_MMOL else "mg/dL"
-            table.add_row("Glucose", f"{snapshot.filtered_value:.1f}", unit)
-            table.add_row("Velocity", f"{snapshot.velocity:+.2f}", f"{unit}/min")
-            
+            unit = glucose_display.unit_label()
+            table.add_row("Glucose", glucose_display.format_glucose(snapshot.filtered_value), unit)
+            table.add_row("Velocity", glucose_display.format_velocity(snapshot.velocity), f"{unit}/min")
+
             bpm = snapshot.bpm if snapshot.bpm else "---"
             hrv = f"{snapshot.hrv:.1f}" if snapshot.hrv else "---"
             table.add_row("Heart Rate", f"{bpm}", "bpm")
             table.add_row("HRV (RMSSD)", hrv, "ms")
-            
+
             table.add_section()
-            
+
             # 🕵️ Context Layer
             context = snapshot.activity_label
             context_style = "bold white"
             if context == "EXERCISE": context_style = "bold green"
             elif "STRESS" in context: context_style = "bold red"
             elif context == "SLEEP": context_style = "bold blue"
-            
+
             table.add_row("Context", f"[{context_style}]{context}[/]")
             table.add_section()
 
             # 🔮 Neural Layer
-            table.add_row("Pred Glucose (30m)", f"{snapshot.predict_30m:.1f}", style="bold yellow")
+            table.add_row("Pred Glucose (30m)", glucose_display.format_glucose(snapshot.predict_30m), style="bold yellow")
             table.add_row("Pred Heart Rate", f"{snapshot.predicted_hr:.1f}", style="bold magenta")
         else:
             table.add_row("Glucose", "WAITING...", "")

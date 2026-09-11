@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Dict, Literal
 from diabetic import medical_constants
@@ -16,12 +16,12 @@ class Settings(BaseSettings):
     API_SECRET: str = Field("", validation_alias="NIGHTSCOUT_API_SECRET")
     OPENWEATHER_API_KEY: str = ""
     WEATHER_MOCK_MODE: bool = False
-    
+
     # Alerting (Telegram)
     TELEGRAM_TOKEN: str = Field("", validation_alias="TELEGRAM_BOT_TOKEN")
     USER_ID: int = Field(0, validation_alias="TELEGRAM_CHAT_ID")
     CAREGIVER_ID: Optional[int] = None
-    
+
 # -----------------------------------------------------------------------------
 # RUNTIME SETTINGS: Polling & Logging
 # -----------------------------------------------------------------------------
@@ -30,13 +30,13 @@ class Settings(BaseSettings):
     DATA_POLLING_INTERVAL: int = 150  # 2.5 minutes
     PREFER_MMOL: bool = True
     SAMPLING_INTERVAL_MINS: float = medical_constants.SAMPLING_INTERVAL_MINS
-    
+
 # -----------------------------------------------------------------------------
 # PATIENT PROFILE: Physiological Baselines
 # -----------------------------------------------------------------------------
-    PATIENT_AGE: int = Field(30, validation_alias="PATIENT_AGE")
-    PATIENT_WEIGHT_KG: float = Field(45.0, validation_alias="PATIENT_WEIGHT_KG")
-    PATIENT_HEIGHT_CM: float = Field(158.0, validation_alias="PATIENT_HEIGHT_CM")
+    PATIENT_AGE: int = Field(30, ge=5, le=110, validation_alias="PATIENT_AGE")
+    PATIENT_WEIGHT_KG: float = Field(45.0, ge=12.0, le=300.0, validation_alias="PATIENT_WEIGHT_KG")
+    PATIENT_HEIGHT_CM: float = Field(158.0, ge=60.0, le=250.0, validation_alias="PATIENT_HEIGHT_CM")
     PATIENT_ETHNICITY: str = Field("UNKNOWN", validation_alias="PATIENT_ETHNICITY")
     PATIENT_NATIONALITY: str = Field("UNKNOWN", validation_alias="PATIENT_NATIONALITY")
     PATIENT_RELIGION: str = Field("NON_RELIGIOUS", validation_alias="PATIENT_RELIGION")
@@ -44,27 +44,47 @@ class Settings(BaseSettings):
     PATIENT_DIABETES_TYPE: str = Field("T1D", validation_alias="PATIENT_DIABETES_TYPE")
     PATIENT_DIAGNOSIS_YEAR: int = Field(2020, validation_alias="PATIENT_DIAGNOSIS_YEAR")
     PATIENT_ACTIVITY_LEVEL: str = Field("MODERATE", validation_alias="PATIENT_ACTIVITY_LEVEL")
-    
+
+    @field_validator("PATIENT_GENDER", mode="before")
+    @classmethod
+    def _validate_gender(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Gender must be string")
+        v_clean = v.strip().upper()
+        if v_clean not in {"MALE", "FEMALE", "OTHER"}:
+            raise ValueError(f"Unknown gender: {v}")
+        return v_clean
+
+    @field_validator("PATIENT_DIABETES_TYPE", mode="before")
+    @classmethod
+    def _validate_diabetes_type(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Diabetes type must be string")
+        v_clean = v.strip().upper()
+        if v_clean not in {"T1D", "T2D", "LADA", "MODY", "GESTATIONAL", "PRE_DIABETES", "PREDIABETES"}:
+            raise ValueError(f"Unknown diabetes type: {v}")
+        return v_clean
+
 # -----------------------------------------------------------------------------
 # REGIONAL SETTINGS: Timezone & Maintenance
 # -----------------------------------------------------------------------------
     USER_TIMEZONE: str = Field("Asia/Ho_Chi_Minh", validation_alias="BIO_USER_TIMEZONE")
     MAINTENANCE_LOCAL_HOUR: int = Field(3, validation_alias="BIO_MAINTENANCE_HOUR")
-    
+
     # Clinical Lab Results (Personalization 2.2) - MUST BE SET IN .ENV
     PATIENT_FRUCTOSAMIN: float = Field(300.0, validation_alias="PATIENT_FRUCTOSAMIN")
     PATIENT_MICROALBUMINURIA: bool = Field(False, validation_alias="PATIENT_MICROALBUMINURIA")
     PATIENT_INFLAMMATORY_MARKER: bool = Field(False, validation_alias="PATIENT_INFLAMMATORY_MARKER")
     PATIENT_CYCLE_START: str = Field("2026-01-01", validation_alias="PATIENT_CYCLE_START")#if gender=female
-    
+
     PATIENT_GB_MMOL: float = 8.4
     PATIENT_HRV_BASELINE: float = 50.0
     PATIENT_BPM_BASELINE: float = 70.0  # Default 70bpm
-    
+
     # Global Location (Weather Synchronization)
     LATITUDE: float  = medical_constants.DEFAULT_LATITUDE
     LONGITUDE: float = medical_constants.DEFAULT_LONGITUDE
-    
+
 # -----------------------------------------------------------------------------
 # INFRASTRUCTURE: UI, Database & Hardware
 # -----------------------------------------------------------------------------
@@ -76,18 +96,18 @@ class Settings(BaseSettings):
         "STRESS_ANOMALY": "🫀 STRESS ANOMALY",  # Fix H4: distinct key for decoupling events
         "INFO": "ℹ️ INFO"
     }
-    
+
     # Infrastructure
     MONGO_URI: str = ""
     MONGODB_URI: str = "" # Heroku Add-on standard
     HEART_RATE_SENSOR_ADDRESS: str = "MOCK" # Set to XX:XX... for BLE
     WEATHER_ENABLED: bool = True
     CARDIAC_ENABLED: bool = True
-    
+
     # Local High-Availability (Task 8.1.1)
     LOCAL_DB_PATH: str = "storage/audit.db"
     BACKFILL_MAX_HOURS: int = 24
-    RETENTION_DAYS: int = Field(180, validation_alias="BIO_RETENTION_DAYS")
+    RETENTION_DAYS: int = Field(180, ge=1, le=3650, validation_alias="BIO_RETENTION_DAYS")
     HUD_STALE_AFTER_SECS: int = Field(900, validation_alias="BIO_HUD_STALE_AFTER_SECS")
     LOCAL_GUI_ENABLED: bool = True
 

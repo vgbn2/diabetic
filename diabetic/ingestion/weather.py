@@ -102,9 +102,38 @@ class WeatherIngestor:
             return []
         if self.mock_mode:
             return self._get_mock_forecast()
-        
-        self.logger.warning("Real weather forecast ingestion is not implemented.")
-        return []
+        if not self.api_key:
+            return []
+
+        try:
+            resp = await self.client.get(
+                self.FORECAST_URL,
+                params={"lat": lat, "lon": lon, "appid": self.api_key, "units": "metric"}
+            )
+            if resp.status_code != 200:
+                self.logger.error("Weather forecast API error: %s", resp.status_code)
+                return []
+            data = resp.json()
+            readings: List[EnvironmentReading] = []
+            for item in data.get("list", []):
+                dt_ts = item.get("dt")
+                main = item.get("main", {})
+                if dt_ts is None or "temp" not in main:
+                    continue
+                readings.append(
+                    EnvironmentReading(
+                        timestamp=datetime.fromtimestamp(dt_ts, tz=timezone.utc),
+                        temperature=float(main["temp"]),
+                        humidity=float(main.get("humidity", 50.0)),
+                        aqi=50.0,  # ponytail: default 50.0 AQI for forecast points, live AQI via separate endpoint
+                        source="openweather",
+                        provenance="real",
+                    )
+                )
+            return readings
+        except Exception as e:
+            self.logger.error("Weather forecast fetch failed: %s", e)
+            return []
 
     def _get_mock_forecast(self) -> List[EnvironmentReading]:
         """Returns 5 days of 3-hour mock environmental readings."""

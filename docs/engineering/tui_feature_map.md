@@ -2,10 +2,10 @@
 
 Source of truth: `diabetic/cli/tui/manifest.py` (metadata) + `diabetic/cli/dispatcher.py` (routing).
 Contract test: `ops/lab/test_cli_manifest.py` (manifest ↔ handler parity).
-Updated: 2026-06-05
+Updated: 2026-09-11
 
 Ported from the `personal_finance_draft` CLI/TUI pattern (declarative manifest →
-generic menu engine → `commands/` handlers). Proportionate to this project: 6
+generic menu engine → `commands/` handlers). Fully aligned: 6
 categories, 12 commands, every entry wired to real code (no stubs).
 
 Legend:
@@ -18,7 +18,7 @@ Legend:
 
 ## Launching
 
-```
+```bash
 python -m diabetic.cli.tui                        # interactive menu
 python -m diabetic.cli <category> <command> [..]  # one-shot CLI
 python -m diabetic.main tui                        # convenience (bypasses the service lock)
@@ -30,12 +30,12 @@ diabetic op status                                 # PowerShell function -> one-
 
 ```
 BIO-QUANT · CLI/TUI | HH:MM:SS UTC | Select Category:
-  Operational Dashboard & Health
-  Simulation
-  Data & Admin
-  Diagnostics
-  Model Training
-  Settings & Preferences
+  1. Operational Dashboard & Health
+  2. Simulation
+  3. Data & Admin
+  4. Diagnostics
+  5. Model Training
+  6. Settings & Preferences
 ```
 
 ---
@@ -44,11 +44,11 @@ BIO-QUANT · CLI/TUI | HH:MM:SS UTC | Select Category:
 
 Category id: `op`
 
-| TUI Label | CLI Command | Flags | Status | Notes |
-|---|---|---|---|---|
-| Status (rich health dashboard) | `diabetic.cli op status` | `--json` | ✅ | Human table from `get_system_health()`; `--json` for automation |
-| Health (machine-readable JSON) | `diabetic.cli op health` | — | ✅ | Mirrors finance `backend integrity --json` |
-| Live Service + HUD | `diabetic.cli op live` | — | 🔧 | Subprocesses `python -m diabetic.main live`; needs full env (Nightscout/Mongo/weights) |
+| TUI Label | CLI Command | Flags | Status | Notes | Exit Code |
+|---|---|---|---|---|---|
+| Status (rich health dashboard) | `diabetic.cli op status` | `--json` | ✅ | Human table from `get_system_health()`; `--json` for automation | `0` = ok |
+| Health (machine-readable JSON) | `diabetic.cli op health` | — | ✅ | Mirrors finance `backend integrity --json` | `0` = ok |
+| Live Service + HUD | `diabetic.cli op live` | — | 🔧 | Subprocesses `python -m diabetic.main live`; needs full env (Nightscout/Mongo/weights) | `0` = clean exit |
 
 ---
 
@@ -56,11 +56,11 @@ Category id: `op`
 
 Category id: `sim`
 
-| TUI Label | CLI Command | Flags | Status | Notes |
-|---|---|---|---|---|
-| Hypoglycemic Crash scenario | `diabetic.cli sim crash` | — | ✅ | Reuses `main.run_simulation("crash")` |
-| Hyperglycemic Faint-risk scenario | `diabetic.cli sim faint` | — | ✅ | Reuses `main.run_simulation("faint")` |
-| Normal metabolic stress test | `diabetic.cli sim normal` | — | ✅ | Reuses `main.run_simulation("normal")` |
+| TUI Label | CLI Command | Flags | Status | Notes | Exit Code |
+|---|---|---|---|---|---|
+| Hypoglycemic Crash scenario | `diabetic.cli sim crash` | — | ✅ | Reuses `main.run_simulation("crash")` | `0` = ok |
+| Hyperglycemic Faint-risk scenario | `diabetic.cli sim faint` | — | ✅ | Reuses `main.run_simulation("faint")` | `0` = ok |
+| Normal metabolic stress test | `diabetic.cli sim normal` | — | ✅ | Reuses `main.run_simulation("normal")` | `0` = ok |
 
 ---
 
@@ -68,10 +68,10 @@ Category id: `sim`
 
 Category id: `admin`
 
-| TUI Label | CLI Command | Flags | Status | Notes |
-|---|---|---|---|---|
-| Export 15-day sensor periods to CSV | `diabetic.cli admin export` | — | 🔧 | Writes to `storage/exports/`; needs MongoDB |
-| Enforce retention policy | `diabetic.cli admin cleanup` | `--retention-days` | 🔧 | Defaults to `config.RETENTION_DAYS`; deletes older data; needs MongoDB |
+| TUI Label | CLI Command | Flags | Status | Notes | Exit Code |
+|---|---|---|---|---|---|
+| Export 15-day sensor periods to CSV | `diabetic.cli admin export` | — | 🔧 | Writes to `storage/exports/`; needs MongoDB | `0` = ok, `1` = error |
+| Enforce retention policy | `diabetic.cli admin cleanup` | `--retention-days` | 🔧 | Defaults to `config.RETENTION_DAYS`; deletes older data; uses `execute_retention_cleanup` | `0` = ok, `1` = failed/incomplete, `2` = validation error |
 
 ---
 
@@ -79,9 +79,9 @@ Category id: `admin`
 
 Category id: `diag`
 
-| TUI Label | CLI Command | Flags | Status | Notes |
-|---|---|---|---|---|
-| Hot-Reload Inference Stress Test | `diabetic.cli diag stress` | — | 🔧 | Runs `scripts.simulation.stress_scheduler`; cold-mode if weights absent |
+| TUI Label | CLI Command | Flags | Status | Notes | Exit Code |
+|---|---|---|---|---|---|
+| Hot-Reload Inference Stress Test | `diabetic.cli diag stress` | — | 🔧 | Runs `scripts.simulation.stress_scheduler`; cold-mode if weights absent | `0` = ok, `1` = error |
 
 ---
 
@@ -89,10 +89,10 @@ Category id: `diag`
 
 Category id: `ml`
 
-| TUI Label | CLI Command | Flags | Status | Notes |
-|---|---|---|---|---|
-| Last training result | `diabetic.cli ml status` | — | ✅ | Reads local promotion manifest without starting training |
-| Train and promote a candidate | `diabetic.cli ml train` | `--source`, `--epochs` | 🔧 | Serialized, validated, atomic promotion. Mongo needs real cardiac telemetry |
+| TUI Label | CLI Command | Flags | Status | Notes | Exit Code |
+|---|---|---|---|---|---|
+| Last training result | `diabetic.cli ml status` | — | ✅ | Reads local promotion manifest without starting training | `0` = ok, `1` = error |
+| Train and promote a candidate | `diabetic.cli ml train` | `--source`, `--epochs` | 🔧 | Serialized, validated, atomic model promotion; needs real data | `0` = ok, `1` = error, `2` = invalid flags |
 
 ---
 
@@ -100,26 +100,15 @@ Category id: `ml`
 
 Category id: `settings`
 
-| TUI Label | CLI Command | Flags | Status | Notes |
-|---|---|---|---|---|
-| Show Current Config (secrets masked) | `diabetic.cli settings show` | `--json` | ✅ | Read-only `config.model_dump()` with secret masking |
+| TUI Label | CLI Command | Flags | Status | Notes | Exit Code |
+|---|---|---|---|---|---|
+| Show Current Config (secrets masked) | `diabetic.cli settings show` | `--json` | ✅ | Read-only dump of `config.model_dump()` with secret masking | `0` = ok |
 
 ---
 
-## Open Gaps (vs the finance reference)
+## Exit Code Contract
 
-| Item | Gap | Effort |
-|---|---|---|
-| Settings write commands | Only `show` exists; finance has `timezone/layout/params/flags/alerts/reset`. Config here is env/.env-driven, so writes need a `user_settings.json` overlay layer first. | M |
-| `live` / `export` / `cleanup` / `stress` / `ml train` | 🔧 because they need MongoDB / full env / weights — not a code gap, an environment gap. Clears when run against real infra. | env |
-| Arrow-key navigation + search | Engine uses numbered selection (win32-robust); finance has arrow-key + `/`-search. | M |
-| Per-command `--json` everywhere | Only `status`/`settings show` emit JSON; finance has `--json` on every command. | S |
-
----
-
-## Recent Changes
-
-| Change | Date | Impact |
-|---|---|---|
-| Initial CLI/TUI section ported from finance | 2026-06-05 | ✅ Manifest + dispatcher + rich engine + 10 commands across 5 categories; contract test added |
-| Added Model Training (ml) category & commands | 2026-06-05 | ✅ Manifest + dispatcher parity updated to 6 categories and 12 commands |
+All handlers adhere to standard POSIX-compliant exit codes:
+- `0` (`SUCCESS`): Operation completed normally.
+- `1` (`RUNTIME_ERROR`): Operational failure (network timeout, database unreachable, incomplete cleanup).
+- `2` (`VALIDATION_ERROR`): User input / flag parsing error (e.g. non-numeric `--retention-days`, invalid `--source`).

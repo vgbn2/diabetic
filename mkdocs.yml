@@ -1,0 +1,56 @@
+site_name: Bio-Quant — Clinical Telemetry & Digital Twin Platform
+site_description: Real-time physiological monitoring, Kovatchev risk modeling, and neural faint prediction.
+site_url: https://vgbn2.github.io/diabetic/
+repo_url: https://github.com/vgbn2/diabetic
+repo_name: vgbn2/diabetic
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - tables
+  - attr_list
+
+nav:
+  - Overview: index.md
+  - Architecture:
+      - System Architecture: architecture.md
+      - Engineering Contracts: engineering/architecture.md
+      - Tenancy & Identity Roadmap: engineering/tenancy-and-identity.md
+  - Operations & CLI:
+      - TUI Feature Map: engineering/tui_feature_map.md
+      - Local Nightscout: local-nightscout.md
+      - Data Provenance: data-provenance.md
+  - Machine Learning:
+      - ML Specification: ML_SPEC.md
+      - Historical Chapter: history.md

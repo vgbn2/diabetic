@@ -15,7 +15,8 @@ class GlucoseReading(BaseModel):
     value: float  # Blood glucose level (standard unit: mmol/L)
     trend: str    # Trend arrow/indicator (e.g., Flat, FortyFiveUp, DoubleDown)
     source: str = "nightscout"
-    unit: str = "mmol/L"
+    unit: Literal["mmol/L"] = "mmol/L"
+    source_event_id: Optional[str] = None
 
 # =============================================================================
 # 🌍 [LAYER 2: ENVIRONMENTAL & SOCIAL CONTEXT]

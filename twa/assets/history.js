@@ -15,6 +15,7 @@ async function load() {
             data: {
                 labels: pts.map(function (_, i) { return i; }),
                 datasets: [{
+                    label: "Glucose (" + (data.unit || "mmol/L") + ")",
                     data: pts,
                     borderColor: "#38bdf8",
                     borderWidth: 2,
@@ -34,7 +35,7 @@ async function load() {
                 }
             }
         });
-        count.innerText = pts.length + " recent readings (mmol/L)";
+        count.innerText = pts.length + " recent readings (" + (data.unit || "mmol/L") + ")";
     } catch (e) {
         count.innerText = "Could not load history.";
     }

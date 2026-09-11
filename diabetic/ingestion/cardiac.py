@@ -67,7 +67,7 @@ class HeartRateIngestor:
 
     async def fetch_latest(self, reset: bool = True) -> Optional[CardiacReading]:
         """
-        Returns a CardiacReading enriched with aggregate statistics 
+        Returns a CardiacReading enriched with aggregate statistics
         since the last call. (Task 8.4.2)
         """
         if not self.is_available:
@@ -75,38 +75,50 @@ class HeartRateIngestor:
         if self.is_mock:
             for _ in range(5):
                 self._last_reading_Snapshot = self._generate_mock_reading()
-        
+
         if not self._last_reading_Snapshot:
             return None
 
+        snapshot = CardiacReading(
+            timestamp=self._last_reading_Snapshot.timestamp,
+            bpm=self._last_reading_Snapshot.bpm,
+            hrv=self._last_reading_Snapshot.hrv,
+            source=self._last_reading_Snapshot.source,
+            provenance=self._last_reading_Snapshot.provenance,
+            mean_bpm=self._last_reading_Snapshot.mean_bpm,
+            max_bpm=self._last_reading_Snapshot.max_bpm,
+            signal_quality=self._last_reading_Snapshot.signal_quality,
+        )
+
         # Enrich with aggregates if we have tracked data
         if self.bpm_aggregate:
-            self._last_reading_Snapshot.mean_bpm = int(statistics.mean(self.bpm_aggregate))
-            self._last_reading_Snapshot.max_bpm = max(self.bpm_aggregate)
-            
+            snapshot.mean_bpm = int(statistics.mean(self.bpm_aggregate))
+            snapshot.max_bpm = max(self.bpm_aggregate)
+
             # Signal quality based on variance (0.0 = chaotic/noise, 1.0 = stable)
             if len(self.bpm_aggregate) > 2:
                 volatility = statistics.stdev(self.bpm_aggregate)
-                self._last_reading_Snapshot.signal_quality = max(0.0, min(1.0, 1.0 - (volatility / CARDIAC_QUALITY_DIVISOR)))
-            
+                snapshot.signal_quality = max(0.0, min(1.0, 1.0 - (volatility / CARDIAC_QUALITY_DIVISOR)))
+
             if reset:
                 self.bpm_aggregate = []
 
-        return self._last_reading_Snapshot
+        self._last_reading_Snapshot = snapshot
+        return snapshot
 
     def _generate_mock_reading(self) -> CardiacReading:
         """Simulates physiological resting data with slight noise."""
-        # Task 8.4.4: Correlate mock BPM with metabolic state simulation
+        # Correlate mock BPM with baseline configuration and gaussian variance
         hr = config.PATIENT_BPM_BASELINE + random.gauss(0, 2.0)
         rmssd = config.PATIENT_HRV_BASELINE + random.gauss(0, 1.5)
-        
+
         # Ensure values stay in physiological bounds
         hr = max(BPM_MOCK_FLOOR, min(BPM_MOCK_CEILING, hr))
         rmssd = max(HRV_MOCK_FLOOR, min(HRV_MOCK_CEILING, rmssd))
-        
+
         # Record to aggregate for self-consistency
         self.bpm_aggregate.append(int(hr))
-        
+
         return CardiacReading(
             timestamp=datetime.now(timezone.utc),
             bpm=int(hr),

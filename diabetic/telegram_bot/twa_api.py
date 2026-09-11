@@ -6,8 +6,6 @@ from fastapi.responses import FileResponse
 import uvicorn
 import logging
 import os
-import hashlib
-import hmac
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -17,6 +15,7 @@ from diabetic.registry import MetabolicSnapshot, GlucoseReading
 from diabetic.auth.dependencies import require_twa_user
 from diabetic.storage.vessel_registry import VesselRegistry
 from diabetic.utils.ip_resolver import normalize_ip
+from diabetic.ui import glucose_display
 
 # --- [SKILL-LIKE LOGIC: DATA INTERFACE] ---
 # This bridge follows the 'Passive Sentinel to Active HUD' transformation.
@@ -80,6 +79,10 @@ class HUDState(BaseModel):
     fresh: bool
     glucose: Optional[float]
     velocity: Optional[float]
+    unit: str
+    decimal_places: int
+    range_state: glucose_display.DisplayRange
+    haptic_warning: bool
     trend: str
     active_carbs: float
     active_insulin: float
@@ -91,9 +94,20 @@ class HUDState(BaseModel):
 # Shared state reference (will be injected by the Coordinator)
 COORDINATOR_REF = None
 
+
+def clear_api_coordinator(owner: object) -> bool:
+    """Clear shared coordinator reference if and only if owner matches."""
+    global COORDINATOR_REF
+    if COORDINATOR_REF is owner:
+        COORDINATOR_REF = None
+        return True
+    return False
+
 @app.get("/api/v1/hud", dependencies=[Depends(require_twa_user)])
 async def get_hud_data():
     """Returns the real-time metabolic frame for the glassmorphism HUD."""
+    unit = glucose_display.unit_label()
+    dec = glucose_display.decimal_places()
     if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
         return HUDState(
             state="waiting",
@@ -101,6 +115,10 @@ async def get_hud_data():
             fresh=False,
             glucose=None,
             velocity=None,
+            unit=unit,
+            decimal_places=dec,
+            range_state="in_range",
+            haptic_warning=False,
             trend="FLAT",
             active_carbs=0.0,
             active_insulin=0.0,
@@ -109,7 +127,7 @@ async def get_hud_data():
             age_seconds=None,
             degraded_reasons=["no_metabolic_snapshot"],
         )
-    
+
     latest: MetabolicSnapshot = COORDINATOR_REF.snapshots[-1]
     timestamp = latest.glucose.timestamp
     if timestamp.tzinfo is None:
@@ -124,13 +142,22 @@ async def get_hud_data():
         degraded_reasons.append("stale_metabolic_snapshot")
     if treatment_degraded:
         degraded_reasons.append("treatment_provider_degraded")
-    
+
+    val_disp = glucose_display.glucose_value(latest.filtered_value)
+    vel_disp = glucose_display.glucose_velocity(latest.velocity) if latest.velocity is not None else None
+    range_st = glucose_display.hud_range(latest.filtered_value)
+    haptic = glucose_display.hud_haptic_warning(latest.filtered_value)
+
     return HUDState(
         state="degraded" if fresh and treatment_degraded else ("live" if fresh else "stale"),
         ready=fresh and not treatment_degraded,
         fresh=fresh,
-        glucose=latest.filtered_value,
-        velocity=latest.velocity,
+        glucose=val_disp,
+        velocity=vel_disp,
+        unit=unit,
+        decimal_places=dec,
+        range_state=range_st,
+        haptic_warning=haptic,
         trend=latest.glucose.trend,
         active_carbs=latest.active_carbs,
         active_insulin=latest.active_insulin,
@@ -143,9 +170,10 @@ async def get_hud_data():
 @app.get("/api/v1/forecast", dependencies=[Depends(require_twa_user)])
 async def get_forecast():
     """Returns the 4h trajectory for the 'Metabolic Horizon' chart."""
+    unit = glucose_display.unit_label()
     if not COORDINATOR_REF or not COORDINATOR_REF.snapshots:
-        return {"state": "waiting", "points": [], "horizon": [], "horizon_1d": []}
-    
+        return {"state": "waiting", "points": [], "horizon": [], "horizon_1d": [], "unit": unit}
+
     history_pts = int(150 / config.SAMPLING_INTERVAL_MINS)
     timestamp = COORDINATOR_REF.snapshots[-1].glucose.timestamp
     if timestamp.tzinfo is None:
@@ -153,12 +181,17 @@ async def get_forecast():
     fresh = (
         datetime.now(timezone.utc) - timestamp
     ).total_seconds() <= config.HUD_STALE_AFTER_SECS
+    raw_points = [s.filtered_value for s in COORDINATOR_REF.snapshots[-history_pts:]]
+    raw_horizon_4h = getattr(COORDINATOR_REF, "last_prediction_4h", [])
+    raw_horizon_1d = getattr(COORDINATOR_REF, "last_prediction_1d", [])
+
     return {
         "state": "live" if fresh else "stale",
         "timestamp": timestamp.isoformat(),
-        "points": [s.filtered_value for s in COORDINATOR_REF.snapshots[-history_pts:]],
-        "horizon": getattr(COORDINATOR_REF, "last_prediction_4h", []),
-        "horizon_1d": getattr(COORDINATOR_REF, "last_prediction_1d", []),
+        "unit": unit,
+        "points": glucose_display.glucose_series(raw_points),
+        "horizon": glucose_display.glucose_series(raw_horizon_4h),
+        "horizon_1d": glucose_display.glucose_series(raw_horizon_1d),
         "resolution_mins": config.SAMPLING_INTERVAL_MINS,
     }
 
@@ -229,105 +262,105 @@ async def _resolve_tenant_id(request: Request, slug: Optional[str] = None) -> st
     return "default"
 
 
-async def _validate_ingress_auth(request: Request, slug: Optional[str] = None) -> None:
-    """
-    Validates Nightscout-compatible API secret from query parameters or headers.
-    Supports system-wide API_SECRET and per-device/tenant specific secret hashes.
-    Accepts raw secret, SHA-1 hash, or 'api-secret: <hash>' / 'api-secret: <raw>' header.
-    """
-    configured_secret = (config.API_SECRET or "").strip()
+async def _validate_ingress_auth(request: Request, tenant_id: str, slug: Optional[str] = None) -> None:
+    """Validates api-secret header or query parameter against system and tenant secrets."""
+    import hashlib
+    import hmac
 
-    allowed_hashes = set()
-    allowed_raws = set()
+    expected_secrets = set()
+    if config.API_SECRET:
+        raw = config.API_SECRET.strip()
+        expected_secrets.add(raw)
+        expected_secrets.add(hashlib.sha1(raw.encode("utf-8")).hexdigest())
 
-    if configured_secret:
-        allowed_raws.add(configured_secret)
-        allowed_hashes.add(hashlib.sha1(configured_secret.encode("utf-8")).hexdigest())
+    try:
+        reg = _get_registry()
+        user = None
+        if slug:
+            user = await reg.resolve_tenant_by_slug(slug)
+            device = await reg.get_device_by_slug(slug)
+            if device and getattr(device, "api_secret_hash", None):
+                expected_secrets.add(device.api_secret_hash)
+        elif tenant_id.startswith("user_"):
+            tid = int(tenant_id.replace("user_", ""))
+            user = await reg.get_user(tid)
+        if user and getattr(user, "api_secret_hash", None):
+            expected_secrets.add(user.api_secret_hash)
+    except Exception as e:
+        logger.debug("Failed resolving tenant secret: %s", e)
 
-    # Check for per-device specific secret in VesselRegistry
-    if slug:
-        try:
-            reg = _get_registry()
-            binding = await reg.resolve_device_binding_by_slug(slug)
-            if binding and binding.api_secret_hash:
-                allowed_hashes.add(binding.api_secret_hash.strip().lower())
-        except Exception as e:
-            logger.debug("Failed checking tenant-specific secret: %s", e)
-
-    if not allowed_raws and not allowed_hashes:
-        return  # Ingress open if no secrets configured
-
-    def check_candidate(candidate: str) -> bool:
-        c = candidate.strip()
-        c_lower = c.lower()
-        if any(hmac.compare_digest(c, r) for r in allowed_raws):
-            return True
-        if any(hmac.compare_digest(c_lower, h) for h in allowed_hashes):
-            return True
-        c_sha1 = hashlib.sha1(c.encode("utf-8")).hexdigest()
-        if any(hmac.compare_digest(c_sha1, h) for h in allowed_hashes):
-            return True
-        return False
-
-    # 1. Query parameter secret=... or token=...
-    q_secret = request.query_params.get("secret") or request.query_params.get("token") or request.query_params.get("api-secret")
-    if q_secret and check_candidate(q_secret):
+    if not expected_secrets:
         return
 
-    # 2. Header api-secret or Authorization
-    hdr_secret = request.headers.get("api-secret")
-    if hdr_secret and check_candidate(hdr_secret):
-        return
+    provided = (
+        request.headers.get("api-secret")
+        or request.headers.get("api_secret")
+        or request.query_params.get("secret")
+        or request.query_params.get("token")
+    )
+    if not provided:
+        raise HTTPException(status_code=401, detail="Unauthorized: API Secret Required")
 
-    auth_hdr = request.headers.get("authorization", "")
-    if auth_hdr.lower().startswith("bearer "):
-        bearer_val = auth_hdr[7:]
-        if check_candidate(bearer_val):
-            return
+    provided_str = provided.strip()
+    provided_hash = hashlib.sha1(provided_str.encode("utf-8")).hexdigest()
 
-    logger.warning("[Ingress] Unauthorized CGM push attempt rejected.")
-    raise HTTPException(status_code=401, detail="Unauthorized: invalid api-secret or token")
+    matches = any(
+        hmac.compare_digest(provided_str, exp) or hmac.compare_digest(provided_hash, exp)
+        for exp in expected_secrets
+    )
+    if not matches:
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Secret")
+
+
+@app.get("/api/v1/entries")
+@app.get("/t/{slug}/api/v1/entries")
+async def get_entries(
+    request: Request,
+    slug: Optional[str] = None,
+    count: int = 10,
+):
+    """Nightscout GET /api/v1/entries compatibility endpoint."""
+    tenant_id = await _resolve_tenant_id(request, slug=slug)
+    await _validate_ingress_auth(request, tenant_id=tenant_id, slug=slug)
+
+    pipeline = None
+    if COORDINATOR_REF:
+        if tenant_id != "default" and hasattr(COORDINATOR_REF, "get_pipeline"):
+            pipeline = COORDINATOR_REF.get_pipeline(tenant_id)
+        else:
+            pipeline = COORDINATOR_REF
+
+    if not pipeline or not pipeline.snapshots:
+        return []
+
+    entries = []
+    for s in list(pipeline.snapshots)[-count:]:
+        ts = s.glucose.timestamp
+        ts_ms = int(ts.timestamp() * 1000)
+        sgv_mgdl = round(s.glucose.value * 18.0182)
+        entries.append({
+            "_id": f"entry_{ts_ms}",
+            "sgv": sgv_mgdl,
+            "date": ts_ms,
+            "dateString": ts.isoformat(),
+            "trend": 4,
+            "direction": s.glucose.trend,
+            "device": "bio-quant",
+            "type": "sgv",
+        })
+    return list(reversed(entries))
 
 
 @app.post("/api/v1/entries")
 @app.post("/t/{slug}/api/v1/entries")
-@app.get("/api/v1/entries")
-@app.get("/t/{slug}/api/v1/entries")
 async def ingest_cgm_entries(
     request: Request,
     slug: Optional[str] = None,
 ):
     """
-    Nightscout-compatible CGM ingestion and query endpoint.
-    Accepts POST telemetry from xDrip+, Ottai, Nightscout Uploader, and synthetic streams.
-    Accepts GET requests from web browsers/uploaders to inspect recent readings.
+    Inbound Nightscout-compatible CGM ingestion endpoint.
+    Accepts telemetry from xDrip+, Ottai, Nightscout Uploader, and synthetic streams.
     """
-    await _validate_ingress_auth(request, slug=slug)
-
-    tenant_id = await _resolve_tenant_id(request, slug=slug)
-
-    # If accessed via GET (browser or uploader checking connection)
-    if request.method == "GET":
-        pipeline = COORDINATOR_REF.get_pipeline(tenant_id) if COORDINATOR_REF else None
-        if not pipeline or not pipeline.snapshots:
-            return []
-
-        # Return recent readings in standard Nightscout format
-        results = []
-        for s in list(pipeline.snapshots)[-10:]:
-            ts = s.glucose.timestamp
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            results.append({
-                "sgv": round(s.filtered_value * 18.0182, 0),
-                "date": int(ts.timestamp() * 1000),
-                "dateString": ts.isoformat(),
-                "trend": s.glucose.trend,
-                "direction": s.glucose.trend,
-                "type": "sgv",
-            })
-        return results[::-1]
-
     try:
         body = await request.json()
     except Exception:
@@ -336,6 +369,9 @@ async def ingest_cgm_entries(
     entries_list = body if isinstance(body, list) else [body]
     if not entries_list:
         return {"status": "ok", "inserted": 0}
+
+    tenant_id = await _resolve_tenant_id(request, slug=slug)
+    await _validate_ingress_auth(request, tenant_id=tenant_id, slug=slug)
 
     ingested_count = 0
     for entry in entries_list:
@@ -385,6 +421,8 @@ async def ingest_cgm_entries(
 @app.get("/t/{slug}/api/v1/hud")
 async def get_tenant_hud_data(request: Request, slug: str):
     """Returns isolated HUD state for a specific tenant slug."""
+    unit = glucose_display.unit_label()
+    dec = glucose_display.decimal_places()
     if not COORDINATOR_REF:
         return HUDState(
             state="waiting",
@@ -392,6 +430,10 @@ async def get_tenant_hud_data(request: Request, slug: str):
             fresh=False,
             glucose=None,
             velocity=None,
+            unit=unit,
+            decimal_places=dec,
+            range_state="in_range",
+            haptic_warning=False,
             trend="FLAT",
             active_carbs=0.0,
             active_insulin=0.0,
@@ -409,6 +451,10 @@ async def get_tenant_hud_data(request: Request, slug: str):
             fresh=False,
             glucose=None,
             velocity=None,
+            unit=unit,
+            decimal_places=dec,
+            range_state="in_range",
+            haptic_warning=False,
             trend="FLAT",
             active_carbs=0.0,
             active_insulin=0.0,
@@ -425,12 +471,21 @@ async def get_tenant_hud_data(request: Request, slug: str):
     age = max(0.0, (datetime.now(timezone.utc) - timestamp).total_seconds())
     fresh = age <= config.HUD_STALE_AFTER_SECS
 
+    val_disp = glucose_display.glucose_value(latest.filtered_value)
+    vel_disp = glucose_display.glucose_velocity(latest.velocity) if latest.velocity is not None else None
+    range_st = glucose_display.hud_range(latest.filtered_value)
+    haptic = glucose_display.hud_haptic_warning(latest.filtered_value)
+
     return HUDState(
         state="live" if fresh else "stale",
         ready=fresh,
         fresh=fresh,
-        glucose=latest.filtered_value,
-        velocity=latest.velocity,
+        glucose=val_disp,
+        velocity=vel_disp,
+        unit=unit,
+        decimal_places=dec,
+        range_state=range_st,
+        haptic_warning=haptic,
         trend=latest.glucose.trend,
         active_carbs=latest.active_carbs,
         active_insulin=latest.active_insulin,
@@ -513,29 +568,19 @@ async def get_client_summary(request: Request, slug: Optional[str] = None):
 async def get_cgm_config(request: Request, slug: Optional[str] = None):
     """
     Returns copy-pasteable CGM uploader parameters (URL, API secret hash, direct webhook)
-    for mobile apps (xDrip+, Ottai, Nightscout, LibreLink).
+    for mobile apps (xDrip+, Ottai, Nightscout).
     """
+    import hashlib
     tenant_id = await _resolve_tenant_id(request, slug=slug)
     user_slug = slug or (tenant_id if not tenant_id.startswith("user_") else "default")
 
     raw_secret = config.API_SECRET or "bioquant123"
     sha1_secret = hashlib.sha1(raw_secret.encode("utf-8")).hexdigest()
-
-    # If tenant has a dedicated device binding with a distinct secret hash, surface it
-    if user_slug != "default":
-        try:
-            reg = _get_registry()
-            binding = await reg.resolve_device_binding_by_slug(user_slug)
-            if binding and binding.api_secret_hash:
-                sha1_secret = binding.api_secret_hash.strip().lower()
-        except Exception as e:
-            logger.debug("Failed querying custom tenant secret for cgm_config: %s", e)
-
     base_host = "https://hpdesk-1.tail285cce.ts.net"
 
     return {
         "nightscout_url": base_host,
-        "api_secret": raw_secret if user_slug == "default" else f"device_key_{user_slug}",
+        "api_secret": raw_secret,
         "api_secret_sha1": sha1_secret,
         "direct_upload_url": f"{base_host}/t/{user_slug}/api/v1/entries?secret={sha1_secret}",
         "tenant_slug": user_slug,
@@ -546,13 +591,23 @@ async def get_cgm_config(request: Request, slug: Optional[str] = None):
 async def update_calibration(traits: dict):
     """Allows the user to update Bio-Traits (Weight, Age, Sensitivity) via GUI."""
     if not COORDINATOR_REF:
-         raise HTTPException(status_code=503, detail="Engine Offline")
-    
-    # Logic: Update VesselRegistry and re-sync Twin
+        raise HTTPException(status_code=503, detail="Engine Offline")
+
+    # Logic: Update VesselRegistry
     success = await COORDINATOR_REF.vessel_registry.update_user_traits(config.USER_ID, traits)
     if success:
-        return {"status": "success", "message": "Bio-Traits Recalibrated"}
-    return {"status": "error", "message": "Profile not found or no valid fields"}
+        return {
+            "status": "success",
+            "stored": True,
+            "applied_to_runtime": False,
+            "message": "Bio-traits saved to database. Running twin and forecasts are unchanged until the next process restart.",
+        }
+    return {
+        "status": "error",
+        "stored": False,
+        "applied_to_runtime": False,
+        "message": "Profile not found or no valid fields",
+    }
 
 def start_api(coordinator_instance):
     """Helper to launch the API in a background thread or separate process."""

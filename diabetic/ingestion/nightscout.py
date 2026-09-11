@@ -2,6 +2,7 @@ import httpx
 import hashlib
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 from diabetic.registry import (
@@ -13,6 +14,11 @@ from diabetic.registry import (
 from diabetic.config import config
 from diabetic import medical_constants
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
+
+@dataclass(frozen=True)
+class AccessProbeResult:
+    state: str  # "ok", "rejected", "unreachable", "rate_limited", "misconfigured"
+    reason: Optional[str] = None
 
 class NightscoutClient:
     """
@@ -40,6 +46,31 @@ class NightscoutClient:
     async def close(self):
         """Closes the underlying HTTP client."""
         await self.client.aclose()
+
+    async def probe_access(self) -> AccessProbeResult:
+        """Probes Nightscout server connectivity and authentication."""
+        if not self.url or (not self._token and not self.hashed_secret):
+            return AccessProbeResult(state="misconfigured", reason="Missing URL or API secret")
+        if self.hashed_secret == hashlib.sha1(b"").hexdigest() and not self._token:
+            return AccessProbeResult(state="misconfigured", reason="Empty API secret")
+
+        endpoint = f"{self.url}/api/v1/status.json"
+        params = self._get_auth_params()
+        headers = self._get_auth_headers()
+        try:
+            response = await self.client.get(endpoint, params=params, headers=headers)
+            response.raise_for_status()
+            return AccessProbeResult(state="ok")
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            if code in (401, 403):
+                return AccessProbeResult(state="rejected", reason=f"HTTP {code} Unauthorized")
+            elif code == 429:
+                return AccessProbeResult(state="rate_limited", reason="HTTP 429 Too Many Requests")
+            else:
+                return AccessProbeResult(state="unreachable", reason=f"HTTP {code} Error")
+        except Exception as exc:
+            return AccessProbeResult(state="unreachable", reason=exc.__class__.__name__)
         
     def _get_headers(self) -> dict:
         """Returns base Accept headers (no auth — auth injected via params or header below)."""
@@ -134,13 +165,6 @@ class NightscoutClient:
                     )
                     continue
 
-                if config.PREFER_MMOL:
-                    value = mmol_value
-                    unit = "mmol/L"
-                else:
-                    value = mmol_value * medical_constants.MMOL_TO_MGDL
-                    unit = "mg/dL"
-                
                 # Robust timestamp parsing
                 ts_str = entry['dateString'].replace('Z', '+00:00')
                 try:
@@ -152,13 +176,14 @@ class NightscoutClient:
                         ts = datetime.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
                     except Exception:
                         continue # Skip unparseable reading
-                    
+
                 readings.append(GlucoseReading(
                     timestamp=ts,
-                    value=round(value, 2),
+                    value=mmol_value,
                     trend=entry.get('direction', 'Flat'),
                     source="nightscout",
-                    unit=unit
+                    unit="mmol/L",
+                    source_event_id=str(entry["_id"]) if entry.get("_id") is not None else None,
                 ))
         return readings
 

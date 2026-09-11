@@ -236,18 +236,6 @@ class VesselRegistry:
             )
             return binding
 
-    async def resolve_device_binding_by_slug(self, custom_url_slug: str) -> Optional[DeviceBinding]:
-        """Resolves DeviceBinding record by custom URL slug."""
-        if not custom_url_slug:
-            return None
-        slug_clean = custom_url_slug.strip().lower()
-        async with self._session() as session:
-            result = await session.execute(
-                select(DeviceBinding)
-                .where(DeviceBinding.custom_url_slug == slug_clean, DeviceBinding.is_active == True)
-            )
-            return result.scalar_one_or_none()
-
     async def resolve_tenant_by_slug(self, custom_url_slug: str) -> Optional[User]:
         """Resolves User tenant record by custom URL slug."""
         if not custom_url_slug:
@@ -257,6 +245,18 @@ class VesselRegistry:
             result = await session.execute(
                 select(User)
                 .join(DeviceBinding, DeviceBinding.user_id == User.id)
+                .where(DeviceBinding.custom_url_slug == slug_clean, DeviceBinding.is_active == True)
+            )
+            return result.scalar_one_or_none()
+
+    async def get_device_by_slug(self, custom_url_slug: str) -> Optional[DeviceBinding]:
+        """Retrieves active DeviceBinding by custom URL slug."""
+        if not custom_url_slug:
+            return None
+        slug_clean = custom_url_slug.strip().lower()
+        async with self._session() as session:
+            result = await session.execute(
+                select(DeviceBinding)
                 .where(DeviceBinding.custom_url_slug == slug_clean, DeviceBinding.is_active == True)
             )
             return result.scalar_one_or_none()

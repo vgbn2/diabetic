@@ -1,7 +1,9 @@
+from dataclasses import dataclass
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from pydantic import BaseModel
+from uuid import uuid4
+from pydantic import BaseModel, Field
 from diabetic.registry import MetabolicSnapshot, GlucoseReading
 from diabetic import medical_constants
 from diabetic.config import config
@@ -19,11 +21,19 @@ class Alert(BaseModel):
     severity: AlertSeverity
     message: str
     glucose_value: float
+    alert_id: str = Field(default_factory=lambda: uuid4().hex[:12])
     prediction_30m: Optional[float] = None
     prediction_15m: Optional[float] = None
     prediction_60m: Optional[float] = None
     confidence_index: Optional[float] = None
     velocity_score: Optional[float] = None
+
+@dataclass(frozen=True)
+class AlertReservation:
+    alert_type: str
+    alert_id: str
+    severity: AlertSeverity
+    timestamp: datetime
 
 class FeedbackEngine:
     """Consumes RLHF audit logs to adapt alert sensitivity dynamically."""
@@ -184,23 +194,55 @@ class DecisionMatrix:
 
 class CircuitBreaker:
     """Prevents alert fatigue by throttling notifications."""
-    def __init__(self, cooldown_mins: int = 15):
+    def __init__(self, cooldown_mins: int = 15, reservation_mins: int = 5):
         self.cooldown = timedelta(minutes=cooldown_mins)
-        self.last_alerts = {}  # type -> timestamp
+        self.reservation_timeout = timedelta(minutes=reservation_mins)
+        self.last_alerts: dict[str, datetime] = {}  # type -> timestamp
+        self._reservations: dict[str, AlertReservation] = {}
 
     def can_alert(self, alert_type: str, severity: AlertSeverity = AlertSeverity.MEDIUM) -> bool:
         """Determines if enough time has passed. EMERGENCY severity bypasses cooldown."""
         if severity == AlertSeverity.EMERGENCY:
-            self.last_alerts[alert_type] = datetime.now(timezone.utc)
             return True
 
         now = datetime.now(timezone.utc)
         if alert_type not in self.last_alerts:
-            self.last_alerts[alert_type] = now
             return True
 
-        if now - self.last_alerts[alert_type] > self.cooldown:
-            self.last_alerts[alert_type] = now
-            return True
+        return (now - self.last_alerts[alert_type]) > self.cooldown
 
+    def reserve(
+        self,
+        alert_type: str,
+        alert_id: str,
+        severity: AlertSeverity = AlertSeverity.MEDIUM,
+    ) -> Optional[AlertReservation]:
+        now = datetime.now(timezone.utc)
+        if alert_type in self._reservations:
+            res = self._reservations[alert_type]
+            if (now - res.timestamp) < self.reservation_timeout:
+                return None
+        if not self.can_alert(alert_type, severity):
+            return None
+        reservation = AlertReservation(alert_type, alert_id, severity, now)
+        self._reservations[alert_type] = reservation
+        return reservation
+
+    def release(self, reservation: Optional[AlertReservation]) -> bool:
+        if reservation is None:
+            return False
+        current = self._reservations.get(reservation.alert_type)
+        if current is not None and current.alert_id == reservation.alert_id:
+            del self._reservations[reservation.alert_type]
+            return True
+        return False
+
+    def commit(self, reservation: Optional[AlertReservation]) -> bool:
+        if reservation is None:
+            return False
+        current = self._reservations.get(reservation.alert_type)
+        if current is not None and current.alert_id == reservation.alert_id:
+            del self._reservations[reservation.alert_type]
+            self.last_alerts[reservation.alert_type] = datetime.now(timezone.utc)
+            return True
         return False

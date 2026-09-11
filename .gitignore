@@ -84,6 +84,7 @@ storage/
 artifacts/
 tmp/
 testsprite_tests/
+site/
 *.bak
 *.db
 entities.json

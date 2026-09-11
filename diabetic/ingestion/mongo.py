@@ -1,8 +1,10 @@
-import pandas as pd
-from pathlib import Path
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Optional
+
+import pandas as pd
 from diabetic.config import config
 from diabetic.registry import (
     CardiacReading,
@@ -15,6 +17,11 @@ from diabetic.registry import (
 from diabetic.utils.db import db_manager
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
 from diabetic.ingestion.timestamps import treatment_timestamp
+from diabetic.operations.retention import (
+    RetentionCleanupResult,
+    invalid_retention_result,
+    retention_days_valid,
+)
 
 # =============================================================================
 # 🔌 [DATABASE CONNECTIVITY]
@@ -441,22 +448,43 @@ class MongoDBClient:
         
         self.logger.info(f"  Generated: {path.name} ({len(readings)} readings)")
 
-    async def run_retention_cleanup(self, days: int = 180):
+    async def run_retention_cleanup(self, days: int = 180) -> RetentionCleanupResult:
         """
-        Enforces the 180-day retention policy (Task III). 
+        Enforces the retention policy (Task III).
         DELETES data strictly older than the specified threshold.
         """
-        # Fix C1: self.db does not exist; guard against actual collection references.
-        if self.entries is None or self.treatments is None: return
-        
+        if not retention_days_valid(days):
+            return invalid_retention_result(days)
+
+        if self.entries is None or self.treatments is None:
+            return RetentionCleanupResult(
+                state="unavailable",
+                retention_days=days,
+                failed_phase="availability",
+            )
+
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         cutoff_ms = cutoff_date.timestamp() * 1000
-        
+
         self.logger.warning(f"RETENTION POLICY: Deleting data older than {days} days (Cutoff: {cutoff_date})")
-        
+
         try:
             res_e = await self.entries.delete_many({"date": {"$lt": cutoff_ms}})
-            removed_treatments = 0
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.logger.error(f"Cleanup entries deletion failed: {e}")
+            return RetentionCleanupResult(
+                state="failed",
+                retention_days=days,
+                entries_deleted=0,
+                treatments_deleted=0,
+                failed_phase="entries",
+                reason=type(e).__name__,
+            )
+
+        removed_treatments = 0
+        try:
             cursor = self.treatments.find({}, {"_id": 1, "created_at": 1, "mills": 1})
             stale_ids = []
             async for document in cursor:
@@ -470,14 +498,37 @@ class MongoDBClient:
             if stale_ids:
                 result = await self.treatments.delete_many({"_id": {"$in": stale_ids}})
                 removed_treatments += result.deleted_count
-            
+
             self.logger.info(
                 "Cleanup complete. Removed %s entries and %s treatments.",
                 res_e.deleted_count,
                 removed_treatments,
             )
+            return RetentionCleanupResult(
+                state="completed",
+                retention_days=days,
+                entries_deleted=res_e.deleted_count,
+                treatments_deleted=removed_treatments,
+            )
+        except asyncio.CancelledError:
+            return RetentionCleanupResult(
+                state="partial",
+                retention_days=days,
+                entries_deleted=res_e.deleted_count,
+                treatments_deleted=removed_treatments,
+                failed_phase="treatments",
+                reason="CancelledError",
+            )
         except Exception as e:
-            self.logger.error(f"Cleanup failed: {e}")
+            self.logger.error(f"Cleanup treatments deletion failed: {e}")
+            return RetentionCleanupResult(
+                state="partial",
+                retention_days=days,
+                entries_deleted=res_e.deleted_count,
+                treatments_deleted=removed_treatments,
+                failed_phase="treatments",
+                reason=type(e).__name__,
+            )
 
 # =============================================================================
 # 🛠️ [DOCUMENT MAPPING]

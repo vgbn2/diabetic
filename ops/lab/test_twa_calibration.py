@@ -12,6 +12,7 @@ repo rule) and asserts three things the auth-only probes never reached:
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -20,6 +21,7 @@ from diabetic.storage.engine import close_db, init_db
 from diabetic.storage.vessel_registry import VesselRegistry
 
 PATIENT_ID = 555111
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestCalibrationWrite(unittest.IsolatedAsyncioTestCase):
@@ -93,9 +95,36 @@ class TestCalibrationTarget(unittest.IsolatedAsyncioTestCase):
             result = await twa_api.update_calibration({"age": 31})
 
         self.assertEqual(result["status"], "success")
+        self.assertTrue(result["stored"])
+        self.assertFalse(result["applied_to_runtime"])
+        self.assertIn("forecasts are unchanged", result["message"])
         registry.update_user_traits.assert_awaited_once_with(
             PATIENT_ID, {"age": 31}
         )
+
+    async def test_invalid_update_reports_not_stored_or_applied(self):
+        from diabetic.telegram_bot import twa_api
+
+        registry = SimpleNamespace(update_user_traits=AsyncMock(return_value=False))
+        twa_api.COORDINATOR_REF = SimpleNamespace(vessel_registry=registry)
+        result = await twa_api.update_calibration({"unknown": "value"})
+
+        self.assertEqual(result["status"], "error")
+        self.assertFalse(result["stored"])
+        self.assertFalse(result["applied_to_runtime"])
+
+
+class TestCalibrationPresentation(unittest.TestCase):
+    def test_settings_do_not_claim_live_runtime_application(self):
+        html = (ROOT / "twa" / "settings.html").read_text(encoding="utf-8")
+        script = (ROOT / "twa" / "assets" / "settings.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("applied to your live metabolic twin", html)
+        self.assertNotIn("re-sync the forecast", html)
+        self.assertIn("running twin and forecasts continue", html)
+        self.assertIn("data.stored", script)
 
 
 if __name__ == "__main__":

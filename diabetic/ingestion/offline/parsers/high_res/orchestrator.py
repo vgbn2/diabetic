@@ -71,7 +71,11 @@ def _parse_vn_date(day_str: str, month_str: str, year_str: Optional[str], defaul
             
         if month:
             return datetime(y, month, int(day_str))
-    except Exception: pass
+    except (ValueError, TypeError, KeyError):
+        # ponytail: invalid date token format fallback to None
+        pass
+    except Exception:
+        pass
     return None
 
 

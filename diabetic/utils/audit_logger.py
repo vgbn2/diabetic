@@ -2,11 +2,23 @@ import asyncio
 import sqlite3
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Optional, List
 from diabetic.config import config
 from diabetic.registry import GlucoseReading
 from diabetic.utils.db import db_manager
+
+
+@dataclass(frozen=True)
+class AuditWriteResult:
+    local_persisted: bool = False
+    mongo_persisted: bool = False
+
+    @property
+    def durable(self) -> bool:
+        return self.local_persisted or self.mongo_persisted
 
 # =============================================================================
 # 📖 [AUDIT CONNECTIVITY]
@@ -31,6 +43,7 @@ class AuditLogger:
         
         # GC Protection for background tasks (Phase 0.5 Remediation)
         self.background_tasks = set()
+        self.closed = False
 
         # Initialize SQLite (Task 8.1.2)
         try:
@@ -59,13 +72,89 @@ class AuditLogger:
                 data TEXT
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS glucose_gaps (
+                gap_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                state TEXT NOT NULL,
+                reason TEXT,
+                from_event_id TEXT,
+                through_event_id TEXT,
+                from_timestamp TEXT,
+                through_timestamp TEXT,
+                updated_at TEXT NOT NULL
+            )
+        """)
         self.local_conn.commit()
+
+    async def record_glucose_gap(self, payload: dict) -> AuditWriteResult:
+        """Records or updates a durable glucose gap."""
+        gap_id = payload.get("gap_id")
+        if not gap_id:
+            return AuditWriteResult(local_persisted=False)
+        source = payload.get("source", "nightscout")
+        state = payload.get("state", "replay_pending")
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        async with self.sql_lock:
+            cursor = self.local_conn.cursor()
+            cursor.execute("SELECT gap_id FROM glucose_gaps WHERE gap_id = ?", (gap_id,))
+            exists = cursor.fetchone()
+            if exists:
+                updates = ["state = ?", "updated_at = ?"]
+                params = [state, now_iso]
+                for field in ("reason", "from_event_id", "through_event_id", "from_timestamp", "through_timestamp"):
+                    if field in payload and payload[field] is not None:
+                        updates.append(f"{field} = ?")
+                        params.append(payload[field])
+                params.append(gap_id)
+                cursor.execute(f"UPDATE glucose_gaps SET {', '.join(updates)} WHERE gap_id = ?", params)
+            else:
+                cursor.execute("""
+                    INSERT INTO glucose_gaps (gap_id, source, state, reason, from_event_id, through_event_id, from_timestamp, through_timestamp, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    gap_id,
+                    source,
+                    state,
+                    payload.get("reason"),
+                    payload.get("from_event_id"),
+                    payload.get("through_event_id"),
+                    payload.get("from_timestamp"),
+                    payload.get("through_timestamp"),
+                    now_iso
+                ))
+            self.local_conn.commit()
+        return AuditWriteResult(local_persisted=True, mongo_persisted=False)
+
+    async def get_pending_glucose_gaps(self) -> List[dict]:
+        """Retrieves all glucose gaps with state='replay_pending'."""
+        async with self.sql_lock:
+            cursor = self.local_conn.cursor()
+            cursor.execute("""
+                SELECT gap_id, source, state, reason, from_event_id, through_event_id, from_timestamp, through_timestamp
+                FROM glucose_gaps WHERE state = 'replay_pending'
+            """)
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append({
+                    "gap_id": row[0],
+                    "source": row[1],
+                    "state": row[2],
+                    "reason": row[3],
+                    "from_event_id": row[4],
+                    "through_event_id": row[5],
+                    "from_timestamp": row[6],
+                    "through_timestamp": row[7],
+                })
+            return results
 
 # =============================================================================
 # 📝 [EVENT LOGGING ENGINE]
 # =Focus: JSON Persistence, Semantic Indexing, and Priority Routing
 # =============================================================================
-    async def log_event(self, event_type: str, data: dict, level: str = "INFO"):
+    async def log_event(self, event_type: str, data: dict, level: str = "INFO") -> AuditWriteResult:
         """Stores an event in the database and local logger."""
         timestamp = datetime.now(timezone.utc)
 
@@ -84,7 +173,7 @@ class AuditLogger:
             return obj
 
         sanitized_data = _json_serializable(data)
-        
+
         log_entry = {
             "timestamp": timestamp,
             "event_type": event_type,
@@ -100,14 +189,17 @@ class AuditLogger:
         else:
             self.logger.info(log_msg)
 
+        mongo_persisted = False
         if self.collection is not None:
             try:
                 # MongoDB handles datetime objects directly, but nested enums fail
                 await self.collection.insert_one(log_entry)
+                mongo_persisted = True
             except Exception as e:
                 self.logger.error(f"Failed to persist log to MongoDB: {e}")
 
-        if hasattr(self, 'local_conn'):
+        local_persisted = False
+        if hasattr(self, 'local_conn') and self.local_conn is not None:
             try:
                 def _write_db():
                     cursor = self.local_conn.cursor()
@@ -119,8 +211,11 @@ class AuditLogger:
 
                 async with self.sql_lock:
                     await asyncio.to_thread(_write_db)
+                local_persisted = True
             except Exception as e:
                 self.logger.error(f"Failed to persist log to SQLite: {e}")
+
+        return AuditWriteResult(local_persisted=local_persisted, mongo_persisted=mongo_persisted)
 
 # =============================================================================
 # 🩸 [TELEMETRY & USER FEEDBACK]
@@ -135,7 +230,7 @@ class AuditLogger:
         Retrieves the most recent raw reading timestamp from SQLite.
         Used for Stateful Resumption (Wave 2).
         """
-        if not hasattr(self, 'local_conn'):
+        if not hasattr(self, 'local_conn') or not self.local_conn:
             return None
 
         try:
@@ -167,7 +262,7 @@ class AuditLogger:
 
     async def get_recent_feedback(self, alert_type: str, hours: int = 24) -> List[dict]:
         """Retrieves recent RLHF feedback for fine-tuning sensitivity."""
-        if not hasattr(self, 'local_conn'):
+        if not hasattr(self, 'local_conn') or not self.local_conn:
             return []
 
         try:
@@ -179,7 +274,7 @@ class AuditLogger:
                     ("USER_FEEDBACK", cutoff.isoformat())
                 )
                 return cursor.fetchall()
-            
+
             rows = await asyncio.to_thread(_query_db)
             feedback = []
             for row in rows:
@@ -191,20 +286,23 @@ class AuditLogger:
             self.logger.error(f"Failed to query recent feedback: {e}")
             return []
 
-
 # =============================================================================
 # 🛡️ [ADMINISTRATIVE INTEGRITY]
 # =Focus: Secure Tracking of Maintenance and System Overrides
 # =============================================================================
-    async def log_admin_action(self, action_name: str, details: dict):
+    async def log_admin_action(self, action_name: str, details: dict) -> AuditWriteResult:
         """Logs sensitive administrative actions (Task III)."""
-        await self.log_event("ADMIN_ACTION", {
+        return await self.log_event("ADMIN_ACTION", {
             "action": action_name,
             **details
         }, level="WARNING")
 
     async def close(self):
         """Drain background logging tasks and close SQLite connections."""
+        if self.closed:
+            return
+        self.closed = True
+
         if self.background_tasks:
             tasks = list(self.background_tasks)
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -217,6 +315,49 @@ class AuditLogger:
                 await asyncio.to_thread(conn.close)
             except Exception as e:
                 self.logger.error(f"Error closing audit SQLite connection: {e}")
+
+
+class LocalAuditReader:
+    """Read-only SQLite audit reader. Never creates the DB file."""
+
+    def __init__(self, path: str | Path):
+        self._path = Path(path)
+        self._conn = None
+        self.closed = False
+
+    async def __aenter__(self) -> "LocalAuditReader":
+        if self._path.exists():
+            self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        await self.close()
+
+    async def get_last_reading_timestamp(self) -> Optional[datetime]:
+        if self._conn is None:
+            return None
+        def _query():
+            cursor = self._conn.cursor()
+            cursor.execute(
+                "SELECT timestamp FROM audit_logs WHERE event_type='RAW_READING' ORDER BY id DESC LIMIT 1"
+            )
+            return cursor.fetchone()
+        row = await asyncio.to_thread(_query)
+        if row is None or not row[0]:
+            return None
+        try:
+            return datetime.fromisoformat(row[0])
+        except (ValueError, TypeError):
+            return None
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        if self._conn:
+            conn = self._conn
+            self._conn = None
+            await asyncio.to_thread(conn.close)
 
 if __name__ == "__main__":
     import asyncio

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update, BotCommand
@@ -10,6 +11,40 @@ from functools import wraps
 from diabetic.config import config
 from diabetic.telegram_bot.decision_matrix import Alert
 from diabetic.auth.authorization import is_authorized
+
+
+@dataclass(frozen=True)
+class AlertDeliveryResult:
+    state: str  # "accepted", "rejected", "rate_limited", "ambiguous"
+    attempts: int = 1
+    message_id: Optional[int] = None
+    reason: Optional[str] = None
+    retry_after_seconds: Optional[float] = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.state == "accepted"
+
+
+def parse_feedback_callback(data: str) -> Optional[tuple[str, str, Optional[str]]]:
+    if not isinstance(data, str):
+        return None
+    valid_actions = {"confirm", "false", "neutral"}
+    if "|" in data:
+        parts = data.split("|")
+        if len(parts) == 3:
+            action, alert_type, alert_id = parts
+            if action in valid_actions and alert_type and alert_id:
+                return (action, alert_type, alert_id)
+        return None
+    elif "_" in data:
+        parts = data.split("_", 1)
+        if len(parts) == 2:
+            action, alert_type = parts
+            if action in valid_actions and alert_type:
+                return (action, alert_type, None)
+        return None
+    return None
 
 class TelegramNotifier:
     """
@@ -53,17 +88,23 @@ class TelegramNotifier:
         finally:
             self.pending_tasks.pop(message_id, None)
 
-    async def send_alert(self, alert: Alert):
-        """Pushes an alert to the user with interactive buttons."""
+    async def send_alert(
+        self,
+        alert: Alert,
+        max_attempts: int = 3,
+        max_retry_delay_seconds: float = 10.0,
+    ) -> AlertDeliveryResult:
+        """Pushes an alert to the user with interactive buttons and circuit breaker resilience."""
         if not self.bot or not self.chat_id:
             self.logger.error("Telegram token or Chat ID missing. Cannot send alert.")
-            return
+            return AlertDeliveryResult(state="rejected", attempts=0, reason="bot_or_chat_id_missing")
 
+        alert_id = getattr(alert, "alert_id", "default")
         keyboard = [
             [
-                InlineKeyboardButton("✅ Confirmed", callback_data=f"confirm_{alert.type}"),
-                InlineKeyboardButton("❌ False Alarm", callback_data=f"false_{alert.type}"),
-                InlineKeyboardButton("Neutral", callback_data=f"neutral_{alert.type}")
+                InlineKeyboardButton("✅ Confirmed", callback_data=f"confirm|{alert.type}|{alert_id}"),
+                InlineKeyboardButton("❌ False Alarm", callback_data=f"false|{alert.type}|{alert_id}"),
+                InlineKeyboardButton("Neutral", callback_data=f"neutral|{alert.type}|{alert_id}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -84,22 +125,68 @@ class TelegramNotifier:
         elif alert.prediction_30m:
             text += f"Predicted (30m): {alert.prediction_30m:.1f}\n"
 
-        try:
-            msg = await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
-            )
-            self.logger.info(f"Telegram alert sent: {alert.type}")
-            
-            # Start auto-review background task
-            task = asyncio.create_task(self._auto_review_task(msg.message_id, alert.type))
-            self.pending_tasks[msg.message_id] = task
-            task.add_done_callback(lambda t: self.pending_tasks.pop(msg.message_id, None))
+        from telegram.error import Forbidden, RetryAfter, TimedOut
 
-        except Exception as e:
-            self.logger.error(f"Failed to send Telegram message: {e}")
+        for attempt in range(1, max_attempts + 1):
+            try:
+                msg = await self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+                self.logger.info(f"Telegram alert sent: {alert.type}")
+
+                # Start auto-review background task
+                msg_id = getattr(msg, "message_id", None)
+                if msg_id is not None:
+                    task = asyncio.create_task(self._auto_review_task(msg_id, alert.type))
+                    self.pending_tasks[msg_id] = task
+                    task.add_done_callback(lambda t: self.pending_tasks.pop(msg_id, None))
+
+                return AlertDeliveryResult(
+                    state="accepted",
+                    attempts=attempt,
+                    message_id=msg_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Forbidden:
+                self.logger.error(f"Permanent rejection sending alert {alert.type}")
+                return AlertDeliveryResult(state="rejected", attempts=attempt, reason="Forbidden")
+            except RetryAfter as e:
+                retry_delay = getattr(e, "retry_after", 0.0)
+                if isinstance(retry_delay, (int, float)) and retry_delay > max_retry_delay_seconds:
+                    self.logger.warning(
+                        f"Rate limited by Telegram (retry_after={retry_delay}s exceeds threshold {max_retry_delay_seconds}s)"
+                    )
+                    return AlertDeliveryResult(
+                        state="rate_limited",
+                        attempts=attempt,
+                        retry_after_seconds=retry_delay,
+                        reason="RetryAfter",
+                    )
+                if attempt < max_attempts:
+                    await asyncio.sleep(retry_delay)
+                    continue
+                return AlertDeliveryResult(
+                    state="rate_limited",
+                    attempts=attempt,
+                    retry_after_seconds=retry_delay,
+                    reason="RetryAfter",
+                )
+            except TimedOut:
+                if attempt < max_attempts:
+                    continue
+                self.logger.warning(f"Telegram timeout exhausted for alert {alert.type}")
+                return AlertDeliveryResult(state="ambiguous", attempts=attempt, reason="TimedOut")
+            except Exception as e:
+                self.logger.error(f"Failed to send Telegram message: {e}")
+                if attempt < max_attempts:
+                    continue
+                return AlertDeliveryResult(state="rejected", attempts=attempt, reason=e.__class__.__name__)
+
+        return AlertDeliveryResult(state="rejected", attempts=max_attempts, reason="attempts_exhausted")
 
     async def send_chart(self, photo_path: str, caption: str = ""):
         """Pushes a chart image to the user."""
@@ -317,14 +404,13 @@ class TelegramApp:
         query = update.callback_query
         await query.answer()
 
-        # FIX: guard against malformed callback data — previously crashed with ValueError
-        parts = query.data.split("_", 1)
-        if len(parts) != 2:
+        parsed = parse_feedback_callback(query.data)
+        if parsed is None:
             self.logger.warning(f"Malformed callback data received: {query.data!r}")
             await query.edit_message_text(text="Unknown action.")
             return
 
-        action, alert_type = parts
+        action, alert_type, alert_id = parsed
 
         # Cancel auto-review task if it exists
         message_id = query.message.message_id

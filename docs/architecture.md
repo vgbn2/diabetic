@@ -59,25 +59,32 @@ sequenceDiagram
 
 ## 🧩 Subsystem Architecture
 
-### 1. Ingestion Adapters ([diabetic/ingestion/](../diabetic/ingestion/))
-- **[nightscout.py](../diabetic/ingestion/nightscout.py)**: REST API adapter supporting header/query authentication and token fallback.
-- **[mongo.py](../diabetic/ingestion/mongo.py)**: Async MongoDB client for local telemetry storage and historical reading retrieval.
-- **[offline/historical.py](../diabetic/ingestion/offline/historical.py)**: High-resolution export parser for historical dataset reconstruction.
+### 1. Ingestion & Ingress Adapters (`diabetic/ingestion/`)
+- **`nightscout.py`**: REST API adapter supporting header/query authentication and token fallback.
+- **`mongo.py`**: Async MongoDB client for local telemetry storage, historical reading retrieval, and bounded retention cleanup.
+- **`event_integrity.py`**: Source event deduplication, watermarking, and gap tracking.
 
-### 2. Signal Processing ([diabetic/dsp/](../diabetic/dsp/))
-- **[kalman.py](../diabetic/dsp/kalman.py)**: 3D Kalman filter tracking state vector $[g, v, a]$ and rejecting noise artifacts.
-- **[signal_quality.py](../diabetic/dsp/signal_quality.py)**: Non-biological velocity spike detection and sensor jitter analysis.
-- **[metabolic_math.py](../diabetic/dsp/metabolic_math.py)**: Kovatchev risk-space transformation $[HBGI, LBGI, RI]$.
+### 2. Signal Processing (`diabetic/dsp/`)
+- **`kalman.py`**: 3D Kalman filter tracking state vector $[g, v, a]$ and rejecting noise artifacts.
+- **`signal_quality.py`**: Non-biological velocity spike detection and sensor jitter analysis.
+- **`metabolic_math.py`**: Kovatchev risk-space transformation $[HBGI, LBGI, RI]$.
 
-### 3. ML Engine & Forecasting ([diabetic/ml_engine/](../diabetic/ml_engine/))
-- **[twin.py](../diabetic/ml_engine/twin.py)**: Physical-chemical digital twin implementing impulse-response meal absorption and insulin decay.
-- **[inference.py](../diabetic/ml_engine/inference.py)**: PyTorch 1D-CNN inference runner with fail-closed weight verification.
-- **[forecast.py](../diabetic/ml_engine/forecast.py)**: Multi-horizon projection engine generating 4-hour and 24-hour trajectories.
-- **[oracle.py](../diabetic/ml_engine/oracle.py)**: Basal oracle estimating circadian basal drift patterns over 24-hour windows.
+### 3. ML Engine & Forecasting (`diabetic/ml_engine/`)
+- **`twin.py`**: Physical-chemical digital twin implementing impulse-response meal absorption and insulin decay.
+- **`inference.py`**: PyTorch 1D-CNN inference runner with fail-closed weight verification.
+- **`forecast.py`**: Multi-horizon projection engine generating 4-hour and 24-hour trajectories.
+- **`oracle.py`**: Basal oracle estimating circadian basal drift patterns over 24-hour windows.
+- **`training_service.py`**: Atomic model candidate promotion and rollback.
 
-### 4. Alerting & Web Interface ([diabetic/telegram_bot/](../diabetic/telegram_bot/))
-- **[decision_matrix.py](../diabetic/telegram_bot/decision_matrix.py)**: Conservative safety shield with RLHF dampening and velocity thresholds.
-- **[twa_api.py](../diabetic/telegram_bot/twa_api.py)**: FastAPI web bridge serving real-time HUD and calibration endpoints.
+### 4. Alerting & Web Interface (`diabetic/telegram_bot/`)
+- **`decision_matrix.py`**: Conservative safety shield with RLHF dampening and velocity thresholds.
+- **`twa_api.py`**: FastAPI web bridge serving real-time HUD, calibration endpoints, and Nightscout REST compatibility.
+- **`notifier.py`**: Telegram notification dispatcher with background draining.
+
+### 5. Storage & Operations (`diabetic/storage/`, `diabetic/operations/`)
+- **`engine.py`**: SQLAlchemy async engine and session factory reset on shutdown.
+- **`vessel_registry.py`**: Profile management and tenant secret lookup.
+- **`retention.py`**: Truthful, bounded retention cleanup operations with pre/post audit validation.
 
 ---
 
@@ -85,7 +92,7 @@ sequenceDiagram
 
 | Model / Transform | Description & Formula | Primary Module |
 | :--- | :--- | :--- |
-| **Kalman 3D State** | State vector $\mathbf{x}_k = [g_k, v_k, a_k]^T$ with continuous transition | `diabetic/dsp/kalman.py` |
+| **Kalman 3D State** | State vector $\mathbf{x}_k = [g_k, v_k, a_k]^T$ with continuous transition matrix | `diabetic/dsp/kalman.py` |
 | **Kovatchev Risk** | $f(g) = 1.509 \cdot \left( \ln(g)^{1.084} - 5.381 \right)$ mapping glucose to symmetric risk space | `diabetic/dsp/metabolic_math.py` |
 | **Impulse Absorption** | Biphasic carbohydrate absorption curve $C(t) = \frac{t}{\tau^2} e^{-t/\tau}$ | `diabetic/ml_engine/twin.py` |
 | **Kinematic Fallback** | Linear-quadratic extrapolation $g(t) = g_0 + v_0 t + \frac{1}{2} a_0 t^2$ | `diabetic/utils/data_factory.py` |
@@ -94,4 +101,9 @@ sequenceDiagram
 
 ## 📌 Implementation Verification & Governance
 
-Refer to [workspace/HANDOFF.md](../workspace/HANDOFF.md) for current verified execution state, test baseline coverage, and deployment promotion prerequisites.
+Bio-Quant currently runs one patient pipeline. The selected shared multi-tenant
+future and its patient UUID, process isolation, failure, and capacity gates are
+defined in [tenancy-and-identity.md](engineering/tenancy-and-identity.md). That
+contract is a roadmap, not current multi-patient capability.
+
+Refer to project documentation and test baselines for current verified execution state, test baseline coverage, and deployment promotion prerequisites.

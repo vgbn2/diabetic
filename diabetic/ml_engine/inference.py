@@ -32,7 +32,20 @@ class MetabolicInferenceRunner:
         
         # Load Personalized Weights (Phase 14+)
         weight_path = Path(config.ML_WEIGHTS_PATH)
-        if weight_path.exists():
+        can_load = False
+        try:
+            from diabetic.ml_engine.training_service import recover_training_state
+
+            recover_training_state(weight_path)
+            can_load = weight_path.exists()
+        except Exception as e:
+            logger.error(
+                "Training state recovery failed (%s). Neural inference disabled; kinematic fallback remains active.",
+                e.__class__.__name__,
+            )
+            can_load = False
+
+        if can_load:
             try:
                 self.model.load_state_dict(torch.load(weight_path, map_location=self.device, weights_only=True))
                 self.weights_loaded = True
@@ -43,7 +56,7 @@ class MetabolicInferenceRunner:
                     "kinematic fallback remains active.",
                     e.__class__.__name__,
                 )
-        else:
+        elif not weight_path.exists():
             logger.error(
                 "No weights found at %s. Neural inference disabled; kinematic fallback remains active.",
                 weight_path,

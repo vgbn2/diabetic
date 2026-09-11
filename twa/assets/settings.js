@@ -25,8 +25,10 @@ async function save() {
             body: JSON.stringify(readForm())
         });
         var data = await res.json();
-        status.innerText = data.message || "Saved";
-        if (tg) { try { tg.HapticFeedback.notificationOccurred("success"); } catch (e) {} }
+        status.innerText = data.message || "Saved profile data";
+        if (data.stored && tg) {
+            try { tg.HapticFeedback.notificationOccurred("success"); } catch (e) {}
+        }
     } catch (e) {
         status.innerText = "Save failed — check your connection.";
     }

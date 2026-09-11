@@ -86,8 +86,8 @@ class GlucoseFilter:
         y = z_raw - (self.kf.H @ self.kf.x)[0,0]
         
         # Innovation Covariance: S = HPH' + R
-        # For H = [[1, 0]], S is simply P[0,0] + R
-        S = self.kf.P[0,0] + self.kf.R[0,0]
+        # For H = [[1, 0, 0]], S is simply P[0,0] + R
+        S = max(1e-6, float(self.kf.P[0, 0] + self.kf.R[0, 0]))
         std_dev = np.sqrt(S)
         
         # 3-Sigma Clamping:

@@ -20,6 +20,7 @@ from diabetic.ingestion.nightscout import NightscoutClient
 from diabetic.ingestion.mongo import MongoDBClient
 from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.ingestion.weather import WeatherIngestor
+from diabetic.ingestion.event_integrity import GlucoseEventBuffer, prepare_warmup_readings
 
 from diabetic.dsp.kalman import GlucoseFilter
 from diabetic.dsp.signal_quality import SignalQuality
@@ -55,6 +56,54 @@ class Coordinator:
     """
     _instance: Optional["Coordinator"] = None
 
+    def __init__(self):
+        if not hasattr(self, "logger"):
+            self.logger = logging.getLogger("Bio-Quant.Coordinator")
+        if not hasattr(self, "_lifecycle_state"):
+            self._lifecycle_state = "created"
+        if not hasattr(self, "is_running"):
+            self.is_running = False
+        if not hasattr(self, "background_tasks"):
+            self.background_tasks = set()
+        if not hasattr(self, "snapshots"):
+            self.snapshots = deque(maxlen=medical_constants.SNAPSHOT_CAP)
+        if not hasattr(self, "regime_step_count"):
+            self.regime_step_count = 0
+        if not hasattr(self, "default_tenant_id"):
+            self.default_tenant_id = "primary"
+        if not hasattr(self, "pipelines"):
+            self.pipelines = {}
+        if not hasattr(self, "_confidence_smoothed"):
+            self._confidence_smoothed = None
+        if not hasattr(self, "ingestion_buffer"):
+            self.ingestion_buffer = GlucoseEventBuffer(maxsize=120, processed_capacity=1000)
+        if not hasattr(self, "ingestion_queue"):
+            self.ingestion_queue = asyncio.Queue(maxsize=120)
+        if not hasattr(self, "_worker_failure"):
+            self._worker_failure = None
+        if not hasattr(self, "filter"):
+            self.filter = GlucoseFilter()
+        if not hasattr(self, "oracle"):
+            self.oracle = BasalOracle()
+        if not hasattr(self, "twin"):
+            self.twin = DigitalTwin()
+        if not hasattr(self, "forecaster"):
+            self.forecaster = TacticalForecaster()
+        if not hasattr(self, "neural_runner"):
+            self.neural_runner = None
+        if not hasattr(self, "visualizer"):
+            self.visualizer = MetabolicVisualizer()
+        if not hasattr(self, "meal_tune_pending"):
+            self.meal_tune_pending = False
+        if not hasattr(self, "meal_window_start"):
+            self.meal_window_start = None
+        if not hasattr(self, "last_meal"):
+            self.last_meal = None
+        if not hasattr(self, "last_prediction_4h"):
+            self.last_prediction_4h = []
+        if not hasattr(self, "last_prediction_1d"):
+            self.last_prediction_1d = []
+
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(Coordinator, cls).__new__(cls)
@@ -83,7 +132,10 @@ class Coordinator:
     ):
         """Internal dependency wiring and state initialization seam."""
         self.logger = logging.getLogger("Bio-Quant.Coordinator")
-        self.background_tasks = set()
+        self.background_tasks: set[asyncio.Task] = set()
+        self._lifecycle_state: str = "created"
+        self._shutdown_complete: bool = False
+        self._owns_audit_logger: bool = (audit_logger is None)
         self.audit = audit_logger or AuditLogger()
         self.client = NightscoutClient()
         self.mongo = MongoDBClient()
@@ -166,8 +218,58 @@ class Coordinator:
         # Sovereign Atlas Level 2: Async ingestion queue
         self.ingestion_queue = asyncio.Queue(maxsize=120)
         self.worker_task: Optional[asyncio.Task] = None
-        
+
         return self
+
+    def track_background_task(self, coro_or_task, *, name: Optional[str] = None) -> asyncio.Task:
+        """Explicit background task registration with done callback disposal."""
+        if not hasattr(self, "background_tasks"):
+            self.background_tasks = set()
+        if asyncio.iscoroutine(coro_or_task):
+            task = asyncio.create_task(coro_or_task, name=name)
+        else:
+            task = coro_or_task
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+        return task
+
+    async def drain_background_tasks(self, timeout: Optional[float] = None, cancel_remaining: bool = False) -> None:
+        """Gracefully wait for registered background tasks to complete."""
+        if not hasattr(self, "background_tasks") or not self.background_tasks:
+            return
+        tasks = list(self.background_tasks)
+        try:
+            if timeout is not None:
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout)
+            else:
+                await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.TimeoutError:
+            if cancel_remaining:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            if hasattr(self, "background_tasks"):
+                self.background_tasks.clear()
+
+    async def begin_start(self) -> None:
+        """Claims ownership of startup for runtime lifecycle enforcement."""
+        if getattr(self, "_lifecycle_state", None) == "stopped":
+            raise RuntimeError("process replacement required to start stopped runtime")
+        if getattr(self, "_lifecycle_state", None) in ("starting", "running") or getattr(self, "is_running", False):
+            raise RuntimeError("Coordinator already started")
+        self._lifecycle_state = "starting"
+
+    async def mark_failed(self) -> None:
+        """Sets coordinator state to failed."""
+        self._lifecycle_state = "failed"
+        self.is_running = False
+
+    def _stage_signal_quality(self, reading: GlucoseReading, tenant_snapshots=None) -> bool:
+        """Stage seam for checking signal quality and freshness."""
+        ok, _ = self._check_signal_quality_and_freshness(reading, tenant_snapshots)
+        return ok
 
     def get_pipeline(self, tenant_id: Optional[str] = None) -> TenantPipeline:
         """Retrieves or creates an isolated TenantPipeline for the specified tenant/patient."""
@@ -177,24 +279,116 @@ class Coordinator:
             self.logger.info("[Multi-Tenant] Initialized isolated TenantPipeline for tenant: '%s'", tid)
         return self.pipelines[tid]
 
+    async def _record_gap_event(self, payload: dict) -> bool:
+        """Helper to write gap projection markers to audit logger."""
+        if not hasattr(self, "audit") or not hasattr(self.audit, "record_glucose_gap"):
+            return True
+        try:
+            res = await self.audit.record_glucose_gap(payload)
+            return getattr(res, "durable", True)
+        except Exception as e:
+            self.logger.warning(f"Failed to record glucose gap: {e}")
+            return False
+
+    async def _reconcile_pending_gaps(self, warmed_readings: list[GlucoseReading]):
+        """Reconciles durable glucose gaps covered by historical replay/warmup."""
+        if not hasattr(self, "audit") or not hasattr(self.audit, "get_pending_glucose_gaps"):
+            return
+        try:
+            pending = await self.audit.get_pending_glucose_gaps()
+            if not pending:
+                return
+
+            events_by_source: dict[str, set[str]] = {}
+            for r in warmed_readings:
+                sid = getattr(r, "source_event_id", None)
+                if sid is not None:
+                    events_by_source.setdefault(r.source, set()).add(str(sid))
+
+            for gap in pending:
+                gap_src = gap.get("source")
+                from_id = str(gap.get("from_event_id", ""))
+                thru_id = str(gap.get("through_event_id", ""))
+                src_events = events_by_source.get(gap_src, set())
+
+                if from_id in src_events and thru_id in src_events:
+                    await self.audit.record_glucose_gap({
+                        "gap_id": gap["gap_id"],
+                        "source": gap_src,
+                        "state": "replayed",
+                    })
+        except Exception as exc:
+            self.logger.warning(f"Failed reconciling pending gaps: {exc}")
+
+    async def _admit_live_reading(self, reading: GlucoseReading):
+        """Admit a live reading to the ingestion buffer with fail-stop guard."""
+        if getattr(self, "_lifecycle_state", None) == "failed" or not getattr(self, "is_running", True):
+            raise RuntimeError("Coordinator is not accepting live readings (failed or stopped)")
+        return await self.ingestion_buffer.offer(reading, write_gap=self._record_gap_event)
+
+    async def _wait_for_poll_interval(self, seconds: float):
+        """Wait for poll interval while supervising worker failure."""
+        if getattr(self, "_worker_failure", None) is not None and self._worker_failure.done():
+            self._worker_failure.result()
+
+        if getattr(self, "_worker_failure", None) is not None:
+            sleep_task = asyncio.create_task(asyncio.sleep(seconds))
+            done, pending = await asyncio.wait(
+                [sleep_task, self._worker_failure],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if self._worker_failure in done:
+                self._worker_failure.result()
+        else:
+            await asyncio.sleep(seconds)
+
     async def _worker_loop(self):
-        """Sovereign Atlas Level 2: Async ingestion queue worker."""
+        """Sovereign Atlas Level 2: Async ingestion queue worker with fail-stop contract."""
         self.logger.info("Coordinator ingestion worker loop started.")
-        while True:
+        inflight_event = None
+        while self.is_running:
             try:
-                # Wait for a reading to arrive in the queue
-                reading = await self.ingestion_queue.get()
-
-                # Process the reading through the heavy neural/kalman pipeline
+                inflight_event = await self.ingestion_buffer.get()
+                reading = inflight_event.reading
                 await self._process_reading(reading)
-
-                # Mark the task as done
-                self.ingestion_queue.task_done()
+                await self.ingestion_buffer.ack(inflight_event)
+                inflight_event = None
             except asyncio.CancelledError:
-                self.logger.info("Coordinator ingestion worker shut down.")
-                break
-            except Exception as e:
-                self.logger.error(f"Error in ingestion worker loop: {e}")# =============================================================================
+                if inflight_event is not None:
+                    try:
+                        await self.ingestion_buffer.fail(
+                            inflight_event,
+                            reason="processing_cancelled",
+                            write_gap=self._record_gap_event,
+                        )
+                    except Exception as me:
+                        self.logger.error(f"Failed to record cancellation gap: {me}")
+                self.logger.info("Coordinator ingestion worker cancelled.")
+                raise
+            except Exception as exc:
+                self.logger.error(f"Worker processing failed on reading: {exc}")
+                marker_ok = False
+                if inflight_event is not None:
+                    try:
+                        disposition = await self.ingestion_buffer.fail(
+                            inflight_event,
+                            reason="processing_failed",
+                            write_gap=self._record_gap_event,
+                        )
+                        marker_ok = getattr(disposition, "marker_durable", False)
+                    except Exception as me:
+                        self.logger.error(f"Failed writing gap marker: {me}")
+                        marker_ok = False
+
+                self._lifecycle_state = "failed"
+                self.is_running = False
+                if getattr(self, "_worker_failure", None) is not None and not self._worker_failure.done():
+                    self._worker_failure.set_exception(exc)
+                if not marker_ok:
+                    raise RuntimeError("durable reconciliation marker failed") from exc
+                raise# =============================================================================
 # 📡 [DATA SYNTHESIS PIPELINE]
 # =Focus: Signal Quality, Smoothing (Kalman), and Multi-Stream Ingestion
 # =============================================================================
@@ -254,6 +448,7 @@ class Coordinator:
         self,
         reading: GlucoseReading,
         tenant_snapshots: Optional[list[MetabolicSnapshot]] = None,
+        is_backfill: bool = False,
     ) -> tuple[bool, datetime]:
         """Validates signal compression artifacts and freshness for the active tenant."""
         active_snapshots = tenant_snapshots if tenant_snapshots is not None else list(self.snapshots)
@@ -274,11 +469,11 @@ class Coordinator:
         reading_ts = reading.timestamp
         if reading_ts.tzinfo is None:
             reading_ts = reading_ts.replace(tzinfo=timezone.utc)
-        if (now - reading_ts).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
+        if not is_backfill and (now - reading_ts).total_seconds() > medical_constants.STALE_DATA_TIMEOUT_SECS:
             self.logger.warning(f"Stale data ignored: {reading.timestamp} is too old.")
             return False, reading_ts
 
-        if active_snapshots:
+        if not is_backfill and active_snapshots:
             last_reading_time = active_snapshots[-1].glucose.timestamp
             if last_reading_time.tzinfo is None:
                 last_reading_time = last_reading_time.replace(tzinfo=timezone.utc)
@@ -290,6 +485,11 @@ class Coordinator:
 
     async def _collect_metabolic_context(self, snapshot: MetabolicSnapshot, now: datetime, is_backfill: bool = False):
         """Fetches treatments, biometric data, weather, and computes COB/IOB."""
+        if is_backfill:
+            snapshot.cardiac = None
+            snapshot.environment = None
+            snapshot.is_sick = False
+            return
         try:
             tr_task = self._fetch_recent_treatments(count=10)
             hr_task = self.hr_client.fetch_latest()
@@ -397,28 +597,53 @@ class Coordinator:
         self,
         snapshot: MetabolicSnapshot,
         now: datetime,
-        pipeline: Optional[TenantPipeline] = None,
+        tenant_snapshots: Optional[list[MetabolicSnapshot]] = None,
     ) -> float:
         """Extracts features, neural/kinematic blend, and tactical horizons."""
-        history_snapshots = list(pipeline.snapshots) if pipeline is not None else list(self.snapshots)
-        neural_runner = pipeline.neural_runner if pipeline is not None else self.neural_runner
-        oracle = pipeline.oracle if pipeline is not None else self.oracle
+        active_snaps = tenant_snapshots if tenant_snapshots is not None else list(self.snapshots)
+        snapshot.atr_14 = MetabolicMath.calculate_atr(active_snaps + [snapshot], period=14)
 
-        snapshot.atr_14 = MetabolicMath.calculate_atr(history_snapshots + [snapshot], period=14)
-
-        neural_res = neural_runner.run_inference_on_snapshots(history_snapshots + [snapshot])
+        neural_res = None
+        if hasattr(self, "neural_runner") and self.neural_runner is not None:
+            neural_res = self.neural_runner.run_inference_on_snapshots(active_snaps + [snapshot])
         cnn_prediction = None
         if neural_res:
             cnn_prediction = neural_res["glucose"]
             snapshot.predicted_hr = neural_res["heart_rate"]
             self.logger.info(f"NEURAL_BRAIN: Pred Glu={cnn_prediction:.1f} | Pred HR={snapshot.predicted_hr:.1f}")
 
+        # Compute Tactical & Confidence before Alpha Gate
+        points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
+        points_90m = int(90 / medical_constants.SAMPLING_INTERVAL_MINS)
+        full_history = active_snaps + [snapshot]
+
+        raw_history: list[tuple[datetime, float]] = [
+            (s.glucose.timestamp, s.glucose.value)
+            for s in full_history[-points_1h:]
+        ]
+        confidence_history: list[tuple[datetime, float]] = [
+            (s.glucose.timestamp, s.glucose.value)
+            for s in full_history[-points_90m:]
+        ]
+        if hasattr(self, "forecaster") and self.forecaster is not None:
+            tactical = self.forecaster.compute(raw_history)
+            snapshot.predict_15m = tactical["p15m"]
+            snapshot.predict_60m = tactical["p60m"]
+            snapshot.velocity_score = tactical["velocity"]
+
+        raw_confidence = compute_confidence_index(confidence_history)
+        if getattr(self, "_confidence_smoothed", None) is None:
+            self._confidence_smoothed = raw_confidence
+        else:
+            self._confidence_smoothed = 0.8 * self._confidence_smoothed + 0.2 * raw_confidence
+        snapshot.confidence_index = self._confidence_smoothed
+
         velocity = snapshot.velocity
         acceleration = snapshot.acceleration
 
         oracle_offset = 0.0
-        if oracle.params is not None:
-            oracle_absolute = oracle.get_expected_basal(now + timedelta(minutes=30), now)
+        if hasattr(self, "oracle") and self.oracle and self.oracle.params is not None:
+            oracle_absolute = self.oracle.get_expected_basal(now + timedelta(minutes=30), now)
             oracle_offset = oracle_absolute - snapshot.filtered_value
             self.logger.info(f"ORACLE_BIAS: Expected={oracle_absolute:.2f}, Current={snapshot.filtered_value:.2f}, Delta={oracle_offset:+.2f}")
 
@@ -436,32 +661,10 @@ class Coordinator:
             self.logger.warning(f"NEURAL_BRAIN: Inference failed. Using Kinematic Projection: {prediction_30m:.1f}")
 
         snapshot.predict_30m = prediction_30m
+        snapshot.activity_label = classify_context(snapshot).value
+        return prediction_30m
 
-        points_1h = int(60 / medical_constants.SAMPLING_INTERVAL_MINS)
-        points_90m = int(90 / medical_constants.SAMPLING_INTERVAL_MINS)
-        full_history = history_snapshots + [snapshot]
-
-        raw_history: list[tuple[datetime, float]] = [
-            (s.glucose.timestamp, s.glucose.value)
-            for s in full_history[-points_1h:]
-        ]
-        confidence_history: list[tuple[datetime, float]] = [
-            (s.glucose.timestamp, s.glucose.value)
-            for s in full_history[-points_90m:]
-        ]
-        tactical = self.forecaster.compute(raw_history)
-        snapshot.predict_15m = tactical["p15m"]
-        snapshot.predict_60m = tactical["p60m"]
-        snapshot.velocity_score = tactical["velocity"]
-
-        raw_confidence = compute_confidence_index(confidence_history)
-        if pipeline is not None:
-            pipeline._confidence_smoothed = 0.8 * pipeline._confidence_smoothed + 0.2 * raw_confidence
-            snapshot.confidence_index = pipeline._confidence_smoothed
-        else:
-            self._confidence_smoothed = 0.8 * self._confidence_smoothed + 0.2 * raw_confidence
-            snapshot.confidence_index = self._confidence_smoothed
-
+        snapshot.predict_30m = prediction_30m
         snapshot.activity_label = classify_context(snapshot).value
         return prediction_30m
 
@@ -474,11 +677,10 @@ class Coordinator:
 
         try:
             alert = await self.alert_guard.evaluate(snapshot, prediction_30m, self.audit)
-            if alert and self.circuit_breaker.can_alert(alert.type, severity=alert.severity):
-                await self._dispatch_alert(alert)
-                task = asyncio.create_task(self.audit.log_event("ALERT_TRIGGERED", alert.model_dump(), level="WARNING"))
-                self.background_tasks.add(task)
-                task.add_done_callback(self.background_tasks.discard)
+            if alert:
+                reservation = self.circuit_breaker.reserve(alert.type, alert.alert_id, alert.severity)
+                if reservation:
+                    await self._dispatch_alert(alert, reservation)
         except Exception as e:
             self.logger.error(f"Alert evaluation failed: {e}. Attempting fallback alert...")
             if reading.value < medical_constants.HYPO_CRITICAL:
@@ -489,7 +691,9 @@ class Coordinator:
                     message=f"CRITICAL: Glucose is {reading.value:.1f}. Alert engine failure fallback triggered.",
                     glucose_value=reading.value
                 )
-                await self._dispatch_alert(emergency_alert)
+                reservation = self.circuit_breaker.reserve(emergency_alert.type, emergency_alert.alert_id, emergency_alert.severity)
+                if reservation:
+                    await self._dispatch_alert(emergency_alert, reservation)
 
     async def _update_state_and_visualizations(self, snapshot: MetabolicSnapshot, reading: GlucoseReading, prediction_30m: float):
         """Updates snapshots deque, refreshes TWA forecast horizons, and triggers charts."""
@@ -530,24 +734,26 @@ class Coordinator:
         reading: GlucoseReading,
         is_backfill: bool = False,
         tenant_id: Optional[str] = None,
-    ):
+    ) -> bool:
         """Standard processing pipeline for a single reading with multi-tenant isolation."""
         tid = (tenant_id or self.default_tenant_id).strip().lower()
         pipeline = self.get_pipeline(tid)
         pipeline.regime_step_count += 1
         self.regime_step_count += 1
 
-        task = asyncio.create_task(self.audit.log_reading(reading))
-        self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+        if not is_backfill:
+            task = asyncio.create_task(self.audit.log_reading(reading))
+            self.background_tasks.add(task)
+            task.add_done_callback(self.background_tasks.discard)
 
         # 1. Signal Quality & Freshness
         proceed, reading_ts = self._check_signal_quality_and_freshness(
             reading,
             tenant_snapshots=list(pipeline.snapshots) if tid != self.default_tenant_id else None,
+            is_backfill=is_backfill,
         )
         if not proceed:
-            return
+            return False
 
         now = datetime.now(timezone.utc)
 
@@ -562,7 +768,8 @@ class Coordinator:
         await self._collect_metabolic_context(snapshot, now, is_backfill=is_backfill)
 
         # 4. Feature Extraction & Forecasting
-        prediction_30m = self._compute_features_and_forecasts(snapshot, now, pipeline=pipeline)
+        active_snaps = list(pipeline.snapshots) if tid != self.default_tenant_id else list(self.snapshots)
+        prediction_30m = self._compute_features_and_forecasts(snapshot, now, tenant_snapshots=active_snaps)
 
         # 5. Alert Decision
         await self._evaluate_and_dispatch_alerts(snapshot, prediction_30m, reading, is_backfill=is_backfill)
@@ -571,6 +778,8 @@ class Coordinator:
         pipeline.snapshots.append(snapshot)
         if tid == self.default_tenant_id:
             await self._update_state_and_visualizations(snapshot, reading, prediction_30m)
+
+        return True
 
 # =============================================================================
 # 🎮 [INTERACTION & INTERFACE]
@@ -645,10 +854,56 @@ class Coordinator:
         snapshot.last_insulin = self._active_provider_insulin()
         snapshot.last_meal = self._active_meal(self._active_provider_meal())
 
-    async def _dispatch_alert(self, alert: Alert):
-        """Sends alert to Telegram and logger."""
-        self.logger.error(f"ALERT DISPATCHED: {alert.type} - {alert.message}")
-        await self.notifier.send_alert(alert)
+    async def _dispatch_alert(self, alert: Alert, reservation=None):
+        """Sends alert to Telegram and audits delivery lifecycle."""
+        if reservation is None:
+            reservation = self.circuit_breaker.reserve(alert.type, alert.alert_id, alert.severity)
+            if reservation is None:
+                return None
+
+        # 1. Audit ALERT_ATTEMPTED (audit failure must not block delivery)
+        try:
+            await self.audit.log_event("ALERT_ATTEMPTED", alert.model_dump(), level="INFO")
+        except Exception as e:
+            self.logger.warning(f"Failed to audit ALERT_ATTEMPTED: {e}")
+
+        # 2. Attempt delivery
+        try:
+            result = await self.notifier.send_alert(alert)
+        except asyncio.CancelledError:
+            self.circuit_breaker.release(reservation)
+            raise
+        except Exception as exc:
+            self.circuit_breaker.release(reservation)
+            try:
+                await self.audit.log_event("ALERT_UNDELIVERED", {"alert": alert.model_dump(), "error": str(exc)}, level="ERROR")
+            except Exception:
+                pass
+            return None
+
+        # 3. Process delivery result
+        if result is not None and getattr(result, "accepted", False):
+            self.circuit_breaker.commit(reservation)
+            try:
+                await self.audit.log_event(
+                    "ALERT_DELIVERED",
+                    {"alert": alert.model_dump(), "message_id": getattr(result, "message_id", None)},
+                    level="WARNING",
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to audit ALERT_DELIVERED: {e}")
+        else:
+            self.circuit_breaker.release(reservation)
+            try:
+                await self.audit.log_event(
+                    "ALERT_UNDELIVERED",
+                    {"alert": alert.model_dump(), "result": getattr(result, "state", "unknown") if result else "unknown"},
+                    level="ERROR",
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to audit ALERT_UNDELIVERED: {e}")
+
+        return result
 
 # =============================================================================
 # ⚙️ [MAINTENANCE & REGIONAL SYNC]
@@ -680,15 +935,27 @@ class Coordinator:
             try:
                 self.logger.warning("Starting Regional Maintenance Cycle...")
                 await self.audit.log_admin_action("AUTO_MAINTENANCE_START", {"local_time": str(target)})
-                
-                # 1. Incremental Sync
-                await self.mongo.sync_current_period()
-                
-                # 2. Retention Policy Cleanup
-                await self.mongo.run_retention_cleanup(days=config.RETENTION_DAYS)
 
-                await self.audit.log_admin_action("AUTO_MAINTENANCE_COMPLETE", {"local_time": str(target)})
-                self.logger.info("Regional Maintenance Cycle complete.")
+                # 1. Incremental Sync
+                if hasattr(self.mongo, "sync_current_period"):
+                    await self.mongo.sync_current_period()
+
+                # 2. Retention Policy Cleanup
+                from diabetic.operations.retention import execute_retention_cleanup
+                outcome = await execute_retention_cleanup(
+                    config.RETENTION_DAYS,
+                    mongo=self.mongo,
+                    audit=self.audit,
+                )
+                if outcome.successful:
+                    await self.audit.log_admin_action("AUTO_MAINTENANCE_COMPLETE", {"local_time": str(target)})
+                    self.logger.info("Regional Maintenance Cycle complete.")
+                else:
+                    self.logger.error("Maintenance cycle incomplete: state=%s, phase=%s", outcome.state, outcome.failed_phase)
+                    await self.audit.log_admin_action("AUTO_MAINTENANCE_FAILED", {
+                        "state": outcome.state,
+                        "failed_phase": outcome.failed_phase,
+                    })
             except Exception as e:
                 self.logger.error(f"Maintenance cycle failed: {e}")
                 await self.audit.log_admin_action("AUTO_MAINTENANCE_FAILED", {"error": str(e)})
@@ -722,30 +989,20 @@ class Coordinator:
 # =============================================================================
     async def start_live_mode(self):
         """Polls Nightscout every N minutes and runs HUD."""
+        if getattr(self, "_lifecycle_state", None) not in ("starting", "running"):
+            raise RuntimeError("startup claim required before start_live_mode")
+        self._lifecycle_state = "running"
         self.is_running = True
         self.logger.info(f"Coordinator started in LIVE mode (Interval: {config.DATA_POLLING_INTERVAL}s)")
 
-        task_hud = asyncio.create_task(self.hud.run_live(self))
-        self.background_tasks.add(task_hud)
-        task_hud.add_done_callback(self.background_tasks.discard)
+        self.track_background_task(self.hud.run_live(self), name="hud")
 
         # Sovereign Atlas Level 2: Async Worker
-        self.worker_task = asyncio.create_task(self._worker_loop())
-        self.background_tasks.add(self.worker_task)
-        self.worker_task.add_done_callback(self.background_tasks.discard)
+        self.worker_task = self.track_background_task(self._worker_loop(), name="worker_loop")
 
-        task_hr = asyncio.create_task(self.hr_client.start_ble_client())
-        self.background_tasks.add(task_hr)
-        task_hr.add_done_callback(self.background_tasks.discard)
-
-        task_maint = asyncio.create_task(self._maintenance_loop())
-        self.background_tasks.add(task_maint)
-        task_maint.add_done_callback(self.background_tasks.discard)
-
-        # [C2] BasalOracle 24-hour re-fit loop
-        task_oracle = asyncio.create_task(self._refit_oracle_loop())
-        self.background_tasks.add(task_oracle)
-        task_oracle.add_done_callback(self.background_tasks.discard)
+        self.track_background_task(self.hr_client.start_ble_client(), name="ble_client")
+        self.track_background_task(self._maintenance_loop(), name="maintenance_loop")
+        self.track_background_task(self._refit_oracle_loop(), name="refit_oracle_loop")
 
         if self.bot_app:
             self.logger.info("Initializing Telegram Bot callback loop...")
@@ -754,13 +1011,12 @@ class Coordinator:
             task_bot = asyncio.create_task(self.bot_app.app.start())
             await task_bot
             task_bot = asyncio.create_task(self.bot_app.app.updater.start_polling())
-            self.background_tasks.add(task_bot)
-            task_bot.add_done_callback(self.background_tasks.discard)
+            self.track_background_task(task_bot, name="bot_polling")
 
         # 0. Stateful Backfill (Hardened for Neural Warm-up)
         # STAGE 1: Blocking Priority (Neural Engine Saturation)
         self.logger.info("Starting STAGE 1 backfill (Neural Engine Saturation)...")
-        
+
         try:
             # Strategy: Fetch exactly 35 readings to guarantee the 30-snapshot neural requirement.
             if self.mongo.entries is not None:
@@ -768,12 +1024,12 @@ class Coordinator:
             else:
                 # Fallback to REST if MongoDB is not active
                 backfill_readings = await self.client.fetch_recent_glucose(count=35)
-                
+
             if backfill_readings:
                 self.logger.info(f"Filling {len(backfill_readings)} historical readings to internal memory...")
                 for r in backfill_readings:
                     await self._process_reading(r, is_backfill=True)
-                
+
                 if len(self.snapshots) < 30:
                     self.logger.warning(f"⚠️ NEURAL_BRAIN STARVATION: Only {len(self.snapshots)}/30 snapshots available. AI will be inactive until {30 - len(self.snapshots)} more readings arrive.")
                 else:
@@ -787,9 +1043,7 @@ class Coordinator:
         # Launches after Stage 1 to populate the Audit Log with all-time history.
         now = datetime.now(timezone.utc)
         blocking_cutoff = now - timedelta(hours=24)
-        sync_task = asyncio.create_task(self._deep_historical_sync(blocking_cutoff))
-        self.background_tasks.add(sync_task)
-        sync_task.add_done_callback(self.background_tasks.discard)
+        self.track_background_task(self._deep_historical_sync(blocking_cutoff), name="deep_sync")
 
 
 
@@ -961,6 +1215,15 @@ class Coordinator:
 
     async def shutdown(self):
         """Graceful shutdown of background tasks and clients."""
+        if getattr(self, "_shutdown_complete", False):
+            return
+
+        try:
+            from diabetic.telegram_bot.twa_api import clear_api_coordinator
+            clear_api_coordinator(self)
+        except Exception as e:
+            self.logger.warning("Failed clearing TWA projection: %s", e)
+
         self.logger.info("Coordinator shutting down...")
 
         # Phase 3: Cancel Autonomous Scheduler
@@ -972,17 +1235,19 @@ class Coordinator:
             except asyncio.CancelledError:
                 pass
 
-        # Cancel all background tasks
-        for task in list(self.background_tasks):
-            task.cancel()
-        if self.background_tasks:
-            await asyncio.gather(*self.background_tasks, return_exceptions=True)
+        # Drain background tasks
+        await self.drain_background_tasks(timeout=5.0, cancel_remaining=True)
 
         # Stop bot polling
-        if self.bot_app and self.bot_app.app.updater and self.bot_app.app.updater.running:
-            await self.bot_app.app.updater.stop()
-            await self.bot_app.app.stop()
-            await self.bot_app.app.shutdown()
+        if getattr(self, "bot_app", None) and getattr(self.bot_app, "app", None):
+            if getattr(self.bot_app.app, "updater", None) and getattr(self.bot_app.app.updater, "running", False):
+                await self.bot_app.app.updater.stop()
+            if getattr(self.bot_app.app, "running", False):
+                await self.bot_app.app.stop()
+            try:
+                await self.bot_app.app.shutdown()
+            except Exception:
+                pass
 
         # Drain and close Telegram notifier
         if hasattr(self, 'notifier') and self.notifier and hasattr(self.notifier, 'close'):
@@ -998,32 +1263,41 @@ class Coordinator:
             except Exception as e:
                 self.logger.error(f"Error closing visualizer: {e}")
 
-        # Drain and close audit logger
-        if hasattr(self, 'audit') and self.audit and hasattr(self.audit, 'close'):
+        # Drain and close audit logger if owned
+        if getattr(self, "_owns_audit_logger", True) and hasattr(self, 'audit') and self.audit and hasattr(self.audit, 'close'):
             try:
                 await self.audit.close()
             except Exception as e:
                 self.logger.error(f"Error closing audit logger: {e}")
 
         # Close ingestion clients
-        if hasattr(self.client, 'close'):
+        if hasattr(self, 'client') and self.client and hasattr(self.client, 'close'):
             await self.client.close()
-        if hasattr(self.mongo, 'close'):
+        if hasattr(self, 'mongo') and self.mongo and hasattr(self.mongo, 'close'):
             await self.mongo.close()
-        if hasattr(self.weather_client, 'close'):
+        if hasattr(self, 'weather_client') and self.weather_client and hasattr(self.weather_client, 'close'):
             await self.weather_client.close()
-        from diabetic.storage.engine import close_db as close_storage_db
+
         await close_storage_db()
 
-        self.snapshots.clear()
-        self.pipelines.clear()
+        self._lifecycle_state = "stopped"
+        self.is_running = False
+        self._shutdown_complete = True
         Coordinator._instance = None
-        self._initialized = False
-
         self.logger.info("Coordinator shutdown complete.")
 
+
+async def _run_standalone():
+    """Module-level entrypoint for single-instance live execution."""
+    coordinator = await Coordinator.create(allow_synthetic=False)
+    try:
+        await coordinator.begin_start()
+        await coordinator.start_live_mode()
+    except Exception:
+        await coordinator.mark_failed()
+        await coordinator.shutdown()
+        raise
+
+
 if __name__ == "__main__":
-    async def main():
-        c = await Coordinator.create()
-        await c.start_live_mode()
-    asyncio.run(main())
+    asyncio.run(_run_standalone())

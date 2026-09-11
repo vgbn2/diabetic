@@ -12,7 +12,6 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -176,6 +175,8 @@ def _train_dataset(
         return None
 
     try:
+        import matplotlib.pyplot as plt
+
         charts_dir = Path(__file__).resolve().parents[2] / "charts"
         charts_dir.mkdir(parents=True, exist_ok=True)
         plt.figure(figsize=(10, 6))

@@ -149,16 +149,16 @@ class DigitalTwin:
 # =Focus: Carb Absorption (GI-Tuning) and Insulin Depletion (PK/PD)
 # =============================================================================
     def simulate_carb_impact(self,
-                             carbs_g: float, gi_type: str = "STARCH", 
+                             carbs_g: float, gi_type: str = "STARCH",
                             resolution_mins: Optional[float] = None,
                             stochastic: bool = False,
                             snapshot: Optional[MetabolicSnapshot] = None,
                             csf_override: Optional[float] = None) -> np.ndarray:
-        if resolution_mins is None:
+        if resolution_mins is None or resolution_mins <= 0:
             resolution_mins = mc.SAMPLING_INTERVAL_MINS
-        
+
         tau = self.tau_table.get(gi_type.upper(), self.tau_table["STARCH"])
-        
+
         timestamp = snapshot.glucose.timestamp if snapshot else None
         hormonal_mult = self.get_hormonal_multiplier(timestamp) if timestamp else 1.0
         env_mult = self.get_environmental_multiplier(snapshot) if snapshot else 1.0
@@ -169,8 +169,8 @@ class DigitalTwin:
 
         t = np.arange(0, 240 + resolution_mins, resolution_mins)
         x = t / tau
-        impact = 1.0 - (1.0 + x) * np.exp(-x) 
-        
+        impact = 1.0 - (1.0 + x) * np.exp(-x)
+
         csf = csf_override if csf_override is not None else self.csf
         total_rise = carbs_g * csf * self.regime_multiplier * hormonal_mult * env_mult
         curve = impact * total_rise
@@ -181,7 +181,7 @@ class DigitalTwin:
                                 stochastic: bool = False,
                                 snapshot: Optional[MetabolicSnapshot] = None,
                                 isf_override: Optional[float] = None) -> np.ndarray:
-        if resolution_mins is None:
+        if resolution_mins is None or resolution_mins <= 0:
             resolution_mins = mc.SAMPLING_INTERVAL_MINS
         
         timestamp = snapshot.glucose.timestamp if snapshot else None

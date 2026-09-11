@@ -1,12 +1,20 @@
 """Clinical boundary contracts introduced by the 2026-07 safety pass."""
 
+import asyncio
 import math
+import os
+import subprocess
+import sys
+import textwrap
 import unittest
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from diabetic import medical_constants
-from diabetic.config import config
+from diabetic.config import Settings, config
 from diabetic.ingestion.cardiac import HeartRateIngestor
 from diabetic.ingestion.mongo import MongoDBClient
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
@@ -18,6 +26,67 @@ from diabetic.registry import (
     MetabolicSnapshot,
 )
 from diabetic.telegram_bot.decision_matrix import DecisionMatrix
+
+
+class TestPatientSettingsValidation(unittest.TestCase):
+    def test_patient_numeric_bounds_are_constructor_constraints(self):
+        invalid = {
+            "PATIENT_WEIGHT_KG": (11.9, 300.1),
+            "PATIENT_HEIGHT_CM": (59.9, 250.1),
+            "PATIENT_AGE": (4, 111),
+        }
+        for field, values in invalid.items():
+            for value in values:
+                with self.subTest(field=field, value=value), self.assertRaises(
+                    ValidationError
+                ):
+                    Settings(_env_file=None, **{field: value})
+
+    def test_patient_type_and_gender_are_normalized_and_constrained(self):
+        settings = Settings(
+            _env_file=None,
+            PATIENT_DIABETES_TYPE="lada",
+            PATIENT_GENDER="other",
+        )
+        self.assertEqual(settings.PATIENT_DIABETES_TYPE, "LADA")
+        self.assertEqual(settings.PATIENT_GENDER, "OTHER")
+
+        for field, value in (
+            ("PATIENT_DIABETES_TYPE", "unknown"),
+            ("PATIENT_GENDER", "unknown"),
+        ):
+            with self.subTest(field=field), self.assertRaises(ValidationError):
+                Settings(_env_file=None, **{field: value})
+
+    def test_optimized_python_rejects_invalid_patient_profile(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+        source = textwrap.dedent(
+            """
+            from pydantic import ValidationError
+            from diabetic.config import Settings
+            invalid = [
+                {"PATIENT_WEIGHT_KG": 0},
+                {"PATIENT_HEIGHT_CM": 500},
+                {"PATIENT_AGE": 1},
+                {"PATIENT_DIABETES_TYPE": "unknown"},
+                {"PATIENT_GENDER": "unknown"},
+            ]
+            for values in invalid:
+                try:
+                    Settings(_env_file=None, **values)
+                except ValidationError:
+                    continue
+                raise SystemExit(f"accepted invalid profile: {values}")
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", source],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 class TestNightscoutUnitContract(unittest.TestCase):
@@ -44,6 +113,65 @@ class TestNightscoutUnitContract(unittest.TestCase):
             with self.subTest(raw=raw, units=units):
                 with self.assertRaises(ValueError):
                     normalize_nightscout_sgv(raw, units)
+
+
+class TestCanonicalGlucoseUnit(unittest.TestCase):
+    def test_internal_readings_reject_display_units(self):
+        with self.assertRaises(ValidationError):
+            GlucoseReading(
+                timestamp=datetime.now(timezone.utc),
+                value=39.0,
+                trend="Flat",
+                unit="mg/dL",
+            )
+
+    def test_nightscout_parser_remains_mmol_under_both_preferences(self):
+        import diabetic.ingestion.nightscout as nightscout_module
+        from diabetic.ingestion.nightscout import NightscoutClient
+
+        entry = {
+            "_id": "synthetic-entry",
+            "sgv": 39,
+            "units": "mg/dL",
+            "dateString": "2026-01-01T00:00:00Z",
+            "direction": "Flat",
+        }
+        for prefer_mmol in (True, False):
+            with self.subTest(prefer_mmol=prefer_mmol), patch.object(
+                nightscout_module.config, "PREFER_MMOL", prefer_mmol
+            ), patch.object(nightscout_module.config, "API_SECRET", "short"), patch.object(
+                nightscout_module.config, "NIGHTSCOUT_URL", "http://example.invalid"
+            ):
+                client = NightscoutClient()
+                reading = client._parse_entries([entry])[0]
+                asyncio.run(client.close())
+            self.assertAlmostEqual(
+                reading.value, 39 / medical_constants.MMOL_TO_MGDL, places=2
+            )
+            self.assertEqual(reading.unit, "mmol/L")
+            self.assertEqual(reading.source_event_id, "synthetic-entry")
+
+
+class TestGlucosePresentation(unittest.TestCase):
+    def test_display_conversion_does_not_mutate_clinical_thresholds(self):
+        from diabetic.ui import glucose_display
+
+        for prefer_mmol, expected_value, expected_unit, expected_places in [
+            (True, 2.5, "mmol/L", 1),
+            (False, 2.5 * medical_constants.MMOL_TO_MGDL, "mg/dL", 0),
+        ]:
+            with self.subTest(prefer_mmol=prefer_mmol), patch.object(
+                config, "PREFER_MMOL", prefer_mmol
+            ):
+                self.assertAlmostEqual(
+                    glucose_display.glucose_value(2.5), expected_value
+                )
+                self.assertEqual(glucose_display.unit_label(), expected_unit)
+                self.assertEqual(
+                    glucose_display.decimal_places(), expected_places
+                )
+                self.assertEqual(glucose_display.hud_range(3.9), "low")
+                self.assertTrue(glucose_display.hud_haptic_warning(3.9))
 
 
 class TestCriticalHypoPropagation(unittest.IsolatedAsyncioTestCase):

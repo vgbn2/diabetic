@@ -10,13 +10,35 @@ Nightscout and Bio-Quant only on loopback by default.
 4. Check `docker compose ps`, `http://localhost:1337`, and
    `http://localhost:8000/healthz`.
 5. Check `http://localhost:8000/readyz` separately. `/healthz` proves only that
-   the HTTP process is alive; `/readyz` requires healthy providers and a fresh
-   in-process glucose snapshot.
+   the HTTP process is alive; `/readyz` requires accepted authentication on the
+   Nightscout entries path, responsive MongoDB, and a fresh in-process glucose
+   snapshot. Transport reachability alone is not provider readiness.
 
 The machine-readable health output reports `ready` for core monitoring and
 `neural_ready` for validated loaded weights plus a warm inference buffer.
 Kinematic fallback can operate when core readiness is true and neural readiness
-is false.
+is false. An unexpected live-runtime or embedded TWA-server failure terminates the
+process after one idempotent teardown; Compose then owns process replacement. Bio-Quant
+does not attempt to reconstruct the singleton runtime or restart the API thread in the
+same process.
+
+## Local profile persistence
+
+Compose sets the Vessel Registry `DATABASE_URL` to
+`sqlite+aiosqlite:////app/storage/vessel_registry.db`. The file is therefore inside
+the `bio_quant_storage` volume mounted at `/app/storage`, alongside other durable
+local application state. The Docker build excludes database files, so a new volume
+starts with an empty Registry schema and the configured `TELEGRAM_CHAT_ID` plus
+patient traits are imported idempotently from `.env` at core startup.
+
+Direct host launches keep the existing module-local fallback unless
+`DATABASE_URL` is set explicitly. Compose does not copy or overwrite an ignored
+checkout database at `diabetic/storage/vessel_registry.db`. An external PostgreSQL
+or test database remains selectable through the same `DATABASE_URL` owner.
+
+Static Compose inspection and a SQLite close/reopen test prove the configured file
+path and file-level persistence contract. They do not prove survival across an
+actual container recreation; that remains a separate runtime qualification gate.
 
 For access from a phone or another LAN device, set
 `NIGHTSCOUT_BIND_ADDRESS=0.0.0.0` only on a trusted network, keep
@@ -38,56 +60,41 @@ SOURCE_MONGODB_URI='mongodb+srv://...' \
   .venv/bin/python scripts/ops/migrate_nightscout.py export \
   --since 2026-06-01 \
   --destination storage/migrations/from-2026-06-01
-
-.venv/bin/python scripts/ops/migrate_nightscout.py stage-restore \
-  --source storage/migrations/from-2026-06-01
 ```
 
-Restore always targets a new staging database. Compare its counts with the
-manifest before any manual cutover. Take a local backup with
-`scripts/ops/backup_local_nightscout.sh`.
+Archive verification accepts only the canonical Nightscout data collections and
+requires every record to have a MongoDB identity. Hashes, counts, schema, paths,
+and identities are checked before the restore opens a database connection.
 
-## Public Ingress Routing
+After the Compose runtime is healthy and an operator has explicitly authorized a
+staging restore, run:
 
-### Option 1: Tailscale Funnel (Active & Zero-Domain)
-Exposes Nightscout securely over Tailscale Public HTTPS with automated Let's Encrypt certificates:
 ```bash
-# Enable Funnel proxy on port 1337
-tailscale serve --bg 1337
-tailscale funnel --https=443 on
+scripts/ops/stage_restore_local_nightscout.sh \
+  storage/migrations/from-2026-06-01
 ```
-- **Public URL**: `https://hpdesk-1.tail285cce.ts.net`
-- **Raw API Secret**: `${NIGHTSCOUT_API_SECRET}` (Configure in `.env`)
-- **CGM Uploader Secret (SHA-1)**: SHA-1 hash of your configured API secret
-- **Direct Entry Webhook**: `https://hpdesk-1.tail285cce.ts.net/api/v1/entries?secret=<sha1_or_raw_secret>`
 
-### Option 2: Cloudflare Zero Trust Named Tunnel (Custom Domain)
-For custom vanity domains (e.g. `https://cgm.yourdomain.com`):
+The wrapper mounts only the selected archive read-only into a profile-gated
+one-off container and does not start dependencies; the existing MongoDB service
+must already be healthy. MongoDB remains private to the Compose network; port
+27017 is not published. Restore always creates a new timestamped staging
+database and prints aggregate counts only. It does not cut over or replace the
+active
+`nightscout` database. Compare the staged counts with the verified manifest
+before any separately authorized cutover.
 
-1. **Pre-requisite**: An active domain registered or DNS-delegated inside Cloudflare.
-2. **Tunnel Infrastructure**:
-   `cloudflared` is already installed as a systemd service across:
-   - `hpdesk-vm` (`192.168.4.101`)
-   - `hpdesk-pve` (`192.168.4.110`)
-   - `dell-pve` (`192.168.4.102`)
-   Clustered under Tunnel ID: `3d32116d-b8bf-4041-bf0e-338f3d054ee6` (`vgbn-tunnel`).
-3. **Adding the Route**:
-   - Go to Cloudflare Zero Trust Dashboard -> Networks -> Tunnels -> `vgbn-tunnel`.
-   - Under **Public Hostnames**, click **Add a public hostname**.
-   - Subdomain: `cgm` (or `ns`).
-   - Domain: Select your registered Cloudflare domain from the dropdown.
-   - Service: `HTTP` -> `127.0.0.1:1337` (or `192.168.4.101:1337`).
-   - Save hostname.
-4. **CGM App Settings**:
-   - **Base URL**: `https://cgm.<yourdomain>.com`
-   - **Raw API Secret**: `${NIGHTSCOUT_API_SECRET}` (from `.env`)
-   - **API Secret (SHA-1)**: SHA-1 hash of `${NIGHTSCOUT_API_SECRET}`
+## Validated local backups
 
-### Option 3: Synology NAS (DS220+ / Low-Spec / No-AVX Hardware)
-If deploying Nightscout & Bio-Quant on resource-constrained NAS hardware (e.g. Synology DS220+ or Intel Celeron CPUs without AVX):
-- **MongoDB Compatibility**: MongoDB 5.0+ requires AVX CPU instructions. Use `mongo:3.6` (e.g. `mongod --smallfiles --oplogSize 128 --wiredTigerCacheSizeGB 0.25`).
-- **Memory & CPU Limits**: DS220+ Linux kernel does not support Docker CFS CPU quotas (`deploy.resources.limits.cpus`). Use `mem_limit: 400m` instead.
-- **LibreLink Bridge Integration**: When using `timoschlueter/nightscout-librelink-up`:
-  - `NIGHTSCOUT_URL`: Must omit protocol prefix (use `nightscout:1337`).
-  - `NIGHTSCOUT_API_TOKEN`: Must be the exact 40-character SHA-1 hash of your `API_SECRET`.
+Take a local backup with `scripts/ops/backup_local_nightscout.sh`. The wrapper writes
+into a private same-directory temporary file, rejects empty output, and requires a
+successful `mongorestore --dryRun` containing the `nightscout.entries` namespace before
+publishing. It publishes a `0600` archive, matching SHA-256 file, and aggregate JSON
+metadata (size, checksum, database, timestamp, and validator). Failed, interrupted,
+truncated, corrupt, or wrong-namespace attempts leave no published bundle.
 
+Retention defaults to 30 days and can be changed with a non-negative integer
+`BACKUP_RETENTION_DAYS`; deletion occurs only after a new bundle is validated and
+published, and removes only matching archive companions. A checksum and dry-run prove
+local archive readability, not recoverability of a running deployment. Periodic
+isolated restore/count comparison remains a separately authorized operator drill; do
+not overwrite or cut over the active database as part of routine backup validation.

@@ -12,8 +12,8 @@ MongoDB→Supabase migration does not change this surface.
 """
 try:
     from mcp.server.fastmcp import FastMCP
-except ImportError:
-    from mcp.server.mcpserver import MCPServer as FastMCP
+except (ImportError, ModuleNotFoundError):
+    from mcp.server import MCPServer as FastMCP
 
 mcp = FastMCP("bio-quant")
 

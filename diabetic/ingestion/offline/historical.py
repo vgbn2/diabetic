@@ -10,6 +10,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,9 +23,25 @@ from diabetic.config import config
 from diabetic.ingestion.normalization import normalize_nightscout_sgv
 from diabetic.registry import GlucoseReading
 
+HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+
 
 class HistoricalDataError(ValueError):
     """Raised when historical data fails an integrity or schema contract."""
+
+
+NIGHTSCOUT_WINDOWED_COLLECTIONS: frozenset[str] = frozenset(
+    {"entries", "treatments", "devicestatus", "food", "activity", "properties", "pebble"}
+)
+NIGHTSCOUT_REFERENCE_COLLECTIONS: frozenset[str] = frozenset(
+    {"profile", "settings"}
+)
+NIGHTSCOUT_ARCHIVE_COLLECTIONS: frozenset[str] = (
+    NIGHTSCOUT_WINDOWED_COLLECTIONS | NIGHTSCOUT_REFERENCE_COLLECTIONS
+)
+NIGHTSCOUT_EXCLUDED_COLLECTIONS: frozenset[str] = frozenset(
+    {"roles", "auth", "sessions", "tokens", "users", "admin"}
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -58,18 +75,16 @@ def _entry_timestamp(document: dict) -> datetime:
     return _parse_iso_timestamp(document.get("dateString"))
 
 
-def _reading_value(mmol_value: float) -> tuple[float, str]:
-    if config.PREFER_MMOL:
-        return mmol_value, "mmol/L"
-    return mmol_value * medical_constants.MMOL_TO_MGDL, "mg/dL"
-
-
 def verify_nightscout_archive(root: str | Path) -> dict:
     """Verify a Nightscout Extended-JSON export without exposing its records."""
 
     archive = Path(root)
     manifest_path = archive / "manifest.json"
     errors: list[str] = []
+
+    if manifest_path.is_symlink():
+        errors.append("manifest: symlinked file disallowed")
+
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -78,6 +93,15 @@ def verify_nightscout_archive(root: str | Path) -> dict:
             "ok": False,
             "root": str(archive),
             "errors": [f"manifest: {exc.__class__.__name__}"],
+            "collections": {},
+        }
+
+    if not isinstance(manifest, dict):
+        return {
+            "kind": "nightscout_archive",
+            "ok": False,
+            "root": str(archive),
+            "errors": ["manifest must be an object"],
             "collections": {},
         }
 
@@ -91,14 +115,38 @@ def verify_nightscout_archive(root: str | Path) -> dict:
             "collections": {},
         }
 
+    declared_names = set(collections.keys())
+    for jsonl_path in sorted(archive.glob("*.jsonl")):
+        if jsonl_path.is_symlink():
+            errors.append(f"{jsonl_path.name}: symlinked file disallowed")
+        if jsonl_path.stem not in declared_names:
+            errors.append(f"{jsonl_path.name}: undeclared JSONL file")
+
     reports: dict[str, dict] = {}
     for name, expected in sorted(collections.items()):
+        if not isinstance(name, str) or not name or not name.isidentifier() or ".." in name or "/" in name or "\\" in name:
+            errors.append(f"manifest: invalid collection name '{name}'")
+            continue
+        if name not in NIGHTSCOUT_ARCHIVE_COLLECTIONS:
+            errors.append(f"manifest: unsupported collection '{name}'")
+            continue
+
+        if not isinstance(expected, dict):
+            errors.append(f"{name}: collection metadata must be an object")
+            continue
+        exp_count = expected.get("count")
+        if not isinstance(exp_count, int) or isinstance(exp_count, bool) or exp_count < 0:
+            errors.append(f"{name}: expected count must be a non-negative integer")
+        exp_sha256 = expected.get("sha256")
+        if not isinstance(exp_sha256, str) or not HEX64_RE.match(exp_sha256):
+            errors.append(f"{name}: expected sha256 must be 64 lowercase hex characters")
+
         path = archive / f"{name}.jsonl"
         report = {
             "count": 0,
-            "expected_count": expected.get("count"),
+            "expected_count": expected.get("count") if isinstance(expected, dict) else None,
             "sha256": None,
-            "expected_sha256": expected.get("sha256"),
+            "expected_sha256": expected.get("sha256") if isinstance(expected, dict) else None,
             "hash_ok": False,
             "parse_errors": 0,
             "duplicate_records": 0,
@@ -110,6 +158,8 @@ def verify_nightscout_archive(root: str | Path) -> dict:
         reports[name] = report
         if not path.is_file():
             errors.append(f"{name}: missing JSONL file")
+            continue
+        if path.is_symlink():
             continue
 
         report["sha256"] = sha256_file(path)
@@ -134,11 +184,15 @@ def verify_nightscout_archive(root: str | Path) -> dict:
                     errors.append(f"{name}: invalid record at line {line_number}")
                     continue
 
-                identity = str(document.get("_id", ""))
-                if identity:
-                    if identity in identities:
-                        report["duplicate_records"] += 1
-                    identities.add(identity)
+                if "_id" not in document or document["_id"] is None:
+                    report["parse_errors"] += 1
+                    errors.append(f"{name}: missing record identity at line {line_number}")
+                    continue
+
+                identity = str(document["_id"])
+                if identity in identities:
+                    report["duplicate_records"] += 1
+                identities.add(identity)
 
                 if name == "entries":
                     try:
@@ -160,7 +214,7 @@ def verify_nightscout_archive(root: str | Path) -> dict:
                     )
                     report["last_timestamp"] = timestamp.isoformat()
 
-        if report["count"] != report["expected_count"]:
+        if report["expected_count"] is not None and report["count"] != report["expected_count"]:
             errors.append(
                 f"{name}: expected {report['expected_count']} records, "
                 f"found {report['count']}"
@@ -170,11 +224,18 @@ def verify_nightscout_archive(root: str | Path) -> dict:
         if name == "entries" and not report["timestamps_monotonic"]:
             errors.append("entries: timestamps are not monotonic")
 
+    manifest_sha = None
+    if not manifest_path.is_symlink() and manifest_path.is_file():
+        try:
+            manifest_sha = sha256_file(manifest_path)
+        except Exception:
+            pass
+
     return {
         "kind": "nightscout_archive",
         "ok": not errors,
         "root": str(archive),
-        "manifest_sha256": sha256_file(manifest_path),
+        "manifest_sha256": manifest_sha,
         "cutoff": manifest.get("cutoff"),
         "database": manifest.get("database"),
         "collections": reports,
@@ -402,13 +463,13 @@ class HistoricalReplayReader:
                 mmol_value = normalize_nightscout_sgv(
                     document.get("sgv"), document.get("units")
                 )
-                value, unit = _reading_value(mmol_value)
                 yield GlucoseReading(
                     timestamp=_entry_timestamp(document),
-                    value=value,
+                    value=mmol_value,
                     trend=document.get("direction", "Flat"),
                     source="historical_archive",
-                    unit=unit,
+                    unit="mmol/L",
+                    source_event_id=str(document["_id"]) if document.get("_id") is not None else None,
                 )
 
     def _stream_csvs(self) -> Iterator[GlucoseReading]:
@@ -421,14 +482,13 @@ class HistoricalReplayReader:
                         raise HistoricalDataError(
                             f"{path.name}: glucose must be finite and positive"
                         )
-                    value, unit = _reading_value(mmol_value)
                     readings.append(
                         GlucoseReading(
                             timestamp=_parse_iso_timestamp(row["timestamp_utc"]),
-                            value=value,
+                            value=mmol_value,
                             trend=row.get("trend") or "Flat",
                             source="historical_csv",
-                            unit=unit,
+                            unit="mmol/L",
                         )
                     )
         readings.sort(key=lambda reading: reading.timestamp)
